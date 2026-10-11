@@ -2,24 +2,34 @@
 //  ComposerView.m
 //  iOS6AIChat
 //
+//  Composer bar with:
+//     - Glossed send button (right)
+//     - Deep Thinking toggle button (left of input)
+//     - Web Search toggle button (left of Deep Thinking)
+//  Toggles persist to NSUserDefaults so they survive app restarts.
+//
 
 #import "ComposerView.h"
 #import "iOS6Theme.h"
 #import <QuartzCore/QuartzCore.h>
 
 NSString *const ComposerViewSendMessageNotification = @"ComposerViewSendMessageNotification";
-NSString *const ComposerViewSendMessageTextKey      = @"ComposerViewSendMessageTextKey";
+NSString *const ComposerViewSendMessageTextKey           = @"ComposerViewSendMessageTextKey";
+NSString *const ComposerViewSendMessageDeepThinkingKey = @"ComposerViewSendMessageDeepThinkingKey";
+NSString *const ComposerViewSendMessageWebSearchKey     = @"ComposerViewSendMessageWebSearchKey";
+
+static NSString * const kUDKeyDeepThinking = @"composer.deepThinking";
+static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 
 @interface ComposerView ()
-@property (nonatomic, retain) UIImageView *pinstripeBackground;
-@property (nonatomic, retain) UIView *textFieldBackground; // rounded container
+@property (nonatomic, retain) UIView *textFieldBackground;
 @end
 
 @implementation ComposerView
 
 @synthesize textView=_textView, sendButton=_sendButton, isStreaming=_isStreaming,
-            delegate=_delegate, pinstripeBackground=_pinstripeBackground,
-            textFieldBackground=_textFieldBackground;
+            delegate=_delegate, textFieldBackground=_textFieldBackground,
+            deepThinkingButton=_deepThinkingButton, webSearchButton=_webSearchButton;
 
 - (id)initWithFrame:(CGRect)frame
 {
@@ -28,23 +38,50 @@ NSString *const ComposerViewSendMessageTextKey      = @"ComposerViewSendMessageT
 
         _textFieldBackground = [[UIView alloc] initWithFrame:CGRectZero];
         _textFieldBackground.backgroundColor = [UIColor whiteColor];
-        _textFieldBackground.layer.cornerRadius = 8.0f;  // CALayer on iOS 6 still works (3.2+)
+        _textFieldBackground.layer.cornerRadius = 8.0f;
         _textFieldBackground.layer.masksToBounds = YES;
         [self addSubview:_textFieldBackground];
 
         _textView = [[UITextView alloc] initWithFrame:CGRectZero];
-        _textView.font = [UIFont systemFontOfSize:15];
+        _textView.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
         _textView.delegate = self;
         _textView.backgroundColor = [UIColor clearColor];
         _textView.scrollEnabled = YES;
         _textView.returnKeyType = UIReturnKeySend;
+        if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
+            [_textView performSelector:@selector(setTextContainerInset:)
+                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(7, 10, 7, 10)]];
+        }
+        _textView.textColor = [iOS6Theme textColor];
         [_textFieldBackground addSubview:_textView];
+
+        // Deep Thinking toggle button (left of input).
+        _deepThinkingButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        [_deepThinkingButton setTitle:@"DT" forState:UIControlStateNormal];
+        _deepThinkingButton.titleLabel.font = [UIFont boldSystemFontOfSize:11];
+        _deepThinkingButton.titleLabel.numberOfLines = 2;
+        _deepThinkingButton.titleLabel.textAlignment = NSTextAlignmentCenter;
+        [_deepThinkingButton addTarget:self
+                                action:@selector(_deepThinkingTapped)
+                      forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:_deepThinkingButton];
+
+        // Web Search toggle button (leftmost).
+        _webSearchButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        [_webSearchButton setTitle:@"Web" forState:UIControlStateNormal];
+        _webSearchButton.titleLabel.font = [UIFont boldSystemFontOfSize:11];
+        _webSearchButton.titleLabel.numberOfLines = 2;
+        _webSearchButton.titleLabel.textAlignment = NSTextAlignmentCenter;
+        [_webSearchButton addTarget:self
+                             action:@selector(_webSearchTapped)
+                   forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:_webSearchButton];
 
         _sendButton = [UIButton buttonWithType:UIButtonTypeCustom];
         [_sendButton setTitle:NSLocalizedString(@"Send", nil)
                       forState:UIControlStateNormal];
         [_sendButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        _sendButton.titleLabel.font = [UIFont boldSystemFontOfSize:15];
+        _sendButton.titleLabel.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
         [_sendButton addTarget:self
                         action:@selector(_sendTapped)
               forControlEvents:UIControlEventTouchUpInside];
@@ -52,13 +89,16 @@ NSString *const ComposerViewSendMessageTextKey      = @"ComposerViewSendMessageT
 
         _isStreaming = NO;
 
-        // Soft top hairline to separate from the chat view above.
+        // Soft top hairline.
         UIView *hair = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.bounds.size.width, 1)];
         hair.backgroundColor = [UIColor colorWithWhite:0.0f alpha:0.18f];
         hair.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
                                  UIViewAutoresizingFlexibleBottomMargin);
         [self addSubview:hair];
         [hair release];
+
+        // Apply initial toggle visuals.
+        [self _refreshToggleVisuals];
     }
     return self;
 }
@@ -70,6 +110,79 @@ NSString *const ComposerViewSendMessageTextKey      = @"ComposerViewSendMessageT
     [_sendButton setAlpha:isStreaming ? 0.5f : 1.0f];
 }
 
+#pragma mark - Toggle persistence
+
++ (BOOL)deepThinkingEnabled
+{
+    // Default ON per user request (deep thinking by default for richer answers).
+    NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyDeepThinking];
+    return n ? [n boolValue] : YES;
+}
+
++ (void)setDeepThinkingEnabled:(BOOL)enabled
+{
+    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kUDKeyDeepThinking];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
++ (BOOL)webSearchEnabled
+{
+    // Default OFF (user must opt-in; needs API key).
+    NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyWebSearch];
+    return n ? [n boolValue] : NO;
+}
+
++ (void)setWebSearchEnabled:(BOOL)enabled
+{
+    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kUDKeyWebSearch];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+- (void)_deepThinkingTapped
+{
+    BOOL newVal = ![[self class] deepThinkingEnabled];
+    [[self class] setDeepThinkingEnabled:newVal];
+    [self _refreshToggleVisuals];
+}
+
+- (void)_webSearchTapped
+{
+    BOOL newVal = ![[self class] webSearchEnabled];
+    [[self class] setWebSearchEnabled:newVal];
+    [self _refreshToggleVisuals];
+}
+
+- (void)_refreshToggleVisuals
+{
+    BOOL dt = [[self class] deepThinkingEnabled];
+    BOOL ws = [[self class] webSearchEnabled];
+    // Lit-up state: tinted background + white text.
+    // Dim state: translucent grey background + grey text.
+    UIColor *onBG  = [iOS6Theme tintColor];
+    UIColor *offBG = [UIColor colorWithWhite:0.5f alpha:0.4f];
+    UIColor *onText  = [UIColor whiteColor];
+    UIColor *offText = [UIColor colorWithWhite:0.2f alpha:0.8f];
+
+    _deepThinkingButton.selected = dt;
+    _webSearchButton.selected = ws;
+    // Use the backgroundImage trick to colour them.
+    [self _setButton:_deepThinkingButton bg:dt?onBG:offBG textColor:dt?onText:offText];
+    [self _setButton:_webSearchButton   bg:ws?onBG:offBG textColor:ws?onText:offText];
+}
+
+- (void)_setButton:(UIButton *)btn bg:(UIColor *)bg textColor:(UIColor *)tc
+{
+    CGRect r = CGRectMake(0, 0, 44, 28);
+    UIGraphicsBeginImageContextWithOptions(r.size, NO, 0.0);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    [iOS6Theme fillRoundedButtonBackgroundInRect:r context:ctx tintColor:bg highlighted:NO];
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    [btn setBackgroundImage:[img stretchableImageWithLeftCapWidth:8 topCapHeight:8]
+                 forState:UIControlStateNormal];
+    [btn setTitleColor:tc forState:UIControlStateNormal];
+}
+
 - (void)layoutSubviews
 {
     [super layoutSubviews];
@@ -78,29 +191,36 @@ NSString *const ComposerViewSendMessageTextKey      = @"ComposerViewSendMessageT
     CGFloat pad = 8.0f;
     CGFloat sendW = 64.0f;
     CGFloat gap = 6.0f;
+    CGFloat toggleW = 44.0f;
+    CGFloat toggleGap = 4.0f;
 
+    // Right side: send button.
     CGRect sendRect = CGRectMake(self.bounds.size.width - sendW - pad,
-                                  pad,
-                                  sendW,
-                                  h - 2 * pad);
+                                  pad, sendW, h - 2 * pad);
     _sendButton.frame = sendRect;
 
-    CGRect textBgRect = CGRectMake(pad, pad,
-                                    self.bounds.size.width - sendW - 2 * pad - gap,
-                                    h - 2 * pad);
+    // Left side: web search toggle.
+    CGRect wsRect = CGRectMake(pad, pad, toggleW, h - 2 * pad);
+    _webSearchButton.frame = wsRect;
+
+    // Next: deep thinking toggle.
+    CGFloat dtX = pad + toggleW + toggleGap;
+    CGRect dtRect = CGRectMake(dtX, pad, toggleW, h - 2 * pad);
+    _deepThinkingButton.frame = dtRect;
+
+    // Middle: text field background fills the gap.
+    CGFloat textX = dtX + toggleW + toggleGap;
+    CGFloat textW = self.bounds.size.width - sendW - 2 * pad - gap
+                     - 2 * (toggleW + toggleGap);
+    CGRect textBgRect = CGRectMake(textX, pad, textW, h - 2 * pad);
     _textFieldBackground.frame = textBgRect;
     _textView.frame = CGRectInset(textBgRect, 4, 4);
 
-    // Draw the glossed send button background ourselves so it matches
-    // the iOS 6 skeuomorphic look.
     [self _drawSendButtonBackground];
 }
 
 - (void)_drawSendButtonBackground
 {
-    // Re-render the send button's background image each layout pass.
-    // Because we don't want to ship PNGs, we generate the background
-    // programmatically into a UIImage once per state and assign it.
     static UIImage *normalImage = nil;
     static UIImage *highlightImage = nil;
     static dispatch_once_t onceToken;
@@ -138,13 +258,19 @@ NSString *const ComposerViewSendMessageTextKey      = @"ComposerViewSendMessageT
                        [NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (text.length == 0) return;
 
-    if ([_delegate respondsToSelector:@selector(composer:didSendText:)]) {
-        [_delegate composer:self didSendText:text];
+    BOOL dt = [[self class] deepThinkingEnabled];
+    BOOL ws = [[self class] webSearchEnabled];
+    if ([_delegate respondsToSelector:@selector(composer:didSendText:deepThinking:webSearch:)]) {
+        [_delegate composer:self didSendText:text deepThinking:dt webSearch:ws];
     }
     [[NSNotificationCenter defaultCenter]
         postNotificationName:ComposerViewSendMessageNotification
                       object:self
-                    userInfo:@{ ComposerViewSendMessageTextKey: text }];
+                    userInfo:@{
+                        ComposerViewSendMessageTextKey: text,
+                        ComposerViewSendMessageDeepThinkingKey: @(dt),
+                        ComposerViewSendMessageWebSearchKey: @(ws)
+                    }];
 
     [self clearText];
 }
@@ -159,7 +285,6 @@ NSString *const ComposerViewSendMessageTextKey      = @"ComposerViewSendMessageT
 - (BOOL)textView:(UITextView *)textView shouldChangeTextInRange:(NSRange)range
     replacementText:(NSString *)text
 {
-    // Use return key as send trigger (matches iOS 6 iMessage behaviour).
     if ([text isEqualToString:@"\n"]) {
         [self _dispatchSend];
         return NO;
@@ -169,7 +294,6 @@ NSString *const ComposerViewSendMessageTextKey      = @"ComposerViewSendMessageT
 
 - (void)textViewDidChange:(UITextView *)textView
 {
-    // Auto-grow if needed.
     NSUInteger oldHeight = self.bounds.size.height;
     CGSize target = CGSizeMake(_textView.frame.size.width, CGFLOAT_MAX);
     CGSize measured = [_textView sizeThatFits:target];
@@ -188,9 +312,11 @@ NSString *const ComposerViewSendMessageTextKey      = @"ComposerViewSendMessageT
 
 - (void)dealloc
 {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_textView release];
     [_sendButton release];
-    [_pinstripeBackground release];
+    [_deepThinkingButton release];
+    [_webSearchButton release];
     [_textFieldBackground release];
     [super dealloc];
 }

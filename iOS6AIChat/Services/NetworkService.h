@@ -71,3 +71,49 @@
      didFailForConversationID:(NSString *)conversationID
                        error:(NSError *)error;
 @end
+
+// ============================================================
+// Tavily web search (sync — fires before sending to AI model)
+// ============================================================
+//
+// POST https://api.tavily.com/search
+//   { "api_key": "...", "query": "...", "max_results": 1..8 }
+// Returns JSON: { results: [{ title, url, content }, ...] }
+//
+// If useTransit=YES, the request goes through the transit server instead:
+//   POST {transitURL}/v1/tavily/search
+//   Headers: X-Provider: tavily
+//   Body: same as above
+//
+// This is a synchronous call (blocks the calling thread) — call it on
+// a background queue and dispatch back to main when done.
+//
+// On success, returns an NSArray of NSDictionary with keys:
+//   title, url, content.
+// On failure, returns nil and sets *error.
+
+- (NSArray *)tavilySearchWithQuery:(NSString *)query
+                            apiKey:(NSString *)apiKey
+                       maxResults:(NSInteger)maxResults
+                       useTransit:(BOOL)useTransit
+                        transitURL:(NSString *)transitURL
+                            error:(NSError **)error;
+
+// ============================================================
+// Model list fetch (sync)
+// ============================================================
+//
+// GET {endpoint}/v1/models  (with Authorization: Bearer {apiKey})
+// Returns JSON: { data: [{ id: "gpt-4o-mini" }, ...] }
+// We return an NSArray of model-id NSStrings.
+//
+// useTransit=YES hits {transitURL}/v1/models with X-Provider set.
+// On failure, returns nil.
+
+- (NSArray *)listModelsWithUseTransit:(BOOL)useTransit
+                             transitURL:(NSString *)transitURL
+                              baseURL:(NSString *)baseURL
+                              provider:(NSString *)provider
+                               apiKey:(NSString *)apiKey
+                                 error:(NSError **)error;
+

@@ -174,8 +174,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 #pragma mark - Composer delegate
 
 - (void)composer:(ComposerView *)c didSendText:(NSString *)text
+        deepThinking:(BOOL)deepThinking webSearch:(BOOL)webSearch
 {
-    [self _sendUserMessage:text];
+    [self _sendUserMessage:text deepThinking:deepThinking webSearch:webSearch];
 }
 
 - (void)composerDidChangeHeight:(ComposerView *)composer
@@ -186,7 +187,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 - (void)_onComposerSend:(NSNotification *)note
 {
     NSString *text = [[note userInfo] objectForKey:ComposerViewSendMessageTextKey];
-    if (text.length > 0) [self _sendUserMessage:text];
+    BOOL dt = [[[note userInfo] objectForKey:ComposerViewSendMessageDeepThinkingKey] boolValue];
+    BOOL ws = [[[note userInfo] objectForKey:ComposerViewSendMessageWebSearchKey] boolValue];
+    if (text.length > 0) [self _sendUserMessage:text deepThinking:dt webSearch:ws];
 }
 
 - (void)_adjustForComposerHeight
@@ -208,6 +211,14 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 #pragma mark - Sending
 
 - (void)_sendUserMessage:(NSString *)text
+{
+    [self _sendUserMessage:text deepThinking:[ComposerView deepThinkingEnabled]
+                          webSearch:[ComposerView webSearchEnabled]];
+}
+
+- (void)_sendUserMessage:(NSString *)text
+            deepThinking:(BOOL)deepThinking
+                webSearch:(BOOL)webSearch
 {
     if (!_conversation) {
         Conversation *c = [[ConversationStore sharedStore] createNewConversation];
@@ -239,15 +250,130 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     NSString *apiKey      = [settings objectForKey:SettingsKeyAPIKey];
     NSString *model        = [settings objectForKey:SettingsKeyModel];
     CGFloat temperature    = [[settings objectForKey:SettingsKeyTemperature] floatValue];
+    NSString *systemPrompt = [settings objectForKey:SettingsKeySystemPrompt]
+                              ?: @"You are a helpful assistant.";
 
-    // Build the API message list EXCLUDING the just-appended placeholder
-    // assistant message (we don't want to send "…" back to the model).
+    // If deep thinking is on, augment the system prompt with a chain-of-
+    // thought instruction.
+    if (deepThinking) {
+        systemPrompt = [NSString stringWithFormat:
+            @"%@ Think step by step before answering. Show your reasoning process prefixed with \"Reasoning:\" and then give the final answer prefixed with \"Answer:\".",
+            systemPrompt];
+    }
+
+    // If web search is on, do a Tavily /search first (sync, on background
+    // queue) and inject the results as an additional system message.
+    __block NSArray *searchResults = nil;
+    if (webSearch) {
+        NSString *tavilyKey = [settings objectForKey:SettingsKeyTavilyAPIKey];
+        NSInteger maxResults = [[settings objectForKey:SettingsKeyTavilyMaxResults] integerValue];
+        if (maxResults < 1) maxResults = 1;
+        if (maxResults > 8) maxResults = 8;
+        if (tavilyKey.length > 0) {
+            // Show a transient "正在联网搜索…" placeholder by replacing the
+            // assistant placeholder content.
+            assistantMsg.content = NSLocalizedString(@"🔍 正在联网搜索…", nil);
+            [self _refreshLastRow];
+
+            // Synchronous Tavily call on background queue, then continue.
+            // NOTE: we use dispatch_sync here so the AI request waits for
+            // results. Caller is the main thread, so this would deadlock —
+            // dispatch_async instead and call _launchAPIStream from inside.
+            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                NetworkService *svc = [[[NetworkService alloc] init] autorelease];
+                NSError *err = nil;
+                NSArray *results = [svc tavilySearchWithQuery:text
+                                                         apiKey:tavilyKey
+                                                    maxResults:maxResults
+                                                    useTransit:useTransit
+                                                     transitURL:transitURL
+                                                         error:&err];
+                searchResults = [results retain];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    // Re-enable "…" placeholder while AI streams.
+                    assistantMsg.content = @"…";
+                    [self _refreshLastRow];
+
+                    // Inject search results into the conversation as a system
+                    // message just before the AI call. We do NOT persist
+                    // this synthesized system message — it's only for the
+                    // API request.
+                    NSMutableArray *msgsForAPI = [NSMutableArray array];
+                    if (systemPrompt.length > 0) {
+                        [msgsForAPI addObject:[Message messageWithRole:MessageRoleSystem
+                                                                content:systemPrompt]];
+                    }
+                    if (searchResults && [searchResults count] > 0) {
+                        NSMutableString *ctx = [NSMutableString string];
+                        [ctx appendString:@"Web search results for: "];
+                        [ctx appendString:text];
+                        [ctx appendString:@"\n\n"];
+                        NSInteger i = 1;
+                        for (NSDictionary *r in searchResults) {
+                            [ctx appendFormat:@"%d. %@\n   URL: %@\n   %@\n\n",
+                                (int)i++,
+                                [r objectForKey:@"title"],
+                                [r objectForKey:@"url"],
+                                [r objectForKey:@"content"]];
+                        }
+                        [ctx appendString:@"Use these results as context when answering the user's question."];
+                        [msgsForAPI addObject:[Message messageWithRole:MessageRoleSystem content:ctx]];
+                    }
+                    // Now add the actual conversation messages, EXCLUDING the placeholder.
+                    for (Message *m in _conversation.messages) {
+                        if (m == assistantMsg) continue;
+                        [msgsForAPI addObject:m];
+                    }
+                    [self _launchAPIStreamWithMessages:msgsForAPI
+                                              useTransit:useTransit
+                                              transitURL:transitURL
+                                                baseURL:baseURL
+                                                provider:provider
+                                                 apiKey:apiKey
+                                                  model:model
+                                            temperature:temperature
+                                          conversationID:_conversation.conversationID
+                                       assistantMsg:assistantMsg];
+                    [searchResults release];
+                });
+            });
+            return; // Wait for the async call to complete.
+        }
+    }
+
+    // No web search — proceed directly.
     NSMutableArray *msgsForAPI = [NSMutableArray array];
+    if (systemPrompt.length > 0) {
+        [msgsForAPI addObject:[Message messageWithRole:MessageRoleSystem content:systemPrompt]];
+    }
     for (Message *m in _conversation.messages) {
         if (m == assistantMsg) continue;
         [msgsForAPI addObject:m];
     }
+    [self _launchAPIStreamWithMessages:msgsForAPI
+                              useTransit:useTransit
+                              transitURL:transitURL
+                                baseURL:baseURL
+                                provider:provider
+                                 apiKey:apiKey
+                                  model:model
+                            temperature:temperature
+                          conversationID:_conversation.conversationID
+                            assistantMsg:assistantMsg];
+}
 
+// Refactored helper — kicks off the streaming API call.
+- (void)_launchAPIStreamWithMessages:(NSArray *)msgsForAPI
+                          useTransit:(BOOL)useTransit
+                          transitURL:(NSString *)transitURL
+                            baseURL:(NSString *)baseURL
+                            provider:(NSString *)provider
+                             apiKey:(NSString *)apiKey
+                              model:(NSString *)model
+                        temperature:(CGFloat)temperature
+                      conversationID:(NSString *)conversationID
+                        assistantMsg:(Message *)assistantMsg
+{
     [_networkService streamChatWithUseTransit:useTransit
                                     transitURL:transitURL
                                       baseURL:baseURL
@@ -256,7 +382,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                                         model:model
                                   temperature:temperature
                                      messages:msgsForAPI
-                               conversationID:_conversation.conversationID];
+                               conversationID:conversationID];
 }
 
 #pragma mark - NetworkServiceDelegate

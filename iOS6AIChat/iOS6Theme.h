@@ -5,37 +5,59 @@
 //  Centralised visual primitives that recreate the iOS 6 "skeuomorphic"
 //  look using only Core Graphics — no image assets required.
 //
-//  Reproduced elements:
-//    - Linear gradients for navbars / tab bars (gloss on top, deep tint below)
-//    - Outer hairline + inner highlight stroke
-//    - The blue "iOS 6 button" gradient (top half lighter, bottom darker, 1px sheen)
-//    - The grey "back" chevron button
-//    - Chat bubble tails and the soft drop-shadow behind bubbles
-//    - Pinstripe background like the old Settings app
+//  The theme is now DYNAMIC:
+//    - Dark Mode toggle (persisted to NSUserDefaults)
+//    - Font Size scaling (0.85x small / 1.0x default / 1.15x large /
+//      1.3x x-large / 1.5x xx-large) for accessibility
+//    - Premium palette: warm parchment + aged-leather bronze on light;
+//      deep charcoal + warm amber on dark.
 //
 
 #import <UIKit/UIKit.h>
 
+typedef enum {
+    iOS6ThemeFontSizeSmall  = 0,  // 0.85x
+    iOS6ThemeFontSizeMedium = 1,  // 1.0x
+    iOS6ThemeFontSizeLarge  = 2,  // 1.15x
+    iOS6ThemeFontSizeXLarge = 3,  // 1.3x
+    iOS6ThemeFontSizeXXLarge = 4 // 1.5x
+} iOS6ThemeFontSize;
+
 @interface iOS6Theme : NSObject
 
-// Colours
-+ (UIColor *)tintColor;              // vivid iOS 6 blue
-+ (UIColor *)navbarTopColor;        // top half of the navbar gradient
-+ (UIColor *)navbarBottomColor;     // bottom half of the navbar gradient
+// === Mode toggles (persisted to NSUserDefaults) =========================
+
+// Dark mode — YES uses the dark palette, NO uses the light palette.
++ (BOOL)isDarkMode;
++ (void)setDarkMode:(BOOL)enabled;
+
+// Font size scale (0.85x .. 1.5x). Persisted to NSUserDefaults.
++ (iOS6ThemeFontSize)fontSize;
++ (void)setFontSize:(iOS6ThemeFontSize)size;
+
+// Convenience — returns base * scale, rounded to nearest 0.5pt.
++ (CGFloat)fontPointSizeForBase:(CGFloat)base;
+
+// === Colours (auto-switches with dark mode) =============================
+
++ (UIColor *)tintColor;              // accent / buttons / links
++ (UIColor *)navbarTopColor;
++ (UIColor *)navbarBottomColor;
 + (UIColor *)tabbarTopColor;
 + (UIColor *)tabbarBottomColor;
 + (UIColor *)pinstripeColor;
 + (UIColor *)pinstripeBackground;
-+ (UIColor *)bubbleUserColor;       // light blue user bubble
++ (UIColor *)bubbleUserColor;
 + (UIColor *)bubbleUserBorderColor;
-+ (UIColor *)bubbleAssistantColor;  // off-white AI bubble
++ (UIColor *)bubbleAssistantColor;
 + (UIColor *)bubbleAssistantBorderColor;
 + (UIColor *)textColor;
 + (UIColor *)secondaryTextColor;
 + (UIColor *)codeBackgroundColor;
 + (UIColor *)codeBorderColor;
 
-// Drawing helpers
+// === Drawing helpers ===================================================
+
 + (void)drawLinearGradientInRect:(CGRect)rect
                           context:(CGContextRef)ctx
                           topColor:(UIColor *)top
@@ -45,21 +67,23 @@
 + (void)drawInnerHighlightInRect:(CGRect)rect context:(CGContextRef)ctx;
 + (void)drawOuterHairlineInRect:(CGRect)rect context:(CGContextRef)ctx color:(UIColor *)color;
 
-// Convenience — paint a styled rounded button background into a UIView
 + (void)fillRoundedButtonBackgroundInRect:(CGRect)rect
                                    context:(CGContextRef)ctx
                                   tintColor:(UIColor *)tint
                                  highlighted:(BOOL)highlighted;
 
-// Style the stock UIKit chrome so it looks like iOS 6
+// === UIKit chrome styling ==============================================
+
 + (void)styleNavigationController:(UINavigationController *)nav
                             title:(NSString *)title
                        systemIcon:(UITabBarSystemItem)systemIcon;
 
 + (void)styleTabBarController:(UITabBarController *)tbc;
 
-// Darken a colour by an HSB brightness delta — used by other views
-// (e.g. ChatBubbleView) to derive the gradient bottom colour.
+// === Colour helpers ====================================================
+
 + (UIColor *)darkerColor:(UIColor *)color by:(CGFloat)amount;
++ (UIColor *)colorWithHex:(NSString *)hex;       // "#RRGGBB" / "RRGGBB"
++ (NSString *)hexFromColor:(UIColor *)color;
 
 @end

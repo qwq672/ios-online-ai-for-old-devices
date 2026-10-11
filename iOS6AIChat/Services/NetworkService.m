@@ -281,3 +281,129 @@
 }
 
 @end
+
+#pragma mark - Tavily web search (sync)
+
+- (NSArray *)tavilySearchWithQuery:(NSString *)query
+                            apiKey:(NSString *)apiKey
+                       maxResults:(NSInteger)maxResults
+                       useTransit:(BOOL)useTransit
+                        transitURL:(NSString *)transitURL
+                            error:(NSError **)error
+{
+    if (!query || query.length == 0) return nil;
+    NSString *base = useTransit ? (transitURL ?: @"https://api.tavily.com") : @"https://api.tavily.com";
+    NSString *endpoint = [base stringByTrimmingCharactersInSet:
+                          [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+    endpoint = [endpoint stringByAppendingPathComponent:@"search"];
+    // If transit mode, we want the path to be /v1/tavily/search instead.
+    if (useTransit) {
+        endpoint = [[base stringByTrimmingCharactersInSet:
+                    [NSCharacterSet characterSetWithCharactersInString:@"/"]]
+                    stringByAppendingPathComponent:@"v1/tavily/search"];
+    }
+
+    // Clamp maxResults to [1,8] per Tavily API limits.
+    if (maxResults < 1) maxResults = 1;
+    if (maxResults > 8) maxResults = 8;
+
+    NSDictionary *body = @{
+        @"api_key":     apiKey ?: @"",
+        @"query":       query,
+        @"max_results": @(maxResults)
+    };
+    NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+    if (!bodyData) return nil;
+
+    NSURL *url = [NSURL URLWithString:endpoint];
+    if (!url) return nil;
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
+                                                          cachePolicy:NSURLRequestReloadIgnoringCacheData
+                                                      timeoutInterval:30.0];
+    [req setHTTPMethod:@"POST"];
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    if (useTransit) [req setValue:@"tavily" forHTTPHeaderField:@"X-Provider"];
+    [req setHTTPBody:bodyData];
+
+    NSURLResponse *resp = nil;
+    NSError *netErr = nil;
+    NSData *data = [NSURLConnection sendSynchronousRequest:req
+                                          returningResponse:&resp
+                                                      error:&netErr];
+    if (netErr) {
+        if (error) *error = netErr;
+        return nil;
+    }
+    if (!data || data.length == 0) return nil;
+
+    NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+    NSArray *results = [json objectForKey:@"results"];
+    if (![results isKindOfClass:[NSArray class]]) return nil;
+    // Sanitise to NSArray<NSDictionary> with title/url/content keys.
+    NSMutableArray *out = [NSMutableArray arrayWithCapacity:[results count]];
+    for (NSDictionary *r in results) {
+        if (![r isKindOfClass:[NSDictionary class]]) continue;
+        NSDictionary *clean = @{
+            @"title":   [r objectForKey:@"title"] ?: @"",
+            @"url":     [r objectForKey:@"url"] ?: @"",
+            @"content": [r objectForKey:@"content"] ?: @""
+        };
+        [out addObject:clean];
+    }
+    return out;
+}
+
+#pragma mark - Model list fetch (sync)
+
+- (NSArray *)listModelsWithUseTransit:(BOOL)useTransit
+                             transitURL:(NSString *)transitURL
+                              baseURL:(NSString *)baseURL
+                              provider:(NSString *)provider
+                               apiKey:(NSString *)apiKey
+                                 error:(NSError **)error
+{
+    NSString *base = useTransit ? transitURL : baseURL;
+    if (!base || base.length == 0) {
+        base = useTransit ? @"https://api-ai.awa.lat" : @"https://api.openai.com";
+    }
+    NSString *endpoint = [base stringByTrimmingCharactersInSet:
+                          [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+    endpoint = [endpoint stringByAppendingPathComponent:@"v1/models"];
+
+    NSURL *url = [NSURL URLWithString:endpoint];
+    if (!url) return nil;
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
+                                                          cachePolicy:NSURLRequestReloadIgnoringCacheData
+                                                      timeoutInterval:15.0];
+    [req setHTTPMethod:@"GET"];
+    if (apiKey.length > 0) {
+        [req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey]
+        forHTTPHeaderField:@"Authorization"];
+    }
+    if (useTransit && provider.length > 0) {
+        [req setValue:provider forHTTPHeaderField:@"X-Provider"];
+    }
+
+    NSURLResponse *resp = nil;
+    NSError *netErr = nil;
+    NSData *data = [NSURLConnection sendSynchronousRequest:req
+                                          returningResponse:&resp
+                                                      error:&netErr];
+    if (netErr) {
+        if (error) *error = netErr;
+        return nil;
+    }
+    if (!data || data.length == 0) return nil;
+    NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+    NSArray *models = [json objectForKey:@"data"];
+    if (![models isKindOfClass:[NSArray class]]) return nil;
+    NSMutableArray *out = [NSMutableArray arrayWithCapacity:[models count]];
+    for (NSDictionary *m in models) {
+        if (![m isKindOfClass:[NSDictionary class]]) continue;
+        NSString *mid = [m objectForKey:@"id"];
+        if ([mid isKindOfClass:[NSString class]] && mid.length > 0) {
+            [out addObject:mid];
+        }
+    }
+    return out;
+}

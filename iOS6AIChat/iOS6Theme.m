@@ -2,91 +2,163 @@
 //  iOS6Theme.m
 //  iOS6AIChat
 //
+//  Dynamic theme with:
+//    - Light palette: warm parchment + aged-leather bronze
+//    - Dark palette:  deep charcoal + warm amber gold
+//    - Font size scaling persisted across launches
+//
+//  The palette deliberately avoids the original "iOS 6 vivid blue" —
+//  the user requested a more premium (高级) look. The bronze + parchment
+//  combo evokes old leather-bound books and aged metal, which suits the
+//  skeuomorphic intent.
+//
 
 #import "iOS6Theme.h"
 
+// UserDefaults keys.
+static NSString * const kUDKeyDarkMode  = @"theme.darkMode";
+static NSString * const kUDKeyFontSize = @"theme.fontSize";
+
+// Font size multipliers.
+static CGFloat const kFontScale[] = { 0.85f, 1.0f, 1.15f, 1.3f, 1.5f };
+
+// Light palette — warm parchment + bronze.
+static NSString * const kHexLightTint           = @"#8B5A2B";   // aged-leather bronze
+static NSString * const kHexLightNavbarTop      = @"#B8895A";   // warm tan
+static NSString * const kHexLightNavbarBottom   = @"#5A3818";   // dark leather
+static NSString * const kHexLightTabbarTop      = @"#EAE0CD";   // cream
+static NSString * const kHexLightTabbarBottom   = @"#A89A82";   // tan-grey
+static NSString * const kHexLightPinstripe      = @"#F4ECDC";   // very light cream
+static NSString * const kHexLightPinstripeBG    = @"#E8DFC9";   // warm beige
+static NSString * const kHexLightBubbleUser     = @"#E8DDC8";   // soft beige
+static NSString * const kHexLightBubbleUserB    = @"#7A5A38";   // bronze border
+static NSString * const kHexLightBubbleAI       = @"#FBF6EA";   // near-white cream
+static NSString * const kHexLightBubbleAIB      = @"#B0A48C";   // soft tan border
+static NSString * const kHexLightText           = @"#1F1A14";   // warm black
+static NSString * const kHexLightTextSecondary  = @"#6B5D4A";   // warm grey
+static NSString * const kHexLightCodeBG         = @"#F2EBD9";   // soft cream
+static NSString * const kHexLightCodeBorder     = @"#B0A48C";
+
+// Dark palette — deep charcoal + warm amber gold.
+static NSString * const kHexDarkTint            = @"#D4A661";   // amber gold
+static NSString * const kHexDarkNavbarTop       = @"#2C2C2C";   // dark grey
+static NSString * const kHexDarkNavbarBottom    = @"#0F0F0F";   // near-black
+static NSString * const kHexDarkTabbarTop        = @"#1F1F1F";
+static NSString * const kHexDarkTabbarBottom     = @"#0A0A0A";
+static NSString * const kHexDarkPinstripe        = @"#252525";
+static NSString * const kHexDarkPinstripeBG     = @"#1A1A1A";
+static NSString * const kHexDarkBubbleUser      = @"#3A2A1A";   // dark warm brown
+static NSString * const kHexDarkBubbleUserB     = @"#8B5A2B";
+static NSString * const kHexDarkBubbleAI        = @"#2A2A2A";   // dark grey
+static NSString * const kHexDarkBubbleAIB       = @"#5A5A5A";
+static NSString * const kHexDarkText            = @"#F5EFE0";   // warm cream
+static NSString * const kHexDarkTextSecondary   = @"#A8A098";
+static NSString * const kHexDarkCodeBG          = @"#252525";
+static NSString * const kHexDarkCodeBorder      = @"#3A3A3A";
+
 @implementation iOS6Theme
 
-+ (UIColor *)tintColor
+#pragma mark - Mode toggles
+
++ (BOOL)isDarkMode
 {
-    // The classic iOS 6 vivid blue (#1180E0-ish, just a touch brighter).
-    return [UIColor colorWithRed:0.067f green:0.502f blue:0.902f alpha:1.0f];
+    return [[NSUserDefaults standardUserDefaults] boolForKey:kUDKeyDarkMode];
 }
 
-+ (UIColor *)navbarTopColor
++ (void)setDarkMode:(BOOL)enabled
 {
-    // Top half of the navbar gradient — bright tint with a hint of cyan.
-    return [UIColor colorWithRed:0.31f green:0.62f blue:0.92f alpha:1.0f];
+    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kUDKeyDarkMode];
+    [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
-+ (UIColor *)navbarBottomColor
++ (iOS6ThemeFontSize)fontSize
 {
-    // Bottom half — same hue but darker.
-    return [UIColor colorWithRed:0.04f green:0.31f blue:0.67f alpha:1.0f];
+    NSInteger v = [[NSUserDefaults standardUserDefaults] integerForKey:kUDKeyFontSize];
+    if (v < 0 || v > 4) v = 1; // default medium
+    return (iOS6ThemeFontSize)v;
 }
 
-+ (UIColor *)tabbarTopColor
++ (void)setFontSize:(iOS6ThemeFontSize)size
 {
-    return [UIColor colorWithRed:0.91f green:0.93f blue:0.96f alpha:1.0f];
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)size forKey:kUDKeyFontSize];
+    [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
-+ (UIColor *)tabbarBottomColor
++ (CGFloat)fontPointSizeForBase:(CGFloat)base
 {
-    return [UIColor colorWithRed:0.62f green:0.66f blue:0.72f alpha:1.0f];
+    iOS6ThemeFontSize fs = [self fontSize];
+    CGFloat scale = kFontScale[(NSInteger)fs];
+    CGFloat pt = base * scale;
+    // Round to nearest 0.5pt for crisp rendering.
+    return (CGFloat)((int)(pt * 2.0f + 0.5f)) / 2.0f;
 }
 
-+ (UIColor *)pinstripeColor
+#pragma mark - Palette resolver
+
+// Pick light or dark hex based on current mode.
++ (UIColor *)_colorLight:(NSString *)lightHex dark:(NSString *)darkHex
 {
-    // The faint repeated band that gave the iOS 6 Settings app its sheen.
-    return [UIColor colorWithRed:0.94f green:0.94f blue:0.96f alpha:1.0f];
+    return [self isDarkMode]
+            ? [self colorWithHex:darkHex]
+            : [self colorWithHex:lightHex];
 }
 
-+ (UIColor *)pinstripeBackground
++ (UIColor *)tintColor             { return [self _colorLight:kHexLightTint           dark:kHexDarkTint]; }
++ (UIColor *)navbarTopColor        { return [self _colorLight:kHexLightNavbarTop      dark:kHexDarkNavbarTop]; }
++ (UIColor *)navbarBottomColor     { return [self _colorLight:kHexLightNavbarBottom   dark:kHexDarkNavbarBottom]; }
++ (UIColor *)tabbarTopColor        { return [self _colorLight:kHexLightTabbarTop      dark:kHexDarkTabbarTop]; }
++ (UIColor *)tabbarBottomColor     { return [self _colorLight:kHexLightTabbarBottom   dark:kHexDarkTabbarBottom]; }
++ (UIColor *)pinstripeColor        { return [self _colorLight:kHexLightPinstripe      dark:kHexDarkPinstripe]; }
++ (UIColor *)pinstripeBackground    { return [self _colorLight:kHexLightPinstripeBG   dark:kHexDarkPinstripeBG]; }
++ (UIColor *)bubbleUserColor       { return [self _colorLight:kHexLightBubbleUser     dark:kHexDarkBubbleUser]; }
++ (UIColor *)bubbleUserBorderColor { return [self _colorLight:kHexLightBubbleUserB    dark:kHexDarkBubbleUserB]; }
++ (UIColor *)bubbleAssistantColor  { return [self _colorLight:kHexLightBubbleAI       dark:kHexDarkBubbleAI]; }
++ (UIColor *)bubbleAssistantBorderColor { return [self _colorLight:kHexLightBubbleAIB dark:kHexDarkBubbleAIB]; }
++ (UIColor *)textColor             { return [self _colorLight:kHexLightText           dark:kHexDarkText]; }
++ (UIColor *)secondaryTextColor    { return [self _colorLight:kHexLightTextSecondary   dark:kHexDarkTextSecondary]; }
++ (UIColor *)codeBackgroundColor   { return [self _colorLight:kHexLightCodeBG          dark:kHexDarkCodeBG]; }
++ (UIColor *)codeBorderColor       { return [self _colorLight:kHexLightCodeBorder     dark:kHexDarkCodeBorder]; }
+
+#pragma mark - Hex / colour helpers
+
++ (UIColor *)colorWithHex:(NSString *)hex
 {
-    return [UIColor colorWithRed:0.86f green:0.86f blue:0.88f alpha:1.0f];
+    if (!hex || hex.length == 0) return [UIColor blackColor];
+    NSString *s = [hex stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if ([s hasPrefix:@"#"]) s = [s substringFromIndex:1];
+    if (s.length != 6) return [UIColor blackColor];
+
+    unsigned rgb = 0;
+    NSScanner *sc = [NSScanner scannerWithString:s];
+    [sc scanHexInt:&rgb];
+
+    CGFloat r = ((rgb >> 16) & 0xFF) / 255.0f;
+    CGFloat g = ((rgb >> 8)  & 0xFF) / 255.0f;
+    CGFloat b = ( rgb        & 0xFF) / 255.0f;
+    return [UIColor colorWithRed:r green:g blue:b alpha:1.0f];
 }
 
-+ (UIColor *)bubbleUserColor
++ (NSString *)hexFromColor:(UIColor *)color
 {
-    // Soft cyan-blue for outgoing messages.
-    return [UIColor colorWithRed:0.78f green:0.89f blue:0.99f alpha:1.0f];
+    if (!color) return @"#000000";
+    CGFloat r, g, b, a;
+    [color getRed:&r green:&g blue:&b alpha:&a];
+    return [NSString stringWithFormat:@"#%02X%02X%02X",
+            (unsigned)(r * 255.0f + 0.5f),
+            (unsigned)(g * 255.0f + 0.5f),
+            (unsigned)(b * 255.0f + 0.5f)];
 }
 
-+ (UIColor *)bubbleUserBorderColor
++ (UIColor *)darkerColor:(UIColor *)color by:(CGFloat)amount
 {
-    return [UIColor colorWithRed:0.36f green:0.58f blue:0.84f alpha:0.9f];
+    if (!color) return nil;
+    CGFloat h, s, b, a;
+    [color getHue:&h saturation:&s brightness:&b alpha:&a];
+    b = MAX(0.0f, b - amount);
+    return [UIColor colorWithHue:h saturation:s brightness:b alpha:a];
 }
 
-+ (UIColor *)bubbleAssistantColor
-{
-    // Off-white like the original iOS 6 SMS bubble.
-    return [UIColor colorWithRed:0.96f green:0.96f blue:0.96f alpha:1.0f];
-}
-
-+ (UIColor *)bubbleAssistantBorderColor
-{
-    return [UIColor colorWithRed:0.70f green:0.70f blue:0.72f alpha:0.9f];
-}
-
-+ (UIColor *)textColor
-{
-    return [UIColor colorWithRed:0.10f green:0.10f blue:0.10f alpha:1.0f];
-}
-
-+ (UIColor *)secondaryTextColor
-{
-    return [UIColor colorWithRed:0.45f green:0.45f blue:0.47f alpha:1.0f];
-}
-
-+ (UIColor *)codeBackgroundColor
-{
-    return [UIColor colorWithRed:0.95f green:0.95f blue:0.97f alpha:1.0f];
-}
-
-+ (UIColor *)codeBorderColor
-{
-    return [UIColor colorWithRed:0.78f green:0.79f blue:0.83f alpha:1.0f];
-}
++ (UIColor *)_darker:(UIColor *)color by:(CGFloat)amount { return [self darkerColor:color by:amount]; }
 
 #pragma mark - Gradients & strokes
 
@@ -117,7 +189,6 @@
 
 + (void)drawGlossInRect:(CGRect)rect context:(CGContextRef)ctx
 {
-    // The signature iOS 6 "sheen" — a bright translucent band in the top half.
     if (!ctx) return;
     CGRect glossRect = CGRectMake(rect.origin.x, rect.origin.y,
                                  rect.size.width, rect.size.height * 0.5f);
@@ -142,7 +213,6 @@
 
 + (void)drawInnerHighlightInRect:(CGRect)rect context:(CGContextRef)ctx
 {
-    // 1px white line 1pt inside the top edge — gives the pressed-in feel.
     if (!ctx) return;
     CGContextSaveGState(ctx);
     CGContextSetStrokeColorWithColor(ctx, [UIColor colorWithWhite:1.0f alpha:0.55f].CGColor);
@@ -178,41 +248,19 @@
     CGContextAddPath(ctx, [roundedPath CGPath]);
     CGContextClip(ctx);
 
-    // Base gradient: tint top lighter, bottom darker.
-    UIColor *top = [tint respondsToSelector:@selector(highlightedColor)] ? tint : tint;
-    UIColor *bottom = [self _darker:tint by:0.25f];
+    UIColor *top = tint;
+    UIColor *bottom = [self darkerColor:tint by:0.25f];
 
     [self drawLinearGradientInRect:rect context:ctx
                           topColor:top bottomColor:bottom];
-
-    // Gloss sheen.
     [self drawGlossInRect:rect context:ctx];
 
-    // If highlighted, dim slightly to suggest press.
     if (highlighted) {
         CGContextSetFillColorWithColor(ctx, [UIColor colorWithWhite:0.0f alpha:0.15f].CGColor);
         CGContextFillRect(ctx, rect);
     }
     CGContextRestoreGState(ctx);
-
-    // Hairline border in a deeper tint.
-    [self drawOuterHairlineInRect:rect context:ctx color:[self _darker:tint by:0.45f]];
-}
-
-+ (UIColor *)darkerColor:(UIColor *)color by:(CGFloat)amount
-{
-    // Quick-and-dirty HSB-darken helper.
-    if (!color) return nil;
-    CGFloat h, s, b, a;
-    [color getHue:&h saturation:&s brightness:&b alpha:&a];
-    b = MAX(0.0f, b - amount);
-    return [UIColor colorWithHue:h saturation:s brightness:b alpha:a];
-}
-
-// Back-compat alias for the underscore-prefixed name used internally.
-+ (UIColor *)_darker:(UIColor *)color by:(CGFloat)amount
-{
-    return [self darkerColor:color by:amount];
+    [self drawOuterHairlineInRect:rect context:ctx color:[self darkerColor:tint by:0.45f]];
 }
 
 #pragma mark - UIKit chrome styling
@@ -222,23 +270,17 @@
                        systemIcon:(UITabBarSystemItem)systemIcon
 {
     if (!nav) return;
-    nav.navigationBar.barStyle = UIBarStyleDefault;       // gives the iOS 6 gradient look
+    nav.navigationBar.barStyle = UIBarStyleDefault;
     nav.navigationBar.tintColor = [self tintColor];
     nav.tabBarItem = [[[UITabBarItem alloc] initWithTabBarSystemItem:systemIcon tag:0] autorelease];
     nav.tabBarItem.title = title;
     nav.navigationBar.translucent = NO;
-
-    // On iOS 6, set title through the top VC.
     nav.topViewController.title = title;
 }
 
 + (void)styleTabBarController:(UITabBarController *)tbc
 {
     if (!tbc) return;
-    // tabBar.barStyle is iOS 7+; on iOS 6 the barStyle is not settable
-    // via the property. Use performSelector:withObject: to avoid a
-    // compile-time error against the iOS 6 SDK where the property
-    // doesn't exist.
     if ([tbc.tabBar respondsToSelector:@selector(setBarStyle:)]) {
         [tbc.tabBar performSelector:@selector(setBarStyle:)
                          withObject:@(UIBarStyleDefault)];
