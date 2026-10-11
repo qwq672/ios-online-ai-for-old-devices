@@ -1,4 +1,4 @@
-Package: com.zai.iOS6AIChat
+Package: com.zai.ios6aichat
 Name: iOS6AIChat
 Version: 1.0.0-1
 Architecture: iphoneos-arm
@@ -12,5 +12,5 @@ Maintainer: iOS6AIChat Contributors <noreply@example.com>
 Author: iOS6AIChat Contributors <noreply@example.com>
 Section: Applications
 Depends: mobilesubstrate
-Conflicts: com.zai.iOS6AIChat-beta
-Replaces: com.zai.iOS6AIChat-beta
+Conflicts: com.zai.ios6aichat-beta
+Replaces: com.zai.ios6aichat-beta
