@@ -63,11 +63,35 @@ jobs:
 
       - name: Install build deps
         run: |
+          set -e
           sudo apt-get update
+          # Note: ldid is NOT in Ubuntu's default apt repos. We install the
+          # other deps here and build ldid from source in the next step.
           sudo apt-get install -y --no-install-recommends \
               clang make perl rsync fakeroot dpkg-dev \
-              ldid libplist-utils zip unzip wget ca-certificates \
-              libcurl4-openssl-dev
+              libplist-dev libssl-dev libplist-utils \
+              zip unzip wget ca-certificates \
+              libcurl4-openssl-dev git
+
+      - name: Build ldid from source
+        run: |
+          # ldid (Link Identity Editor) is the ad-hoc code signer Theos uses
+          # to put a fake signature on Mach-O binaries. Without it, `make
+          # package` cannot assemble the .deb. Ubuntu's stock repos don't
+          # ship ldid, so we clone sbingner/ldid and build it with the
+          # already-installed clang + libplist + openssl.
+          set -e
+          git clone --depth=1 https://github.com/sbingner/ldid.git /tmp/ldid
+          cd /tmp/ldid
+          # sbingner/ldid expects pkg-config for libplist + libcrypto.
+          # The Makefile uses the bare names "libplist" and "libcrypto"
+          # which are in libplist-dev and libssl-dev respectively. We
+          # bypass pkg-config here by setting empty strings.
+          make -j"$(nproc)" \
+              CFLAGS="-O2 -DLDID_VERSION=\\\"2.6.0\\\" -I/usr/include" \
+              LDFLAGS="-lplist-2.0 -lcrypto"
+          sudo install -m 0755 ldid /usr/local/bin/ldid
+          ldid -V 2>&1 | head -1
 
       - name: Determine deployment target / SDK version
         id: cfg
