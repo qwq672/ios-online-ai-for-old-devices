@@ -35,9 +35,9 @@
     UINavigationController *historyNav= [[[UINavigationController alloc] initWithRootViewController:historyVC] autorelease];
     UINavigationController *settingsNav= [[[UINavigationController alloc] initWithRootViewController:settingsVC] autorelease];
 
-    [iOS6Theme styleNavigationController:chatNav     title:NSLocalizedString(@"Chat", nil)    systemIcon:UITabBarSystemItemFavorites];
-    [iOS6Theme styleNavigationController:historyNav  title:NSLocalizedString(@"History", nil) systemIcon:UITabBarSystemItemHistory];
-    [iOS6Theme styleNavigationController:settingsNav title:NSLocalizedString(@"Settings", nil) systemIcon:UITabBarSystemItemContacts];
+    [iOS6Theme styleNavigationController:chatNav     title:NSLocalizedString(@"聊天", nil)     systemIcon:UITabBarSystemItemFavorites];
+    [iOS6Theme styleNavigationController:historyNav  title:NSLocalizedString(@"历史", nil)     systemIcon:UITabBarSystemItemHistory];
+    [iOS6Theme styleNavigationController:settingsNav title:NSLocalizedString(@"设置", nil)     systemIcon:UITabBarSystemItemMore];
 
     UITabBarController *tbc = [[[UITabBarController alloc] init] autorelease];
     tbc.viewControllers = [NSArray arrayWithObjects:chatNav, historyNav, settingsNav, nil];

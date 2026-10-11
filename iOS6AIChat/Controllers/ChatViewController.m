@@ -74,7 +74,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
     CGRect tableFrame = CGRectMake(0, 0,
                                     self.view.bounds.size.width,
-                                    self.view.bounds.size.height - 56);
+                                    self.view.bounds.size.height - 86);
     _tableView = [[UITableView alloc] initWithFrame:tableFrame style:UITableViewStylePlain];
     _tableView.dataSource = self;
     _tableView.delegate = self;
@@ -90,10 +90,12 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     }
     [self.view addSubview:_tableView];
 
+    // Composer initial height = row1 (34) + small gap + min row2 (44) + pad (6) ≈ 86.
+    CGFloat composerInitH = 86.0f;
     _composer = [[ComposerView alloc] initWithFrame:CGRectMake(0,
-                                                                 self.view.bounds.size.height - 56,
+                                                                 self.view.bounds.size.height - composerInitH,
                                                                  self.view.bounds.size.width,
-                                                                 56)];
+                                                                 composerInitH)];
     _composer.delegate = self;
     _composer.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
                                     UIViewAutoresizingFlexibleTopMargin);
@@ -126,6 +128,11 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
+    // Re-apply theme in case it changed in Settings.
+    self.view.backgroundColor = [iOS6Theme pinstripeBackground];
+    _tableView.backgroundColor = [UIColor clearColor];
+    _composer.backgroundColor = [iOS6Theme pinstripeBackground];
+    [_tableView reloadData];
     [self _scrollToBottomAnimated:NO];
 }
 

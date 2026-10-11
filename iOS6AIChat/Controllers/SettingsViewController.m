@@ -66,11 +66,18 @@ enum {
 {
     if (self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil]) {
         self.title = NSLocalizedString(@"Settings", nil);
-        _fields = [NSMutableDictionary dictionary];
+        // CRITICAL: MRC — _fields and _provider must be properly retained/copied.
+        // Direct ivar assignment bypasses the property setter, so autoreleased
+        // values become dangling pointers after the init's autorelease pool
+        // drains. Then cellForRowAtIndexPath:_fields setObject:forKey: hits
+        // freed memory → app crashes when user taps the Settings tab.
+        _fields = [[NSMutableDictionary alloc] init];
         _availableModels = [[NSMutableArray array] retain];
         NSDictionary *loaded = [SettingsViewController loadSettings];
         _useTransit = [[loaded objectForKey:SettingsKeyUseTransit] boolValue];
-        _provider = [loaded objectForKey:SettingsKeyProvider];
+        // Use the property setter (copy semantics) — this retains the
+        // string instead of leaving the autoreleased value dangling.
+        self.provider = [loaded objectForKey:SettingsKeyProvider];
     }
     return self;
 }
@@ -214,7 +221,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         [iOS6Theme setDarkMode:[[loaded objectForKey:SettingsKeyDarkMode] boolValue]];
         [iOS6Theme setFontSize:[[loaded objectForKey:SettingsKeyFontSize] integerValue]];
 
-        _fields = [NSMutableDictionary dictionary];
+        [_fields release]; _fields = [[NSMutableDictionary alloc] init];
         [_tableView reloadData];
     }
     else if (alertView.tag == 200 && buttonIndex > 0) {
@@ -227,7 +234,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         [d setObject:[SettingsViewController defaultModelForProvider:newProv]
           forKey:SettingsKeyModel];
         [d synchronize];
-        _fields = [NSMutableDictionary dictionary];
+        [_fields release]; _fields = [[NSMutableDictionary alloc] init];
         [_tableView reloadData];
     }
     else if (alertView.tag == 300) {
@@ -611,7 +618,7 @@ didDismissWithButtonIndex:(NSInteger)buttonIndex
         NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
         [d setObject:chosen forKey:SettingsKeyModel];
         [d synchronize];
-        _fields = [NSMutableDictionary dictionary];
+        [_fields release]; _fields = [[NSMutableDictionary alloc] init];
         [_tableView reloadData];
     }
 }
@@ -638,7 +645,7 @@ didDismissWithButtonIndex:(NSInteger)buttonIndex
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
     [d setBool:sw.on forKey:SettingsKeyUseTransit];
     [d synchronize];
-    _fields = [NSMutableDictionary dictionary];
+    [_fields release]; _fields = [[NSMutableDictionary alloc] init];
     [self.tableView reloadData];
 }
 

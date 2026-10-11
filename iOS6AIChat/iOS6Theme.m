@@ -22,39 +22,44 @@ static NSString * const kUDKeyFontSize = @"theme.fontSize";
 // Font size multipliers.
 static CGFloat const kFontScale[] = { 0.85f, 1.0f, 1.15f, 1.3f, 1.5f };
 
-// Light palette — warm parchment + bronze.
-static NSString * const kHexLightTint           = @"#8B5A2B";   // aged-leather bronze
-static NSString * const kHexLightNavbarTop      = @"#B8895A";   // warm tan
-static NSString * const kHexLightNavbarBottom   = @"#5A3818";   // dark leather
-static NSString * const kHexLightTabbarTop      = @"#EAE0CD";   // cream
-static NSString * const kHexLightTabbarBottom   = @"#A89A82";   // tan-grey
-static NSString * const kHexLightPinstripe      = @"#F4ECDC";   // very light cream
-static NSString * const kHexLightPinstripeBG    = @"#E8DFC9";   // warm beige
-static NSString * const kHexLightBubbleUser     = @"#E8DDC8";   // soft beige
-static NSString * const kHexLightBubbleUserB    = @"#7A5A38";   // bronze border
-static NSString * const kHexLightBubbleAI       = @"#FBF6EA";   // near-white cream
-static NSString * const kHexLightBubbleAIB      = @"#B0A48C";   // soft tan border
-static NSString * const kHexLightText           = @"#1F1A14";   // warm black
-static NSString * const kHexLightTextSecondary  = @"#6B5D4A";   // warm grey
-static NSString * const kHexLightCodeBG         = @"#F2EBD9";   // soft cream
-static NSString * const kHexLightCodeBorder     = @"#B0A48C";
+// Light palette — cool off-white + deep emerald accent.
+// Deliberately NOT all-warm per user feedback ("不是只要是暖色就高级").
+// The deep emerald accent on a cool grey background gives a more
+// sophisticated "professional journal" look — distinct from the
+// bronze-on-cream warmth of the previous iteration.
+static NSString * const kHexLightTint           = @"#0F7B5D";   // deep emerald (sophisticated, not bright)
+static NSString * const kHexLightNavbarTop      = @"#1A8B6F";   // emerald (slightly brighter on top)
+static NSString * const kHexLightNavbarBottom   = @"#0A5440";   // dark emerald
+static NSString * const kHexLightTabbarTop      = @"#E8EEF0";   // cool cream
+static NSString * const kHexLightTabbarBottom   = @"#9CA8B0";   // cool grey
+static NSString * const kHexLightPinstripe      = @"#F4F6F8";   // very pale cool
+static NSString * const kHexLightPinstripeBG    = @"#E8ECEF";   // soft cool grey
+static NSString * const kHexLightBubbleUser     = @"#D5E8E2";   // pale emerald-tinted
+static NSString * const kHexLightBubbleUserB    = @"#3A6B5D";   // emerald border
+static NSString * const kHexLightBubbleAI       = @"#FAFBFC";   // near-white
+static NSString * const kHexLightBubbleAIB      = @"#C5CDD2";   // soft cool grey border
+static NSString * const kHexLightText           = @"#1A2530";   // deep navy-charcoal
+static NSString * const kHexLightTextSecondary  = @"#5C6B7A";   // cool grey
+static NSString * const kHexLightCodeBG         = @"#ECEFF2";   // pale cool grey
+static NSString * const kHexLightCodeBorder     = @"#C5CDD2";
 
-// Dark palette — deep charcoal + warm amber gold.
-static NSString * const kHexDarkTint            = @"#D4A661";   // amber gold
-static NSString * const kHexDarkNavbarTop       = @"#2C2C2C";   // dark grey
-static NSString * const kHexDarkNavbarBottom    = @"#0F0F0F";   // near-black
-static NSString * const kHexDarkTabbarTop        = @"#1F1F1F";
-static NSString * const kHexDarkTabbarBottom     = @"#0A0A0A";
-static NSString * const kHexDarkPinstripe        = @"#252525";
-static NSString * const kHexDarkPinstripeBG     = @"#1A1A1A";
-static NSString * const kHexDarkBubbleUser      = @"#3A2A1A";   // dark warm brown
-static NSString * const kHexDarkBubbleUserB     = @"#8B5A2B";
-static NSString * const kHexDarkBubbleAI        = @"#2A2A2A";   // dark grey
-static NSString * const kHexDarkBubbleAIB       = @"#5A5A5A";
-static NSString * const kHexDarkText            = @"#F5EFE0";   // warm cream
-static NSString * const kHexDarkTextSecondary   = @"#A8A098";
-static NSString * const kHexDarkCodeBG          = @"#252525";
-static NSString * const kHexDarkCodeBorder      = @"#3A3A3A";
+// Dark palette — deep navy-charcoal + warm amber accent.
+// The amber-on-charcoal contrast creates the "Rolex boutique" feel.
+static NSString * const kHexDarkTint            = @"#D4A661";   // warm amber gold
+static NSString * const kHexDarkNavbarTop       = @"#1A2025";   // dark navy-charcoal
+static NSString * const kHexDarkNavbarBottom    = @"#0A0E12";   // near-black navy
+static NSString * const kHexDarkTabbarTop        = @"#1A2025";
+static NSString * const kHexDarkTabbarBottom     = @"#08090C";
+static NSString * const kHexDarkPinstripe        = @"#1F252B";
+static NSString * const kHexDarkPinstripeBG     = @"#0F1419";
+static NSString * const kHexDarkBubbleUser      = @"#1F2D33";   // deep emerald-tinted charcoal
+static NSString * const kHexDarkBubbleUserB     = @"#3A5A4D";
+static NSString * const kHexDarkBubbleAI        = @"#1A2025";   // charcoal
+static NSString * const kHexDarkBubbleAIB       = @"#3A4250";
+static NSString * const kHexDarkText            = @"#F0E8D5";   // warm cream
+static NSString * const kHexDarkTextSecondary   = @"#9CA0A8";
+static NSString * const kHexDarkCodeBG          = @"#1F252B";
+static NSString * const kHexDarkCodeBorder      = @"#3A4250";
 
 @implementation iOS6Theme
 
@@ -73,8 +78,12 @@ static NSString * const kHexDarkCodeBorder      = @"#3A3A3A";
 
 + (iOS6ThemeFontSize)fontSize
 {
-    NSInteger v = [[NSUserDefaults standardUserDefaults] integerForKey:kUDKeyFontSize];
-    if (v < 0 || v > 4) v = 1; // default medium
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    // On first launch (no stored value), default to Medium (1.0x).
+    // Otherwise: clamp to valid range.
+    if (![d objectForKey:kUDKeyFontSize]) return iOS6ThemeFontSizeMedium;
+    NSInteger v = [d integerForKey:kUDKeyFontSize];
+    if (v < 0 || v > 4) return iOS6ThemeFontSizeMedium;
     return (iOS6ThemeFontSize)v;
 }
 

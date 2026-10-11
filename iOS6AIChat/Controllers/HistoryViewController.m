@@ -35,20 +35,19 @@ static NSString *const kCellReuseID = @"HistoryCell";
     [super viewDidLoad];
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
 
+    // Use the full bounds — the nav controller's container view already
+    // sizes the VC's view to fit below the navbar.
     CGRect frame = self.view.bounds;
-    frame.origin.y = 0;
-    if (self.navigationController.navigationBar) {
-        // We're inside a UINavigationController, so account for navbar.
-        CGFloat navH = self.navigationController.navigationBar.bounds.size.height;
-        frame.size.height -= navH;
-        // Status bar height (20pt) is also accounted for by the nav controller layout,
-        // so we don't subtract 20 here separately.
-    }
     _tableView = [[UITableView alloc] initWithFrame:frame style:UITableViewStyleGrouped];
     _tableView.dataSource = self;
     _tableView.delegate = self;
     _tableView.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
                                     UIViewAutoresizingFlexibleHeight);
+    // Make the table view transparent so the parent's pinstripe shows
+    // through between cells (otherwise we get a bright default background
+    // bleeding through and the theme looks broken).
+    _tableView.backgroundColor = [UIColor clearColor];
+    _tableView.opaque = NO;
     [self.view addSubview:_tableView];
 
     self.navigationItem.rightBarButtonItem = self.editButtonItem;
@@ -57,6 +56,9 @@ static NSString *const kCellReuseID = @"HistoryCell";
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
+    // Re-apply theme in case it changed in Settings.
+    self.view.backgroundColor = [iOS6Theme pinstripeBackground];
+    _tableView.backgroundColor = [UIColor clearColor];
     [_tableView reloadData];
 }
 

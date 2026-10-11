@@ -150,6 +150,12 @@ ipa: package
 	if [ ! -f "$$APP/Info.plist" ]; then \
 	    cp iOS6AIChat/Resources/iOS6AIChat-Info.plist "$$APP/Info.plist"; \
 	fi; \
+	echo "==> Copying app icons into the bundle root"; \
+	for icon in Icon.png Icon@2x.png Icon-72.png Icon-72@2x.png; do \
+	    if [ -f "iOS6AIChat/Resources/Icons/$$icon" ] && [ ! -f "$$APP/$$icon" ]; then \
+		cp "iOS6AIChat/Resources/Icons/$$icon" "$$APP/$$icon"; \
+	    fi; \
+	done; \
 	echo "==> Converting Info.plist to binary format (iOS 6 prefers binary)"; \
 	if command -v plutil >/dev/null 2>&1; then \
 	    plutil -convert binary1 "$$APP/Info.plist" 2>/dev/null || true; \
