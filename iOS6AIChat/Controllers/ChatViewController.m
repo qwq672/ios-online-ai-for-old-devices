@@ -386,6 +386,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                       conversationID:(NSString *)conversationID
                         assistantMsg:(Message *)assistantMsg
 {
+    _networkService.thinkingEnabled = deepThinking;
     [_networkService streamChatWithUseTransit:useTransit
                                     transitURL:transitURL
                                       baseURL:baseURL
@@ -398,6 +399,17 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 }
 
 #pragma mark - NetworkServiceDelegate
+
+- (void)networkService:(NetworkService *)svc
+didReceiveThinkingForConversationID:(NSString *)conversationID
+                          thinkingText:(NSString *)thinkingText
+{
+    if (![conversationID isEqualToString:_conversation.conversationID]) return;
+    // Store thinking in the last assistant message.
+    [_conversation.lastMessage setThinking:thinkingText];
+    // Don't save to disk every chunk (too slow). Only save on finish.
+    [self _refreshLastRow];
+}
 
 - (void)networkService:(NetworkService *)svc
 didReceiveChunkForConversationID:(NSString *)conversationID
@@ -415,6 +427,9 @@ didFinishForConversationID:(NSString *)conversationID
 {
     if (![conversationID isEqualToString:_conversation.conversationID]) return;
     [_conversation updateLastAssistantMessageContent:fullText ?: @""];
+    // Also persist the thinking text if the network service accumulated any.
+    // (The delegate already set it via didReceiveThinking, but let's make sure
+    // the saved .conv file includes it.)
     [[ConversationStore sharedStore] saveConversation:_conversation];
     [self _refreshLastRow];
     _composer.isStreaming = NO;

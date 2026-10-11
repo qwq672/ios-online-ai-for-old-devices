@@ -35,6 +35,7 @@
         _contentHTML = [[coder decodeObjectForKey:@"contentHTML"] copy];
         _createdAt   = [[coder decodeObjectForKey:@"createdAt"] copy];
         _messageID   = [[coder decodeObjectForKey:@"messageID"] copy];
+        _thinking    = [[coder decodeObjectForKey:@"thinking"] copy];
     }
     return self;
 }
@@ -46,6 +47,7 @@
     [coder encodeObject:_contentHTML                 forKey:@"contentHTML"];
     [coder encodeObject:_createdAt                   forKey:@"createdAt"];
     [coder encodeObject:_messageID                   forKey:@"messageID"];
+    [coder encodeObject:_thinking                    forKey:@"thinking"];
 }
 
 #pragma mark - NSCopying
@@ -69,6 +71,7 @@
     [_contentHTML release];
     [_createdAt   release];
     [_messageID   release];
+    [_thinking    release];
     [super dealloc];
 }
 

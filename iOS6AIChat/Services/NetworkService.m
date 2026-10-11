@@ -22,6 +22,8 @@
 @property (nonatomic, retain) NSURLConnection *connection;
 @property (nonatomic, retain) NSMutableData   *rawBuffer;
 @property (nonatomic, retain) NSMutableString *accumulated;
+@property (nonatomic, retain) NSMutableString *accumulatedThinking;
+@property (nonatomic, assign) BOOL _inThinkTag;
 @property (nonatomic, copy)   NSString         *conversationID;
 @property (nonatomic, retain) NSError          *lastError;
 @end
@@ -37,6 +39,7 @@
     if (self = [super init]) {
         _rawBuffer   = [[NSMutableData alloc] init];
         _accumulated = [[NSMutableString alloc] init];
+        _accumulatedThinking = [[NSMutableString alloc] init];
     }
     return self;
 }
@@ -72,6 +75,7 @@
 
     self.conversationID = conversationID;
     [_accumulated setString:@""];
+    [_accumulatedThinking setString:@""];
 
     // Build the messages payload in OpenAI format.
     NSMutableArray *msgs = [NSMutableArray arrayWithCapacity:[messages count]];
@@ -82,12 +86,15 @@
         [msgs addObject:@{ @"role": role, @"content": m.content ?: @"" }];
     }
 
-    NSDictionary *body = @{
+    NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:@{
         @"model":       model ?: @"gpt-3.5-turbo",
         @"messages":    msgs,
         @"stream":      @YES,
         @"temperature": [NSNumber numberWithFloat:(float)temperature]
-    };
+    }];
+    if (self.thinkingEnabled) {
+        [body setObject:@{@"type": @"enabled"} forKey:@"thinking"];
+    }
     NSError *jsonErr = nil;
     NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body
                                                        options:0
@@ -156,6 +163,12 @@
         [_delegate networkService:self
              didFinishForConversationID:_conversationID
                              fullText:_accumulated];
+    }
+    // Also fire a final thinking callback if we accumulated any.
+    if (_accumulatedThinking.length > 0 && [_delegate respondsToSelector:@selector(networkService:didReceiveThinkingForConversationID:thinkingText:)]) {
+        [_delegate networkService:self
+didReceiveThinkingForConversationID:_conversationID
+                         thinkingText:_accumulatedThinking];
     }
 }
 
@@ -255,10 +268,31 @@
         NSDictionary *delta    = [choice0 objectForKey:@"delta"];
         if (![delta isKindOfClass:[NSDictionary class]]) continue;
 
+        // Parse reasoning_content / reasoning (separate from content) — used by
+        // DeepSeek-R1, GLM-4.5, Qwen3-thinking, etc. when thinking mode is on.
+        NSString *reasoning = [delta objectForKey:@"reasoning_content"];
+        if (![reasoning isKindOfClass:[NSString class]]) reasoning = [delta objectForKey:@"reasoning"];
+        if ([reasoning isKindOfClass:[NSString class]] && reasoning.length > 0) {
+            [_accumulatedThinking appendString:reasoning];
+            if ([_delegate respondsToSelector:@selector(networkService:didReceiveThinkingForConversationID:thinkingText:)]) {
+                NSString *thinkCopy = [NSString stringWithString:_accumulatedThinking];
+                [_delegate networkService:self
+    didReceiveThinkingForConversationID:_conversationID
+                             thinkingText:thinkCopy];
+            }
+        }
+
         NSString *content = [delta objectForKey:@"content"];
         if (![content isKindOfClass:[NSString class]] || content.length == 0) continue;
 
-        [_accumulated appendString:content];
+        // Also detect <think>...</think> tags embedded in content stream (some
+        // models put reasoning inside content instead of a separate field).
+        // Strip these from the visible content and redirect to thinking buffer.
+        if ([content rangeOfString:@"<think"].location != NSNotFound || _inThinkTag) {
+            [self _processThinkTagsInContent:content];
+        } else {
+            [_accumulated appendString:content];
+        }
 
         // Push incremental update to delegate.
         if ([_delegate respondsToSelector:@selector(networkService:didReceiveChunkForConversationID:fullText:)]) {
@@ -270,11 +304,81 @@
     }
 }
 
+// Process content that may contain <think>...</think> tags. Everything inside
+// the tags goes to _accumulatedThinking; everything outside goes to _accumulated.
+- (void)_processThinkTagsInContent:(NSString *)content
+{
+    NSUInteger i = 0;
+    NSUInteger len = content.length;
+    while (i < len) {
+        if (_inThinkTag) {
+            // Look for closing </think>
+            NSRange close = [content rangeOfString:@"</think" options:0
+                                              range:NSMakeRange(i, len - i)];
+            if (close.location != NSNotFound) {
+                // Append everything before </think> to thinking buffer.
+                NSString *thinkPart = [content substringWithRange:
+                                       NSMakeRange(i, close.location - i)];
+                [_accumulatedThinking appendString:thinkPart];
+                if ([_delegate respondsToSelector:@selector(networkService:didReceiveThinkingForConversationID:thinkingText:)]) {
+                    NSString *thinkCopy = [NSString stringWithString:_accumulatedThinking];
+                    [_delegate networkService:self
+        didReceiveThinkingForConversationID:_conversationID
+                                 thinkingText:thinkCopy];
+                }
+                // Skip past </think> (may be </think> or </think>)
+                NSRange gt = [content rangeOfString:@">" options:0
+                                               range:NSMakeRange(close.location, len - close.location)];
+                if (gt.location != NSNotFound) {
+                    i = gt.location + 1;
+                } else {
+                    i = close.location + 7;
+                }
+                _inThinkTag = NO;
+            } else {
+                // No closing tag yet — rest is all thinking.
+                [_accumulatedThinking appendString:[content substringFromIndex:i]];
+                if ([_delegate respondsToSelector:@selector(networkService:didReceiveThinkingForConversationID:thinkingText:)]) {
+                    NSString *thinkCopy = [NSString stringWithString:_accumulatedThinking];
+                    [_delegate networkService:self
+        didReceiveThinkingForConversationID:_conversationID
+                                 thinkingText:thinkCopy];
+                }
+                i = len;
+            }
+        } else {
+            // Look for opening <think
+            NSRange open = [content rangeOfString:@"<think" options:0
+                                              range:NSMakeRange(i, len - i)];
+            if (open.location != NSNotFound) {
+                // Append everything before <think> to content buffer.
+                [_accumulated appendString:[content substringWithRange:
+                                             NSMakeRange(i, open.location - i)]];
+                i = open.location;
+                // Skip past <think> (may be <think> or <think ...>)
+                NSRange gt = [content rangeOfString:@">" options:0
+                                               range:NSMakeRange(i, len - i)];
+                if (gt.location != NSNotFound) {
+                    i = gt.location + 1;
+                } else {
+                    i = open.location + 6;
+                }
+                _inThinkTag = YES;
+            } else {
+                // No <think> tag — rest is regular content.
+                [_accumulated appendString:[content substringFromIndex:i]];
+                i = len;
+            }
+        }
+    }
+}
+
 - (void)dealloc
 {
     [_connection release];
     [_rawBuffer release];
     [_accumulated release];
+    [_accumulatedThinking release];
     [_conversationID release];
     [_lastError release];
     [super dealloc];

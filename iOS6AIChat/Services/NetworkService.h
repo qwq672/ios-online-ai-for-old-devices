@@ -27,6 +27,7 @@
 @interface NetworkService : NSObject <NSURLConnectionDelegate>
 
 @property (nonatomic, assign) id<NetworkServiceDelegate> delegate;
+@property (nonatomic, assign) BOOL thinkingEnabled;
 
 // Kick off a streaming chat completion.
 - (BOOL)streamChatWithUseTransit:(BOOL)useTransit

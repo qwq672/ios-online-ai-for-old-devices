@@ -29,6 +29,7 @@ extern NSString *const SettingsKeySystemPrompt;
 extern NSString *const SettingsKeyWebSearchEnabled;
 extern NSString *const SettingsKeyTavilyAPIKey;
 extern NSString *const SettingsKeyTavilyMaxResults;
+extern NSString *const SettingsKeyImageMaxDim;  // image max dimension in px (0=original, 1024, 2048)
 
 // Provider IDs.
 extern NSString *const ProviderIDZhipu;

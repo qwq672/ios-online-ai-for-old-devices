@@ -38,6 +38,7 @@ NSString *const SettingsKeySystemPrompt       = @"systemPrompt";
 NSString *const SettingsKeyWebSearchEnabled = @"webSearchEnabled";
 NSString *const SettingsKeyTavilyAPIKey      = @"tavilyAPIKey";
 NSString *const SettingsKeyTavilyMaxResults  = @"tavilyMaxResults";
+NSString *const SettingsKeyImageMaxDim = @"imageMaxDim";
 
 NSString *const ProviderIDZhipu  = @"zhipu";
 NSString *const ProviderIDOpenAI = @"openai";
@@ -177,7 +178,8 @@ enum {
         SettingsKeySystemPrompt:        [d stringForKey:SettingsKeySystemPrompt] ?: NSLocalizedString(@"You are a helpful assistant.", nil),
         SettingsKeyWebSearchEnabled:    @([d boolForKey:SettingsKeyWebSearchEnabled]),
         SettingsKeyTavilyAPIKey:        [d stringForKey:SettingsKeyTavilyAPIKey] ?: @"",
-        SettingsKeyTavilyMaxResults:    @(tavMax)
+        SettingsKeyTavilyMaxResults:    @(tavMax),
+        SettingsKeyImageMaxDim:       @([d objectForKey:SettingsKeyImageMaxDim] ? [[d stringForKey:SettingsKeyImageMaxDim] integerValue] : 1024)
     };
 }
 

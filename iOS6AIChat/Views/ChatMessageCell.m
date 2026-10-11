@@ -57,6 +57,20 @@
     self.renderedAttr = [MarkdownParser attributedStringFromMarkdown:message.content
                                                              baseFont:base
                                                                 width:textWidth];
+    // If message has thinking content, prepend it in a dimmed section.
+    if (_message.thinking && _message.thinking.length > 0) {
+        NSMutableAttributedString *withThinking = [NSMutableAttributedString new];
+        UIFont *thinkFont = [UIFont italicSystemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
+        UIColor *thinkColor = [iOS6Theme secondaryTextColor];
+        [withThinking appendAttributedString:[[[NSAttributedString alloc]
+            initWithString:@"💭 思考过程:\n" attributes:@{NSFontAttributeName: [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:13]], NSForegroundColorAttributeName: thinkColor}] autorelease]];
+        [withThinking appendAttributedString:[[[NSAttributedString alloc]
+            initWithString:_message.thinking attributes:@{NSFontAttributeName: thinkFont, NSForegroundColorAttributeName: thinkColor}] autorelease]];
+        [withThinking appendAttributedString:[[[NSAttributedString alloc]
+            initWithString:@"\n\n" attributes:@{NSFontAttributeName: thinkFont}] autorelease]];
+        [withThinking appendAttributedString:_renderedAttr];
+        _renderedAttr = [withThinking autorelease];
+    }
     _textView.attributedText = _renderedAttr;
     [self setNeedsLayout];
 }

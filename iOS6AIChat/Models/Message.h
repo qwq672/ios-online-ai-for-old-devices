@@ -18,7 +18,8 @@ typedef enum {
 @interface Message : NSObject <NSCoding, NSCopying>
 
 @property (nonatomic, assign) MessageRole role;
-@property (nonatomic, copy)   NSString     *content;     // raw text or markdown
+@property (nonatomic, copy)   NSString     *content;
+@property (nonatomic, copy)   NSString     *thinking;     // raw text or markdown
 @property (nonatomic, copy)   NSString     *contentHTML; // optional: rendered HTML cache
 @property (nonatomic, strong) NSDate       *createdAt;
 @property (nonatomic, copy)   NSString     *messageID;   // UUID
