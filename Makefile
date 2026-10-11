@@ -105,13 +105,14 @@ THEOS_LEAN_PACKAGE = 1
 # === Theos bootstrap =====================================================
 ifneq ($(THEOS),)
     include $(THEOS)/makefiles/common.mk
-    # Modern Theos master doesn't auto-include rules.mk at the top level,
-    # which means master/application.mk never gets loaded and `make all`
-    # ends up empty ("Nothing to be done for 'all'"). Explicitly include
-    # rules.mk AND master/application.mk here so the real `all::` target
-    # + application instance machinery is registered.
+    # Modern Theos master doesn't auto-include rules.mk OR the type
+    # dispatcher (application.mk) at the top level — without these,
+    # `make all` ends up empty ("Nothing to be done for 'all'"). The
+    # canonical Theos entry point is `application.mk`, which dispatches
+    # to master/application.mk (top-level) or instance/application.mk
+    # (recursive make when THEOS_CURRENT_INSTANCE is set).
     include $(THEOS)/makefiles/rules.mk
-    include $(THEOS)/makefiles/master/application.mk
+    include $(THEOS)/makefiles/application.mk
 else
     $(error "THEOS env var not set. Install Theos: https://theos.dev/docs/installation-linux")
 endif
