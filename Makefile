@@ -85,13 +85,18 @@ iOS6AIChat_CFLAGS  = -fno-objc-arc -fobjc-exceptions -fobjc-legacy-dispatch \
 iOS6AIChat_LDFLAGS = -framework UIKit -framework Foundation -framework CoreGraphics
 
 # === Packaging ===========================================================
-# Theos package scheme — modern Theos master no longer has a "rootful"
-# scheme name; the default (no scheme set) produces a rootful .deb which
-# is what iOS 6 era jailbreaks use. For rootless (modern, iOS 15+):
-#   make THEOS_PACKAGE_SCHEME=rootless
-#THEOS_PACKAGE_SCHEME = rootless
+# Theos package scheme — modern Theos master supports 'rootless' for
+# modern jailbreaks (palera1n, Dopamine). For iOS 6 rootful jailbreaks
+# the .deb format is the same; rootless installs to /var/jb/Applications
+# but on a rootful jailbreak that path doesn't exist, so use rootless
+# scheme + override INSTALL_PATH below.
+# To force rootful scheme on older Theos versions, set:
+#   make THEOS_PACKAGE_SCHEME=rootful
+THEOS_PACKAGE_SCHEME = rootless
 
 # Install the .app under /Applications (becomes a system app on jailbreak).
+# On rootless jailbreaks this is /var/jb/Applications; on rootful iOS 6
+# jailbreaks (evasi0n etc.) this is /Applications directly.
 INSTALL_PATH = /Applications
 
 # Lean packaging strips debug symbols; smaller .deb.
@@ -106,24 +111,30 @@ endif
 
 # === Convenience targets =================================================
 
+# Local clean target — Theos' built-in `clean` may not exist on all
+# versions; this provides a fallback that wipes the local build dirs.
+.PHONY: clean
+clean:
+	rm -rf .theos obj build packages Payload *.deb iOS6AIChat-unsigned.ipa
+
 # Pack an unsigned .ipa from the .app Theos just produced.
 # The .app is inside the staged .deb payload at .theos/_/Applications/.
 .PHONY: ipa clean-ipa show-app
 ipa: package
-	@echo "==> Locating staged .app bundle in .theos/_/"
-	@BUILT_APP=$$(find .theos/_ -name "iOS6AIChat.app" -type d 2>/dev/null | head -1); \
-	if [ -z "$$BUILT_APP" ]; then \
-	    echo "Could not find iOS6AIChat.app — did 'make package' succeed?"; exit 1; \
-	fi; \
-	echo "==> Found $$BUILT_APP"; \
-	rm -rf Payload iOS6AIChat-unsigned.ipa; \
-	mkdir Payload; \
-	cp -R "$$BUILT_APP" Payload/; \
-	zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null; \
-	echo "==> Built iOS6AIChat-unsigned.ipa"
+        @echo "==> Locating staged .app bundle in .theos/_/"
+        @BUILT_APP=$$(find .theos/_ -name "iOS6AIChat.app" -type d 2>/dev/null | head -1); \
+        if [ -z "$$BUILT_APP" ]; then \
+            echo "Could not find iOS6AIChat.app — did 'make package' succeed?"; exit 1; \
+        fi; \
+        echo "==> Found $$BUILT_APP"; \
+        rm -rf Payload iOS6AIChat-unsigned.ipa; \
+        mkdir Payload; \
+        cp -R "$$BUILT_APP" Payload/; \
+        zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null; \
+        echo "==> Built iOS6AIChat-unsigned.ipa"
 
 show-app: package
-	@find .theos/_ -name "iOS6AIChat.app" -type d -print -quit
+        @find .theos/_ -name "iOS6AIChat.app" -type d -print -quit
 
 clean-ipa:
-	rm -rf Payload iOS6AIChat-unsigned.ipa
+        rm -rf Payload iOS6AIChat-unsigned.ipa
