@@ -213,6 +213,8 @@ jobs:
           ls "$DESTDIR"
 
       - name: Build .deb with Theos
+        env:
+          THEOS_VERBOSE: "1"
         run: |
           set -euo pipefail
           DT="${{ steps.cfg.outputs.deployment_target }}"
@@ -223,10 +225,18 @@ jobs:
           # gets defined. Pre-creating the packages/ directory sidesteps
           # this — Make treats an existing file/dir as already up-to-date.
           mkdir -p packages
+          # Run a `make` first (default target) to actually compile + link,
+          # then `make package` to pack into .deb. Theos' `make package`
+          # alone sometimes skips the compile step.
+          make TARGET="iphone:clang:${DT}:${SV}" 2>&1 | tail -80 || true
+          echo "---"
           make package \
               TARGET="iphone:clang:${DT}:${SV}"
           echo "--- packages/ ---"
           ls -la packages/ 2>/dev/null || ls -la *.deb 2>/dev/null
+          echo "--- .theos/_ tree ---"
+          find .theos/_ -type d 2>/dev/null | head -30 || true
+          find .theos/_ -type f 2>/dev/null | head -30 || true
 
       - name: Pack unsigned .ipa
         run: |
