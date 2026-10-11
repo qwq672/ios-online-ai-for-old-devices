@@ -88,8 +88,14 @@
    didReceiveChunkForConversationID:(NSString *)conversationID
                        fullText:(NSString *)fullText;
 - (void)networkService:(NetworkService *)svc
+didReceiveThinkingForConversationID:(NSString *)conversationID
+                          thinkingText:(NSString *)thinkingText;
+- (void)networkService:(NetworkService *)svc
  didFinishForConversationID:(NSString *)conversationID
                        fullText:(NSString *)fullText;
+- (void)networkService:(NetworkService *)svc
+didReceiveThinkingForConversationID:(NSString *)conversationID
+                          thinkingText:(NSString *)thinkingText;
 - (void)networkService:(NetworkService *)svc
      didFailForConversationID:(NSString *)conversationID
                        error:(NSError *)error;

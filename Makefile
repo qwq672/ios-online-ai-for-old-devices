@@ -84,7 +84,8 @@ iOS6AIChat_FRAMEWORKS = UIKit Foundation CoreGraphics
 # so each subdirectory that contains .h files must be on the include path.
 iOS6AIChat_CFLAGS  = -fno-objc-arc -fobjc-exceptions -fobjc-legacy-dispatch \
 		     -Wno-deprecated -Wno-error=implicit-function-declaration \
-		     -Wno-error=unused-variable -Wno-unused-variable \
+		     -Wno-error=unused-variable -Wno-unused-variable
+		     -Wno-error=objc-method-access -Wno-objc-method-access \
 		     -std=gnu99 \
 		     -IiOS6AIChat -IiOS6AIChat/Models -IiOS6AIChat/Services \
 		     -IiOS6AIChat/Views -IiOS6AIChat/Controllers -IiOS6AIChat/Resources

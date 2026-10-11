@@ -23,7 +23,7 @@
 @property (nonatomic, retain) NSMutableData   *rawBuffer;
 @property (nonatomic, retain) NSMutableString *accumulated;
 @property (nonatomic, retain) NSMutableString *accumulatedThinking;
-@property (nonatomic, assign) BOOL _inThinkTag;
+@property (nonatomic, assign) BOOL inThinkTag;
 @property (nonatomic, copy)   NSString         *conversationID;
 @property (nonatomic, retain) NSError          *lastError;
 @end
