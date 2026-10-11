@@ -80,8 +80,8 @@ iOS6AIChat_FRAMEWORKS = UIKit Foundation CoreGraphics
 # -Wno-deprecated          → silence iOS-6-era API deprecation warnings
 # -Wno-error=implicit-function-declaration → don't fail on missing prototypes
 iOS6AIChat_CFLAGS  = -fno-objc-arc -fobjc-exceptions -fobjc-legacy-dispatch \
-                     -Wno-deprecated -Wno-error=implicit-function-declaration \
-                     -std=gnu99
+		     -Wno-deprecated -Wno-error=implicit-function-declaration \
+		     -std=gnu99
 iOS6AIChat_LDFLAGS = -framework UIKit -framework Foundation -framework CoreGraphics
 
 # === Packaging ===========================================================
@@ -121,20 +121,20 @@ clean:
 # The .app is inside the staged .deb payload at .theos/_/Applications/.
 .PHONY: ipa clean-ipa show-app
 ipa: package
-        @echo "==> Locating staged .app bundle in .theos/_/"
-        @BUILT_APP=$$(find .theos/_ -name "iOS6AIChat.app" -type d 2>/dev/null | head -1); \
-        if [ -z "$$BUILT_APP" ]; then \
-            echo "Could not find iOS6AIChat.app — did 'make package' succeed?"; exit 1; \
-        fi; \
-        echo "==> Found $$BUILT_APP"; \
-        rm -rf Payload iOS6AIChat-unsigned.ipa; \
-        mkdir Payload; \
-        cp -R "$$BUILT_APP" Payload/; \
-        zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null; \
-        echo "==> Built iOS6AIChat-unsigned.ipa"
+	@echo "==> Locating staged .app bundle in .theos/_/"
+	@BUILT_APP=$$(find .theos/_ -name "iOS6AIChat.app" -type d 2>/dev/null | head -1); \
+	if [ -z "$$BUILT_APP" ]; then \
+	    echo "Could not find iOS6AIChat.app — did 'make package' succeed?"; exit 1; \
+	fi; \
+	echo "==> Found $$BUILT_APP"; \
+	rm -rf Payload iOS6AIChat-unsigned.ipa; \
+	mkdir Payload; \
+	cp -R "$$BUILT_APP" Payload/; \
+	zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null; \
+	echo "==> Built iOS6AIChat-unsigned.ipa"
 
 show-app: package
-        @find .theos/_ -name "iOS6AIChat.app" -type d -print -quit
+	@find .theos/_ -name "iOS6AIChat.app" -type d -print -quit
 
 clean-ipa:
-        rm -rf Payload iOS6AIChat-unsigned.ipa
+	rm -rf Payload iOS6AIChat-unsigned.ipa
