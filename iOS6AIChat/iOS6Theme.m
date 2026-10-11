@@ -74,6 +74,11 @@ static NSString * const kHexDarkCodeBorder      = @"#3A4250";
 {
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kUDKeyDarkMode];
     [[NSUserDefaults standardUserDefaults] synchronize];
+    // Notify all subscribers (AppDelegate, all VCs) so they can re-style
+    // navbar / tabbar / table views with the new palette.
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:@"iOS6ThemeDidChangeNotification"
+                        object:nil];
 }
 
 + (iOS6ThemeFontSize)fontSize
@@ -91,6 +96,10 @@ static NSString * const kHexDarkCodeBorder      = @"#3A4250";
 {
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)size forKey:kUDKeyFontSize];
     [[NSUserDefaults standardUserDefaults] synchronize];
+    // Same notification — fontSize change should refresh all visible views.
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:@"iOS6ThemeDidChangeNotification"
+                        object:nil];
 }
 
 + (CGFloat)fontPointSizeForBase:(CGFloat)base
@@ -279,7 +288,10 @@ static NSString * const kHexDarkCodeBorder      = @"#3A4250";
                        systemIcon:(UITabBarSystemItem)systemIcon
 {
     if (!nav) return;
-    nav.navigationBar.barStyle = UIBarStyleDefault;
+    // barStyle drives the navbar background colour:
+    //   UIBarStyleDefault = light (iOS 6 stock)
+    //   UIBarStyleBlack   = dark (matches our dark palette)
+    nav.navigationBar.barStyle = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
     nav.navigationBar.tintColor = [self tintColor];
     nav.tabBarItem = [[[UITabBarItem alloc] initWithTabBarSystemItem:systemIcon tag:0] autorelease];
     nav.tabBarItem.title = title;
@@ -290,11 +302,18 @@ static NSString * const kHexDarkCodeBorder      = @"#3A4250";
 + (void)styleTabBarController:(UITabBarController *)tbc
 {
     if (!tbc) return;
+    // tabbar.barStyle is iOS 7+, but tintColor (which controls the selected
+    // item colour) is iOS 4+ and works on iOS 6.
     if ([tbc.tabBar respondsToSelector:@selector(setBarStyle:)]) {
+        UIBarStyle style = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
         [tbc.tabBar performSelector:@selector(setBarStyle:)
-                         withObject:@(UIBarStyleDefault)];
+                         withObject:@(style)];
     }
     tbc.tabBar.tintColor = [self tintColor];
+    // On iOS 6, force a re-layout so the barStyle/tintColor changes
+    // become visible immediately.
+    [tbc.tabBar setNeedsDisplay];
+    [tbc.tabBar setNeedsLayout];
 }
 
 @end

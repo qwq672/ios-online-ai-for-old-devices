@@ -15,6 +15,7 @@
 
 #import "ComposerView.h"
 #import "iOS6Theme.h"
+#import "IconDrawing.h"
 #import <QuartzCore/QuartzCore.h>
 
 NSString *const ComposerViewSendMessageNotification = @"ComposerViewSendMessageNotification";
@@ -68,40 +69,27 @@ static CGFloat const kPad = 6.0f;
         _textView.editable = YES;
         [_textFieldBackground addSubview:_textView];
 
-        // Deep Thinking toggle (leftmost).
+        // Deep Thinking toggle (leftmost) — drawn lightbulb icon.
         _deepThinkingButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        [_deepThinkingButton setTitle:@"💡" forState:UIControlStateNormal];
-        _deepThinkingButton.titleLabel.font = [UIFont systemFontOfSize:16];
         [_deepThinkingButton addTarget:self
                                 action:@selector(_deepThinkingTapped)
                       forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_deepThinkingButton];
 
-        // Web Search toggle.
+        // Web Search toggle — drawn globe icon.
         _webSearchButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        [_webSearchButton setTitle:@"🌐" forState:UIControlStateNormal];
-        _webSearchButton.titleLabel.font = [UIFont systemFontOfSize:16];
         [_webSearchButton addTarget:self
                              action:@selector(_webSearchTapped)
                    forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_webSearchButton];
 
-        // Image upload button (placeholder — alerts "功能开发中").
-        // Just use a local UIButton; no @property needed.
-        UIButton *imgBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        [imgBtn setTitle:@"📷" forState:UIControlStateNormal];
-        imgBtn.titleLabel.font = [UIFont systemFontOfSize:16];
-        [imgBtn addTarget:self
-                   action:@selector(_imageUploadTapped)
-         forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:imgBtn];
-        [imgBtn release];
+        // Image upload button — hidden until multipart upload is
+        // implemented. Currently just an empty placeholder.
+        // _imageUploadButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        // [self addSubview:_imageUploadButton];
 
-        // Send button — drawn icon.
+        // Send button — drawn arrow icon.
         _sendButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        [_sendButton setTitle:@"➤" forState:UIControlStateNormal];
-        _sendButton.titleLabel.font = [UIFont boldSystemFontOfSize:20];
-        [_sendButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         [_sendButton addTarget:self
                         action:@selector(_sendTapped)
               forControlEvents:UIControlEventTouchUpInside];
@@ -185,27 +173,50 @@ static CGFloat const kPad = 6.0f;
     BOOL dt = [[self class] deepThinkingEnabled];
     BOOL ws = [[self class] webSearchEnabled];
     UIColor *onBG  = [iOS6Theme tintColor];
-    UIColor *offBG = [UIColor colorWithWhite:0.5f alpha:0.3f];
-    UIColor *onText  = [UIColor whiteColor];
-    UIColor *offText = [UIColor colorWithWhite:0.2f alpha:0.85f];
+    UIColor *offBG = [UIColor colorWithWhite:0.5f alpha:0.35f];
+    UIColor *onIconColor  = [UIColor whiteColor];
+    UIColor *offIconColor = [UIColor colorWithWhite:0.15f alpha:0.85f];
 
     _deepThinkingButton.selected = dt;
     _webSearchButton.selected = ws;
-    [self _setButton:_deepThinkingButton bg:dt?onBG:offBG textColor:dt?onText:offText];
-    [self _setButton:_webSearchButton   bg:ws?onBG:offBG textColor:ws?onText:offText];
+    [self _setButton:_deepThinkingButton
+                 bg:dt?onBG:offBG
+            iconType:IconTypeLightbulb
+           iconColor:dt?onIconColor:offIconColor];
+    [self _setButton:_webSearchButton
+                 bg:ws?onBG:offBG
+            iconType:IconTypeGlobe
+           iconColor:ws?onIconColor:offIconColor];
+    // Send button — always tinted with the theme tint, white arrow on top.
+    UIColor *sendIconColor = [UIColor whiteColor];
+    UIImage *sendIcon = [IconDrawing imageForType:IconTypeSendArrow
+                                              size:CGSizeMake(22, 22)
+                                             color:sendIconColor];
+    [_sendButton setImage:sendIcon forState:UIControlStateNormal];
 }
 
-- (void)_setButton:(UIButton *)btn bg:(UIColor *)bg textColor:(UIColor *)tc
+- (void)_setButton:(UIButton *)btn
+                 bg:(UIColor *)bg
+            iconType:(IconType)iconType
+           iconColor:(UIColor *)iconColor
 {
+    // 1. Background image (tinted/grey gradient button).
     CGRect r = CGRectMake(0, 0, 36, 28);
     UIGraphicsBeginImageContextWithOptions(r.size, NO, 0.0);
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     [iOS6Theme fillRoundedButtonBackgroundInRect:r context:ctx tintColor:bg highlighted:NO];
-    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIImage *bgImg = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    [btn setBackgroundImage:[img stretchableImageWithLeftCapWidth:6 topCapHeight:6]
+    [btn setBackgroundImage:[bgImg stretchableImageWithLeftCapWidth:6 topCapHeight:6]
                  forState:UIControlStateNormal];
-    [btn setTitleColor:tc forState:UIControlStateNormal];
+
+    // 2. Icon image (drawn by IconDrawing).
+    UIImage *icon = [IconDrawing imageForType:iconType
+                                         size:CGSizeMake(18, 18)
+                                        color:iconColor];
+    [btn setImage:icon forState:UIControlStateNormal];
+    // Centre the icon (no stretching).
+    [btn setImageEdgeInsets:UIEdgeInsetsMake(0, 0, 0, 0)];
 }
 
 - (void)layoutSubviews
@@ -228,20 +239,7 @@ static CGFloat const kPad = 6.0f;
     _webSearchButton.frame = CGRectMake(x, toggleY, toggleW, 28);
     x += toggleW + toggleGap;
 
-    // Image upload button (we only added it as a subview; find it by index).
-    // The 4th subview we added (after deepThinking, webSearch, send) is the
-    // image button. Simpler: iterate contentView subviews.
-    UIButton *imgBtn = nil;
-    for (UIView *v in self.subviews) {
-        if ([v isKindOfClass:[UIButton class]]
-            && v != _deepThinkingButton
-            && v != _webSearchButton
-            && v != _sendButton) {
-            imgBtn = (UIButton *)v;
-            break;
-        }
-    }
-    if (imgBtn) imgBtn.frame = CGRectMake(x, toggleY, toggleW, 28);
+    // (Image upload button removed — not yet implemented.)
 
     // Send button on right of row 1.
     CGFloat sendW = 40.0f;
@@ -258,19 +256,16 @@ static CGFloat const kPad = 6.0f;
 
 - (void)_drawSendButtonBackground
 {
-    static UIImage *normalImage = nil;
-    static UIImage *highlightImage = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        normalImage = [[self _renderSendIconHighlighted:NO] retain];
-        highlightImage = [[self _renderSendIconHighlighted:YES] retain];
-    });
+    // No caching — image picks up the current theme tint each layout pass,
+    // so dark/light mode switches refresh the Send button colour too.
+    UIImage *normalImage = [self _renderSendButtonBgHighlighted:NO];
+    UIImage *highlightImage = [self _renderSendButtonBgHighlighted:YES];
     [_sendButton setBackgroundImage:normalImage forState:UIControlStateNormal];
     [_sendButton setBackgroundImage:highlightImage forState:UIControlStateHighlighted];
     [_sendButton setBackgroundImage:highlightImage forState:UIControlStateDisabled];
 }
 
-- (UIImage *)_renderSendIconHighlighted:(BOOL)highlighted
+- (UIImage *)_renderSendButtonBgHighlighted:(BOOL)highlighted
 {
     CGRect rect = CGRectMake(0, 0, 40, 32);
     UIGraphicsBeginImageContextWithOptions(rect.size, NO, 0.0);

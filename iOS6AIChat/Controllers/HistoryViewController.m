@@ -59,6 +59,12 @@ static NSString *const kCellReuseID = @"HistoryCell";
     // Re-apply theme in case it changed in Settings.
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
     _tableView.backgroundColor = [UIColor clearColor];
+    // Re-style navbar with current palette (dark/light).
+    if (self.navigationController) {
+        [iOS6Theme styleNavigationController:self.navigationController
+                                       title:NSLocalizedString(@"历史", nil)
+                                  systemIcon:UITabBarSystemItemHistory];
+    }
     [_tableView reloadData];
 }
 

@@ -132,6 +132,11 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
     _tableView.backgroundColor = [UIColor clearColor];
     _composer.backgroundColor = [iOS6Theme pinstripeBackground];
+    if (self.navigationController) {
+        [iOS6Theme styleNavigationController:self.navigationController
+                                       title:NSLocalizedString(@"聊天", nil)
+                                  systemIcon:UITabBarSystemItemFavorites];
+    }
     [_tableView reloadData];
     [self _scrollToBottomAnimated:NO];
 }

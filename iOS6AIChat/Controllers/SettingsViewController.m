@@ -2,15 +2,23 @@
 //  SettingsViewController.m
 //  iOS6AIChat
 //
-//  Grouped UITableView sections (in display order):
-//    0) Theme          — dark mode toggle, font size stepper
-//    1) Transit        — toggle, transit URL, provider picker
-//    2) Direct server  — BaseURL + API Key (hidden when transit ON)
-//    3) Model          — auto-search button + manual entry
-//    4) Web Search     — Tavily toggle, API Key, result count
-//    5) System Prompt
-//    6) About
-//    7) Reset
+//  Complete rewrite with cleaner layout per user feedback:
+//    - Each row: left label + right control (clearly separated)
+//    - Text fields use UITextBorderStyleRoundedRect (visible borders)
+    - Provider is an inline UISegmentedControl (3 segments), NOT a popup alert
+//    - Font size is a UISegmentedControl (5 segments)
+//    - Tavily max results is a UIStepper with live value label
+//    - All controls have autoresizingMask for flexible width
+//
+//  Sections:
+//    0) 主题       — dark mode toggle, font size segmented
+//    1) 中转       — toggle, transit URL, provider segmented
+//    2) 直连       — BaseURL, API Key (hidden when transit ON)
+//    3) 模型       — model text field + 搜索 button
+//    4) 联网搜索   — toggle, Tavily key, result count stepper
+//    5) 提示词     — system prompt
+//    6) 关于       — author / email / version / github / license
+//    7) 重置
 //
 
 #import "SettingsViewController.h"
@@ -35,9 +43,15 @@ NSString *const ProviderIDZhipu  = @"zhipu";
 NSString *const ProviderIDOpenAI = @"openai";
 NSString *const ProviderIDOllama = @"ollama";
 
+NSString *const iOS6ThemeDidChangeNotification = @"iOS6ThemeDidChangeNotification";
+
 static NSString *const kDefaultTransitURL = @"https://api-ai.awa.lat";
 
-// Logical section indices (after we hide section 2 when transit is ON).
+// Layout constants.
+static CGFloat const kLabelWidth = 100.0f;
+static CGFloat const kPad = 12.0f;
+static CGFloat const kRowH = 44.0f;
+
 enum {
     kSectionTheme = 0,
     kSectionTransit,
@@ -51,7 +65,7 @@ enum {
 };
 
 @interface SettingsViewController ()
-@property (nonatomic, retain) NSMutableDictionary *fields;
+@property (nonatomic, retain) NSMutableDictionary *fields;        // key -> UITextField
 @property (nonatomic, assign) BOOL useTransit;
 @property (nonatomic, copy)   NSString *provider;
 @property (nonatomic, retain) NSMutableArray *availableModels;
@@ -65,48 +79,74 @@ enum {
 - (id)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil
 {
     if (self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil]) {
-        self.title = NSLocalizedString(@"Settings", nil);
-        // CRITICAL: MRC — _fields and _provider must be properly retained/copied.
-        // Direct ivar assignment bypasses the property setter, so autoreleased
-        // values become dangling pointers after the init's autorelease pool
-        // drains. Then cellForRowAtIndexPath:_fields setObject:forKey: hits
-        // freed memory → app crashes when user taps the Settings tab.
+        self.title = NSLocalizedString(@"设置", nil);
         _fields = [[NSMutableDictionary alloc] init];
         _availableModels = [[NSMutableArray array] retain];
         NSDictionary *loaded = [SettingsViewController loadSettings];
         _useTransit = [[loaded objectForKey:SettingsKeyUseTransit] boolValue];
-        // Use the property setter (copy semantics) — this retains the
-        // string instead of leaving the autoreleased value dangling.
         self.provider = [loaded objectForKey:SettingsKeyProvider];
     }
     return self;
 }
 
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [_tableView release];
+    [_fields release];
+    [_provider release];
+    [_availableModels release];
+    [super dealloc];
+}
+
 - (void)viewDidLoad
 {
     [super viewDidLoad];
-    self.view.backgroundColor = [iOS6Theme pinstripeBackground];
-
+    [self _applyTheme];
     CGRect frame = self.view.bounds;
     _tableView = [[UITableView alloc] initWithFrame:frame style:UITableViewStyleGrouped];
     _tableView.dataSource = self;
     _tableView.delegate = self;
     _tableView.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
                                     UIViewAutoresizingFlexibleHeight);
+    _tableView.backgroundColor = [UIColor clearColor];
+    _tableView.opaque = NO;
     [self.view addSubview:_tableView];
 
     self.navigationItem.rightBarButtonItem = [[[UIBarButtonItem alloc]
         initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh
                              target:self action:@selector(resetToDefaults)] autorelease];
+
+    // Subscribe to theme-change notifications so dark mode / font size
+    // toggles refresh this view immediately.
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(_themeChanged)
+                                                 name:iOS6ThemeDidChangeNotification
+                                               object:nil];
 }
 
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
-    // Theme may have changed since last appearance — refresh table so
-    // backgrounds / fonts pick up the new palette.
+    [self _applyTheme];
+    [_tableView reloadData];
+}
+
+- (void)_applyTheme
+{
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
     _tableView.backgroundColor = [UIColor clearColor];
+    // Re-style the nav bar with the current dark/light mode.
+    if (self.navigationController) {
+        [iOS6Theme styleNavigationController:self.navigationController
+                                       title:NSLocalizedString(@"设置", nil)
+                                  systemIcon:UITabBarSystemItemMore];
+    }
+}
+
+- (void)_themeChanged
+{
+    [self _applyTheme];
     [_tableView reloadData];
 }
 
@@ -170,9 +210,9 @@ enum {
 
 + (NSString *)displayNameForProvider:(NSString *)providerID
 {
-    if ([providerID isEqualToString:ProviderIDZhipu])  return @"智谱 GLM";
+    if ([providerID isEqualToString:ProviderIDZhipu])  return @"智谱";
     if ([providerID isEqualToString:ProviderIDOpenAI]) return @"OpenAI";
-    if ([providerID isEqualToString:ProviderIDOllama]) return @"Ollama (本地)";
+    if ([providerID isEqualToString:ProviderIDOllama]) return @"Ollama";
     return providerID ?: @"Custom";
 }
 
@@ -217,29 +257,13 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         NSDictionary *loaded = [SettingsViewController loadSettings];
         self.useTransit = [[loaded objectForKey:SettingsKeyUseTransit] boolValue];
         self.provider   = [loaded objectForKey:SettingsKeyProvider];
-        // Apply theme changes immediately.
         [iOS6Theme setDarkMode:[[loaded objectForKey:SettingsKeyDarkMode] boolValue]];
         [iOS6Theme setFontSize:[[loaded objectForKey:SettingsKeyFontSize] integerValue]];
+        [[NSNotificationCenter defaultCenter] postNotificationName:iOS6ThemeDidChangeNotification object:nil];
 
-        [_fields release]; _fields = [[NSMutableDictionary alloc] init];
+        [_fields release];
+        _fields = [[NSMutableDictionary alloc] init];
         [_tableView reloadData];
-    }
-    else if (alertView.tag == 200 && buttonIndex > 0) {
-        // Provider picker.
-        NSArray *providers = [SettingsViewController availableProviderIDs];
-        NSString *newProv = [providers objectAtIndex:(buttonIndex - 1)];
-        self.provider = newProv;
-        NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-        [d setObject:newProv forKey:SettingsKeyProvider];
-        [d setObject:[SettingsViewController defaultModelForProvider:newProv]
-          forKey:SettingsKeyModel];
-        [d synchronize];
-        [_fields release]; _fields = [[NSMutableDictionary alloc] init];
-        [_tableView reloadData];
-    }
-    else if (alertView.tag == 300) {
-        // Manual model input — but UIAlertView with style can't be done on
-        // iOS 6 cleanly. Skip; user uses the text field row instead.
     }
 }
 
@@ -247,7 +271,6 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
 {
-    // When transit is ON, section 2 (Direct server) is hidden.
     return _useTransit ? (kSectionCount - 1) : kSectionCount;
 }
 
@@ -255,16 +278,21 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 {
     NSInteger logical = [self _logicalSectionForDisplayed:section];
     switch (logical) {
-        case kSectionTheme:     return 2;  // dark mode toggle, font size stepper
-        case kSectionTransit:    return 3;  // toggle, URL, provider
-        case kSectionDirect:     return 2;  // baseURL, apiKey
-        case kSectionModel:      return 2;  // manual entry + auto-search button
-        case kSectionWebSearch:  return 3;  // toggle, api key, max results
+        case kSectionTheme:     return 2;
+        case kSectionTransit:    return 3;
+        case kSectionDirect:     return 2;
+        case kSectionModel:      return 2;
+        case kSectionWebSearch:  return 3;
         case kSectionPrompt:     return 1;
-        case kSectionAbout:      return 4;  // author, version, github, license
+        case kSectionAbout:      return 5;  // author / email / version / github / license
         case kSectionReset:      return 1;
         default: return 0;
     }
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    return kRowH;
 }
 
 - (NSString *)tableView:(UITableView *)tableView
@@ -276,7 +304,7 @@ titleForHeaderInSection:(NSInteger)section
         case kSectionTransit:    return NSLocalizedString(@"中转服务器", nil);
         case kSectionDirect:     return NSLocalizedString(@"直连后端", nil);
         case kSectionModel:      return NSLocalizedString(@"模型", nil);
-        case kSectionWebSearch:  return NSLocalizedString(@"联网搜索", nil);
+        case kSectionWebSearch:  return NSLocalizedString(@"联网搜索 (Tavily)", nil);
         case kSectionPrompt:     return NSLocalizedString(@"系统提示词", nil);
         case kSectionAbout:      return NSLocalizedString(@"关于", nil);
         default: return @"";
@@ -287,22 +315,17 @@ titleForHeaderInSection:(NSInteger)section
 titleForFooterInSection:(NSInteger)section
 {
     NSInteger logical = [self _logicalSectionForDisplayed:section];
-    if (logical == kSectionTransit) {
-        return NSLocalizedString(@"开启后所有请求经中转服务器路由到对应 AI 后端，iOS 6 上规避 TLS 兼容问题。默认 api-ai.awa.lat，可自建：github.com/qwq672/online-ai-transit-server。中转是预制选项，关掉则直连你填的 BaseURL。", nil);
+    switch (logical) {
+        case kSectionTransit:
+            return NSLocalizedString(@"中转是预制可关闭的开关。开则所有 AI/搜索请求经中转服务器路由，iOS 6 上规避 TLS 兼容问题。关则直连。默认 api-ai.awa.lat，可自建：github.com/qwq672/online-ai-transit-server", nil);
+        case kSectionDirect:
+            return NSLocalizedString(@"关闭中转时使用。BaseURL 必须 OpenAI 兼容格式。API Key 作 Authorization: Bearer 发出。", nil);
+        case kSectionModel:
+            return NSLocalizedString(@"点「搜索」从 /v1/models 拉取可选列表；也可手动输入模型名。", nil);
+        case kSectionWebSearch:
+            return NSLocalizedString(@"开关后每次提问先调 Tavily 搜索，结果作为上下文注入给 AI。结果数 1-8。也支持中转（中转是主开关）。", nil);
+        default: return @"";
     }
-    if (logical == kSectionDirect) {
-        return NSLocalizedString(@"关闭中转时，App 直连你填的 BaseURL（必须 OpenAI 兼容格式）。API Key 作为 Authorization: Bearer 发出。", nil);
-    }
-    if (logical == kSectionModel) {
-        return NSLocalizedString(@"点「搜索可用模型」会从 /v1/models 拉取，多模型显示为可选列表；也可手动输入。", nil);
-    }
-    if (logical == kSectionWebSearch) {
-        return NSLocalizedString(@"Tavily 联网搜索。开关后每次提问先调 Tavily /search 取若干结果，注入到 AI 上下文。也支持中转（中转开关是主开关）。结果数 1-8。", nil);
-    }
-    if (logical == kSectionTheme) {
-        return NSLocalizedString(@"暗色模式 / 字号调整实时生效，返回聊天页即可看到。", nil);
-    }
-    return @"";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
@@ -314,201 +337,342 @@ titleForFooterInSection:(NSInteger)section
         cell = [[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
                                        reuseIdentifier:kID] autorelease];
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        cell.contentView.backgroundColor = [iOS6Theme bubbleAssistantColor];
     }
     for (UIView *v in cell.contentView.subviews) [v removeFromSuperview];
+    cell.contentView.backgroundColor = [iOS6Theme bubbleAssistantColor];
+    cell.backgroundColor = [iOS6Theme bubbleAssistantColor];
 
     NSInteger logical = [self _logicalSectionForDisplayed:indexPath.section];
     NSDictionary *settings = [SettingsViewController loadSettings];
 
-    // === Theme section ==============================================
-    if (logical == kSectionTheme && indexPath.row == 0) {
-        cell.textLabel.text = NSLocalizedString(@"深色模式", nil);
+    switch (logical) {
+        case kSectionTheme:
+            return [self _themeCellForRow:indexPath.row cell:cell];
+        case kSectionTransit:
+            return [self _transitCellForRow:indexPath.row cell:cell settings:settings];
+        case kSectionDirect:
+            return [self _directCellForRow:indexPath.row cell:cell settings:settings];
+        case kSectionModel:
+            return [self _modelCellForRow:indexPath.row cell:cell settings:settings];
+        case kSectionWebSearch:
+            return [self _webSearchCellForRow:indexPath.row cell:cell settings:settings];
+        case kSectionPrompt:
+            return [self _promptCell:cell settings:settings];
+        case kSectionAbout:
+            return [self _aboutCellForRow:indexPath.row cell:cell];
+        case kSectionReset:
+            return [self _resetCell:cell];
+        default:
+            return cell;
+    }
+}
+
+#pragma mark - Cell builders (one per section)
+
+// Helper: build a left-aligned label.
+- (UILabel *)_labelWithText:(NSString *)text
+{
+    UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(kPad, 0, kLabelWidth, kRowH)];
+    l.text = text;
+    l.backgroundColor = [UIColor clearColor];
+    l.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
+    l.textColor = [iOS6Theme textColor];
+    l.autoresizingMask = UIViewAutoresizingFlexibleRightMargin;
+    return [l autorelease];
+}
+
+// Helper: build a text field filling the right side of the cell.
+- (UITextField *)_textFieldWithFrame:(CGRect)frame
+                                 key:(NSString *)key
+                           placeholder:(NSString *)ph
+                             isSecure:(BOOL)secure
+                            keyboardType:(UIKeyboardType)kbdType
+{
+    UITextField *f = [[UITextField alloc] initWithFrame:frame];
+    f.borderStyle = UITextBorderStyleRoundedRect;
+    f.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:14]];
+    f.placeholder = ph;
+    f.autocorrectionType = UITextAutocorrectionTypeNo;
+    f.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    f.returnKeyType = UIReturnKeyDone;
+    f.clearButtonMode = UITextFieldViewModeWhileEditing;
+    f.keyboardType = kbdType;
+    f.secureTextEntry = secure;
+    f.delegate = self;
+    f.backgroundColor = [UIColor whiteColor];
+    f.textColor = [iOS6Theme textColor];
+    f.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleLeftMargin;
+    // Store the NSUserDefaults key on the field itself so _persistField
+    // can look it up. iOS 6+ has restorationIdentifier (a string property
+    // intended for UIStateRestoration but works as a free-form tag here).
+    if ([f respondsToSelector:@selector(setRestorationIdentifier:)]) {
+        [f setRestorationIdentifier:key];
+    }
+    [f addTarget:self action:@selector(_fieldChanged:)
+    forControlEvents:UIControlEventEditingChanged];
+    [self _registerField:f forKey:key];
+    return [f autorelease];
+}
+
+- (void)_registerField:(UITextField *)f forKey:(NSString *)key
+{
+    // _fields is set up in init. Avoid the dangling-pointer bug by re-initing if needed.
+    if (!_fields) {
+        [_fields release];
+        _fields = [[NSMutableDictionary alloc] init];
+    }
+    [_fields setObject:f forKey:key];
+}
+
+- (UITableViewCell *)_themeCellForRow:(NSInteger)row cell:(UITableViewCell *)cell
+{
+    if (row == 0) {
+        // Dark mode toggle.
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"深色模式", nil)]];
         UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
         [sw setOn:[iOS6Theme isDarkMode] animated:NO];
         [sw addTarget:self action:@selector(_darkModeToggle:)
          forControlEvents:UIControlEventValueChanged];
-        CGRect f = cell.contentView.bounds;
-        sw.frame = CGRectMake(f.size.width - 95, 8, 79, 27);
         sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f = cell.contentView.bounds;
+        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
         [cell.contentView addSubview:sw];
         return cell;
     }
-    if (logical == kSectionTheme && indexPath.row == 1) {
-        cell.textLabel.text = NSLocalizedString(@"字号", nil);
-        // Use a UISegmentedControl with 5 sizes.
-        NSArray *items = @[@"S", @"M", @"L", @"XL", @"XXL"];
-        UISegmentedControl *seg = [[[UISegmentedControl alloc] initWithItems:items] autorelease];
-        seg.selectedSegmentIndex = (NSInteger)[iOS6Theme fontSize];
-        [seg addTarget:self action:@selector(_fontSizeChanged:)
-         forControlEvents:UIControlEventValueChanged];
-        CGRect f = cell.contentView.bounds;
-        seg.frame = CGRectMake(f.size.width - 230, 5, 215, 32);
-        seg.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-        [cell.contentView addSubview:seg];
-        return cell;
-    }
+    // Font size segmented control.
+    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"字号", nil)]];
+    NSArray *items = @[@"S", @"M", @"L", @"XL", @"XXL"];
+    UISegmentedControl *seg = [[[UISegmentedControl alloc] initWithItems:items] autorelease];
+    seg.selectedSegmentIndex = (NSInteger)[iOS6Theme fontSize];
+    [seg addTarget:self action:@selector(_fontSizeChanged:)
+     forControlEvents:UIControlEventValueChanged];
+    seg.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    CGRect f = cell.contentView.bounds;
+    seg.frame = CGRectMake(f.size.width - 230 - kPad, (kRowH - 30) / 2, 230, 30);
+    [cell.contentView addSubview:seg];
+    return cell;
+}
 
-    // === Reset row =================================================
-    if (logical == kSectionReset) {
-        cell.textLabel.text = NSLocalizedString(@"重置为默认设置", nil);
-        cell.textLabel.textAlignment = NSTextAlignmentCenter;
-        cell.textLabel.textColor = [iOS6Theme tintColor];
-        cell.selectionStyle = UITableViewCellSelectionStyleBlue;
-        return cell;
-    }
-
-    // === About rows =================================================
-    if (logical == kSectionAbout) {
-        NSArray *labels = @[
-            NSLocalizedString(@"作者", nil),
-            NSLocalizedString(@"版本", nil),
-            NSLocalizedString(@"GitHub", nil),
-            NSLocalizedString(@"License", nil)
-        ];
-        NSArray *values = @[
-            @"qwq672",
-            @"1.0.0",
-            @"qwq672/ios-online-ai-for-old-devices",
-            @"MIT"
-        ];
-        UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(15, 8, 100, 28)];
-        label.text = [labels objectAtIndex:indexPath.row];
-        label.backgroundColor = [UIColor clearColor];
-        label.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
-        label.textColor = [iOS6Theme textColor];
-        [cell.contentView addSubview:label];
-        [label release];
-
-        UILabel *val = [[UILabel alloc] initWithFrame:CGRectMake(120, 8, 200, 28)];
-        val.text = [values objectAtIndex:indexPath.row];
-        val.backgroundColor = [UIColor clearColor];
-        val.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:14]];
-        val.textColor = [iOS6Theme secondaryTextColor];
-        val.textAlignment = NSTextAlignmentRight;
-        val.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-        [cell.contentView addSubview:val];
-        [val release];
-        return cell;
-    }
-
-    // === Transit toggle (kSectionTransit, row 0) ====================
-    if (logical == kSectionTransit && indexPath.row == 0) {
-        cell.textLabel.text = NSLocalizedString(@"使用中转", nil);
+- (UITableViewCell *)_transitCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
+{
+    if (row == 0) {
+        // Transit toggle.
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"使用中转", nil)]];
         UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
         [sw setOn:_useTransit animated:NO];
         [sw addTarget:self action:@selector(_transitToggleChanged:)
          forControlEvents:UIControlEventValueChanged];
-        CGRect f = cell.contentView.bounds;
-        sw.frame = CGRectMake(f.size.width - 95, 8, 79, 27);
         sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f = cell.contentView.bounds;
+        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
         [cell.contentView addSubview:sw];
         return cell;
     }
-
-    // === Provider picker (kSectionTransit, row 2) ==================
-    if (logical == kSectionTransit && indexPath.row == 2) {
-        cell.textLabel.text = NSLocalizedString(@"Provider", nil);
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        cell.selectionStyle = UITableViewCellSelectionStyleBlue;
-        UILabel *value = [[UILabel alloc] initWithFrame:CGRectMake(150, 8, 150, 28)];
-        value.text = [SettingsViewController displayNameForProvider:_provider];
-        value.textAlignment = NSTextAlignmentRight;
-        value.textColor = [iOS6Theme secondaryTextColor];
-        value.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
-        value.backgroundColor = [UIColor clearColor];
-        value.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-        [cell.contentView addSubview:value];
-        [value release];
+    if (row == 1) {
+        // Transit URL text field.
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"Transit URL", nil)]];
+        CGRect f = cell.contentView.bounds;
+        CGRect tfFrame = CGRectMake(kPad + kLabelWidth + 8, (kRowH - 30) / 2,
+                                     f.size.width - kPad - kLabelWidth - 8 - kPad - 8, 30);
+        UITextField *tf = [self _textFieldWithFrame:tfFrame
+                                                  key:SettingsKeyTransitURL
+                                            placeholder:kDefaultTransitURL
+                                              isSecure:NO
+                                         keyboardType:UIKeyboardTypeURL];
+        tf.text = [settings objectForKey:SettingsKeyTransitURL];
+        [cell.contentView addSubview:tf];
         return cell;
     }
+    // row 2: Provider segmented control.
+    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"Provider", nil)]];
+    UISegmentedControl *seg = [[[UISegmentedControl alloc] initWithItems:@[@"OpenAI", @"智谱", @"Ollama"]] autorelease];
+    NSInteger provIdx = 0;
+    if ([_provider isEqualToString:ProviderIDZhipu]) provIdx = 1;
+    else if ([_provider isEqualToString:ProviderIDOllama]) provIdx = 2;
+    seg.selectedSegmentIndex = provIdx;
+    [seg addTarget:self action:@selector(_providerChanged:)
+     forControlEvents:UIControlEventValueChanged];
+    seg.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    CGRect f = cell.contentView.bounds;
+    seg.frame = CGRectMake(f.size.width - 230 - kPad, (kRowH - 30) / 2, 230, 30);
+    [cell.contentView addSubview:seg];
+    return cell;
+}
 
-    // === Model auto-search button (kSectionModel, row 1) =========
-    if (logical == kSectionModel && indexPath.row == 1) {
-        cell.textLabel.text = NSLocalizedString(@"🔍 搜索可用模型", nil);
-        cell.textLabel.textColor = [iOS6Theme tintColor];
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+- (UITableViewCell *)_directCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
+{
+    NSString *label, *key, *ph;
+    BOOL secure = NO;
+    UIKeyboardType kbd = UIKeyboardTypeDefault;
+    if (row == 0) {
+        label = NSLocalizedString(@"Base URL", nil);
+        key = SettingsKeyBaseURL;
+        ph = @"https://api.openai.com";
+        kbd = UIKeyboardTypeURL;
+    } else {
+        label = NSLocalizedString(@"API Key", nil);
+        key = SettingsKeyAPIKey;
+        ph = @"sk-...";
+        secure = YES;
+    }
+    [cell.contentView addSubview:[self _labelWithText:label]];
+    CGRect f = cell.contentView.bounds;
+    CGRect tfFrame = CGRectMake(kPad + kLabelWidth + 8, (kRowH - 30) / 2,
+                                 f.size.width - kPad - kLabelWidth - 8 - kPad - 8, 30);
+    UITextField *tf = [self _textFieldWithFrame:tfFrame key:key placeholder:ph isSecure:secure keyboardType:kbd];
+    tf.text = [settings objectForKey:key];
+    [cell.contentView addSubview:tf];
+    return cell;
+}
+
+- (UITableViewCell *)_modelCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
+{
+    if (row == 0) {
+        // Model text field + 搜索 button on the right.
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"Model", nil)]];
+        CGRect f = cell.contentView.bounds;
+        // Text field with right side reserved for the search button.
+        CGFloat searchBtnW = 56.0f;
+        CGRect tfFrame = CGRectMake(kPad + kLabelWidth + 8, (kRowH - 30) / 2,
+                                     f.size.width - kPad - kLabelWidth - 8 - kPad - searchBtnW - 8, 30);
+        UITextField *tf = [self _textFieldWithFrame:tfFrame key:SettingsKeyModel placeholder:@"gpt-4o-mini" isSecure:NO keyboardType:UIKeyboardTypeDefault];
+        tf.text = [settings objectForKey:SettingsKeyModel];
+        [cell.contentView addSubview:tf];
+
+        UIButton *btn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+        [btn setTitle:NSLocalizedString(@"搜索", nil) forState:UIControlStateNormal];
+        btn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
+        btn.frame = CGRectMake(f.size.width - searchBtnW - kPad, (kRowH - 28) / 2, searchBtnW, 28);
+        btn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        [btn addTarget:self action:@selector(_searchAvailableModels)
+         forControlEvents:UIControlEventTouchUpInside];
+        [cell.contentView addSubview:btn];
         return cell;
     }
+    // row 1: hint row about how to use 搜索.
+    cell.textLabel.text = NSLocalizedString(@"点「搜索」可自动列出 /v1/models 的模型；也可手填", nil);
+    cell.textLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
+    cell.textLabel.textColor = [iOS6Theme secondaryTextColor];
+    cell.textLabel.numberOfLines = 2;
+    cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    return cell;
+}
 
-    // === Web search toggle (kSectionWebSearch, row 0) =============
-    if (logical == kSectionWebSearch && indexPath.row == 0) {
-        cell.textLabel.text = NSLocalizedString(@"启用 Tavily 联网搜索", nil);
+- (UITableViewCell *)_webSearchCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
+{
+    if (row == 0) {
+        // Enable toggle.
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"启用", nil)]];
         UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
         BOOL on = [[settings objectForKey:SettingsKeyWebSearchEnabled] boolValue];
         [sw setOn:on animated:NO];
         [sw addTarget:self action:@selector(_webSearchToggle:)
          forControlEvents:UIControlEventValueChanged];
-        CGRect f = cell.contentView.bounds;
-        sw.frame = CGRectMake(f.size.width - 95, 8, 79, 27);
         sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f = cell.contentView.bounds;
+        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
         [cell.contentView addSubview:sw];
         return cell;
     }
-
-    // === Web search max results stepper (kSectionWebSearch, row 2) ===
-    if (logical == kSectionWebSearch && indexPath.row == 2) {
-        cell.textLabel.text = NSLocalizedString(@"结果数 (1-8)", nil);
-        NSInteger max = [[settings objectForKey:SettingsKeyTavilyMaxResults] integerValue];
-        UIStepper *sp = [[[UIStepper alloc] initWithFrame:CGRectMake(0, 0, 94, 29)] autorelease];
-        sp.minimumValue = 1;
-        sp.maximumValue = 8;
-        sp.value = max;
-        [sp addTarget:self action:@selector(_tavilyMaxChanged:)
-         forControlEvents:UIControlEventValueChanged];
+    if (row == 1) {
+        // Tavily API key.
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"Tavily Key", nil)]];
         CGRect f = cell.contentView.bounds;
-        sp.frame = CGRectMake(f.size.width - 110, 8, 94, 29);
-        sp.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-        [cell.contentView addSubview:sp];
-
-        UILabel *numLabel = [[UILabel alloc] initWithFrame:CGRectMake(f.size.width - 145, 8, 30, 28)];
-        numLabel.text = [NSString stringWithFormat:@"%d", (int)max];
-        numLabel.backgroundColor = [UIColor clearColor];
-        numLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];
-        numLabel.textColor = [iOS6Theme textColor];
-        numLabel.tag = 999;
-        [cell.contentView addSubview:numLabel];
-        [numLabel release];
+        CGRect tfFrame = CGRectMake(kPad + kLabelWidth + 8, (kRowH - 30) / 2,
+                                     f.size.width - kPad - kLabelWidth - 8 - kPad - 8, 30);
+        UITextField *tf = [self _textFieldWithFrame:tfFrame key:SettingsKeyTavilyAPIKey placeholder:@"tvly-..." isSecure:YES keyboardType:UIKeyboardTypeDefault];
+        tf.text = [settings objectForKey:SettingsKeyTavilyAPIKey];
+        [cell.contentView addSubview:tf];
         return cell;
     }
+    // row 2: max results stepper + value label.
+    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"结果数", nil)]];
+    NSInteger max = [[settings objectForKey:SettingsKeyTavilyMaxResults] integerValue];
 
-    // === Generic text-field row (transit URL, baseURL, apiKey, model, tavily key, prompt, temp) ===
-    NSString *key = [self _keyForLogical:logical row:indexPath.row];
-    id rawValue = [settings objectForKey:key];
-    NSString *current = nil;
-    if ([rawValue isKindOfClass:[NSNumber class]]) {
-        current = [NSString stringWithFormat:@"%@", rawValue];
-    } else if ([rawValue isKindOfClass:[NSString class]]) {
-        current = rawValue;
-    }
-    if (!current) current = @"";
+    UILabel *numLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    numLabel.text = [NSString stringWithFormat:@"%d", (int)max];
+    numLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];
+    numLabel.textColor = [iOS6Theme textColor];
+    numLabel.backgroundColor = [UIColor clearColor];
+    numLabel.tag = 999;
+    numLabel.textAlignment = NSTextAlignmentRight;
+    [cell.contentView addSubview:numLabel];
+    [numLabel release];
 
-    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(15, 8, 120, 28)];
-    label.text = [self _labelForLogical:logical row:indexPath.row];
-    label.backgroundColor = [UIColor clearColor];
-    label.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
-    label.textColor = [iOS6Theme textColor];
-    label.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [cell.contentView addSubview:label];
-    [label release];
+    UIStepper *sp = [[[UIStepper alloc] initWithFrame:CGRectMake(0, 0, 94, 29)] autorelease];
+    sp.minimumValue = 1;
+    sp.maximumValue = 8;
+    sp.value = max;
+    [sp addTarget:self action:@selector(_tavilyMaxChanged:)
+     forControlEvents:UIControlEventValueChanged];
+    sp.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    CGRect f = cell.contentView.bounds;
+    sp.frame = CGRectMake(f.size.width - 94 - kPad, (kRowH - 29) / 2, 94, 29);
+    [cell.contentView addSubview:sp];
 
-    UITextField *field = [[UITextField alloc] initWithFrame:CGRectMake(140, 6, 170, 32)];
-    field.borderStyle = UITextBorderStyleNone;
-    field.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:14]];
-    field.placeholder = [self _placeholderForLogical:logical row:indexPath.row];
-    field.text = current;
-    field.autocorrectionType = UITextAutocorrectionTypeNo;
-    field.autocapitalizationType = UITextAutocapitalizationTypeNone;
-    field.returnKeyType = UIReturnKeyDone;
-    field.clearButtonMode = UITextFieldViewModeWhileEditing;
-    field.delegate = self;
-    field.tag = (logical << 8) | indexPath.row;
-    [field addTarget:self action:@selector(_fieldChanged:)
-    forControlEvents:UIControlEventEditingChanged];
-    [cell.contentView addSubview:field];
-    [field release];
+    // Place numLabel between stepper and label.
+    [numLabel sizeToFit];
+    CGRect nlF = numLabel.frame;
+    nlF.origin.x = f.size.width - 94 - kPad - nlF.size.width - 8;
+    nlF.origin.y = (kRowH - nlF.size.height) / 2;
+    nlF.size.height = kRowH;
+    numLabel.frame = nlF;
+    numLabel.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    return cell;
+}
 
-    [_fields setObject:field forKey:key];
+- (UITableViewCell *)_promptCell:(UITableViewCell *)cell settings:(NSDictionary *)settings
+{
+    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"Prompt", nil)]];
+    CGRect f = cell.contentView.bounds;
+    CGRect tfFrame = CGRectMake(kPad + kLabelWidth + 8, (kRowH - 30) / 2,
+                                 f.size.width - kPad - kLabelWidth - 8 - kPad - 8, 30);
+    UITextField *tf = [self _textFieldWithFrame:tfFrame key:SettingsKeySystemPrompt placeholder:@"You are a helpful assistant." isSecure:NO keyboardType:UIKeyboardTypeDefault];
+    tf.text = [settings objectForKey:SettingsKeySystemPrompt];
+    [cell.contentView addSubview:tf];
+    return cell;
+}
+
+- (UITableViewCell *)_aboutCellForRow:(NSInteger)row cell:(UITableViewCell *)cell
+{
+    NSArray *labels = @[
+        NSLocalizedString(@"作者", nil),
+        NSLocalizedString(@"邮箱", nil),
+        NSLocalizedString(@"版本", nil),
+        NSLocalizedString(@"GitHub", nil),
+        NSLocalizedString(@"License", nil)
+    ];
+    NSArray *values = @[
+        @"qwq672",
+        @"b167963232@163.com",
+        @"1.0.0",
+        @"qwq672/ios-online-ai-for-old-devices",
+        @"MIT"
+    ];
+    [cell.contentView addSubview:[self _labelWithText:[labels objectAtIndex:row]]];
+
+    UILabel *val = [[UILabel alloc] initWithFrame:CGRectZero];
+    val.text = [values objectAtIndex:row];
+    val.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
+    val.textColor = [iOS6Theme secondaryTextColor];
+    val.backgroundColor = [UIColor clearColor];
+    val.textAlignment = NSTextAlignmentRight;
+    val.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    CGRect f = cell.contentView.bounds;
+    val.frame = CGRectMake(kPad + kLabelWidth + 8, (kRowH - 20) / 2,
+                            f.size.width - kPad - kLabelWidth - 8 - kPad - 8, 20);
+    [cell.contentView addSubview:val];
+    [val release];
+    return cell;
+}
+
+- (UITableViewCell *)_resetCell:(UITableViewCell *)cell
+{
+    cell.textLabel.text = NSLocalizedString(@"重置为默认设置", nil);
+    cell.textLabel.textAlignment = NSTextAlignmentCenter;
+    cell.textLabel.textColor = [iOS6Theme tintColor];
+    cell.selectionStyle = UITableViewCellSelectionStyleBlue;
     return cell;
 }
 
@@ -518,29 +682,8 @@ titleForFooterInSection:(NSInteger)section
 didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
     NSInteger logical = [self _logicalSectionForDisplayed:indexPath.section];
-    if (logical == kSectionReset && indexPath.row == 0) {
+    if (logical == kSectionReset) {
         [self resetToDefaults];
-    }
-    else if (logical == kSectionTransit && indexPath.row == 2) {
-        NSMutableString *msg = [NSMutableString string];
-        for (NSString *pid in [SettingsViewController availableProviderIDs]) {
-            [msg appendFormat:@"%@\n", [SettingsViewController displayNameForProvider:pid]];
-        }
-        UIAlertView *av = [[[UIAlertView alloc]
-                            initWithTitle:NSLocalizedString(@"选择 Provider", nil)
-                                  message:msg
-                                 delegate:self
-                        cancelButtonTitle:NSLocalizedString(@"取消", nil)
-                        otherButtonTitles:
-                            [SettingsViewController displayNameForProvider:ProviderIDOpenAI],
-                            [SettingsViewController displayNameForProvider:ProviderIDZhipu],
-                            [SettingsViewController displayNameForProvider:ProviderIDOllama],
-                            nil] autorelease];
-        [av setTag:200];
-        [av show];
-    }
-    else if (logical == kSectionModel && indexPath.row == 1) {
-        [self _searchAvailableModels];
     }
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
 }
@@ -562,16 +705,15 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     otherButtonTitles:nil] autorelease];
     [loading show];
 
-    // Run sync network request on background queue.
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NetworkService *svc = [[[NetworkService alloc] init] autorelease];
         NSError *err = nil;
         NSArray *models = [svc listModelsWithUseTransit:useTransit
                                               transitURL:transitURL
-                                               baseURL:baseURL
-                                               provider:provider
-                                                apiKey:apiKey
-                                                  error:&err];
+                                                baseURL:baseURL
+                                                provider:provider
+                                                 apiKey:apiKey
+                                                   error:&err];
         dispatch_async(dispatch_get_main_queue(), ^{
             [loading dismissWithClickedButtonIndex:0 animated:YES];
             if (err || !models || [models count] == 0) {
@@ -584,14 +726,12 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
                 [fail show];
                 return;
             }
-            // Show as alert with one button per model.
             UIAlertView *av = [[UIAlertView alloc]
                 initWithTitle:NSLocalizedString(@"选择模型", nil)
                       message:NSLocalizedString(@"点选要用的模型", nil)
                      delegate:self
             cancelButtonTitle:NSLocalizedString(@"取消", nil)
             otherButtonTitles:nil];
-            // Cap at 6 buttons (UIAlertView limit on iOS 6).
             NSInteger limit = MIN([models count], (NSUInteger)6);
             for (NSInteger i = 0; i < limit; i++) {
                 NSString *mid = [models objectAtIndex:i];
@@ -600,42 +740,43 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
             [av setTag:400];
             [av show];
             [av release];
-            // Cache for tag-400 handler.
             self.availableModels = [NSMutableArray arrayWithArray:[models subarrayWithRange:NSMakeRange(0, limit)]];
         });
     });
 }
 
-#pragma mark - Model picker alert
-
 - (void)alertView:(UIAlertView *)alertView
 didDismissWithButtonIndex:(NSInteger)buttonIndex
 {
-    // Note: this delegate method is called for ALL alerts; check tag.
     if (alertView.tag == 400 && buttonIndex > 0) {
-        // Models picker.
         NSString *chosen = [_availableModels objectAtIndex:buttonIndex - 1];
         NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
         [d setObject:chosen forKey:SettingsKeyModel];
         [d synchronize];
-        [_fields release]; _fields = [[NSMutableDictionary alloc] init];
+        [_fields release];
+        _fields = [[NSMutableDictionary alloc] init];
         [_tableView reloadData];
     }
 }
 
-#pragma mark - Toggles
+#pragma mark - Toggle handlers
 
 - (IBAction)_darkModeToggle:(UISwitch *)sw
 {
     [iOS6Theme setDarkMode:sw.on];
-    self.view.backgroundColor = [iOS6Theme pinstripeBackground];
-    _tableView.backgroundColor = [UIColor clearColor];
+    // Post global theme-change notification so all VCs + AppDelegate
+    // can re-style navbar / tabbar.
+    [[NSNotificationCenter defaultCenter] postNotificationName:iOS6ThemeDidChangeNotification
+                                                          object:nil];
+    [self _applyTheme];
     [_tableView reloadData];
 }
 
 - (IBAction)_fontSizeChanged:(UISegmentedControl *)seg
 {
     [iOS6Theme setFontSize:(iOS6ThemeFontSize)seg.selectedSegmentIndex];
+    [[NSNotificationCenter defaultCenter] postNotificationName:iOS6ThemeDidChangeNotification
+                                                          object:nil];
     [_tableView reloadData];
 }
 
@@ -645,8 +786,24 @@ didDismissWithButtonIndex:(NSInteger)buttonIndex
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
     [d setBool:sw.on forKey:SettingsKeyUseTransit];
     [d synchronize];
-    [_fields release]; _fields = [[NSMutableDictionary alloc] init];
+    [_fields release];
+    _fields = [[NSMutableDictionary alloc] init];
     [self.tableView reloadData];
+}
+
+- (IBAction)_providerChanged:(UISegmentedControl *)seg
+{
+    NSArray *providers = [SettingsViewController availableProviderIDs];
+    NSString *newProv = [providers objectAtIndex:seg.selectedSegmentIndex];
+    self.provider = newProv;
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    [d setObject:newProv forKey:SettingsKeyProvider];
+    [d setObject:[SettingsViewController defaultModelForProvider:newProv]
+      forKey:SettingsKeyModel];
+    [d synchronize];
+    [_fields release];
+    _fields = [[NSMutableDictionary alloc] init];
+    [_tableView reloadData];
 }
 
 - (IBAction)_webSearchToggle:(UISwitch *)sw
@@ -661,9 +818,9 @@ didDismissWithButtonIndex:(NSInteger)buttonIndex
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
     [d setInteger:(NSInteger)sp.value forKey:SettingsKeyTavilyMaxResults];
     [d synchronize];
-    // Update the label of the cell that owns this stepper.
-    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:
-                              [NSIndexPath indexPathForRow:2 inSection:[self _displayedSectionForLogical:kSectionWebSearch]]];
+    NSIndexPath *wsPath = [NSIndexPath indexPathForRow:2
+                                            inSection:[self _displayedSectionForLogical:kSectionWebSearch]];
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:wsPath];
     UILabel *numLabel = (UILabel *)[cell.contentView viewWithTag:999];
     if (numLabel) numLabel.text = [NSString stringWithFormat:@"%d", (int)sp.value];
 }
@@ -688,37 +845,26 @@ didDismissWithButtonIndex:(NSInteger)buttonIndex
 
 - (void)_persistField:(UITextField *)field
 {
-    NSInteger logical = field.tag >> 8;
-    NSInteger row = field.tag & 0xff;
-    NSString *key = [self _keyForLogical:logical row:row];
-    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    if (logical == kSectionModel && row == 0) {
-        [d setObject:field.text ?: @"" forKey:SettingsKeyModel];
-    } else if (logical == kSectionWebSearch && row == 1) {
-        [d setObject:field.text ?: @"" forKey:SettingsKeyTavilyAPIKey];
-    } else if (logical == kSectionPrompt && row == 0) {
-        [d setObject:field.text ?: @"" forKey:SettingsKeySystemPrompt];
-    } else if (logical == kSectionTheme && row == 0) {
-        // Dark mode is a switch, not text — ignore.
-    } else {
-        if (logical == kSectionDirect && row == 1) {
-            // Temperature — numeric.
-            [d setFloat:(float)[field.text doubleValue] forKey:key];
-        } else {
-            [d setObject:field.text ?: @"" forKey:key];
-        }
+    // Look up the NSUserDefaults key from the field's restorationIdentifier
+    // (set in _textFieldWithFrame:key:). iOS 6+ property.
+    NSString *key = nil;
+    if ([field respondsToSelector:@selector(restorationIdentifier)]) {
+        key = [field restorationIdentifier];
     }
+    if (!key || key.length == 0) return;
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    [d setObject:field.text ?: @"" forKey:key];
     [d synchronize];
 }
+
+// Stub retained for compatibility — no longer used.
+- (NSString *)_keyForLogical:(NSInteger)logical row:(NSInteger)row { return @""; }
 
 #pragma mark - Section mapping
 
 - (NSInteger)_logicalSectionForDisplayed:(NSInteger)displayed
 {
     if (_useTransit) {
-        // Skip kSectionDirect (logical=2). Map:
-        // displayed 0→Theme(0), 1→Transit(1), 2→Model(3), 3→WebSearch(4),
-        // 4→Prompt(5), 5→About(6), 6→Reset(7).
         switch (displayed) {
             case 0: return kSectionTheme;
             case 1: return kSectionTransit;
@@ -736,7 +882,6 @@ didDismissWithButtonIndex:(NSInteger)buttonIndex
 - (NSInteger)_displayedSectionForLogical:(NSInteger)logical
 {
     if (_useTransit) {
-        // Inverse of _logicalSectionForDisplayed.
         switch (logical) {
             case kSectionTheme:     return 0;
             case kSectionTransit:    return 1;
@@ -749,65 +894,6 @@ didDismissWithButtonIndex:(NSInteger)buttonIndex
         }
     }
     return logical;
-}
-
-- (NSString *)_keyForLogical:(NSInteger)logical row:(NSInteger)row
-{
-    switch (logical) {
-        case kSectionTransit:   return row == 1 ? SettingsKeyTransitURL : (row == 2 ? SettingsKeyProvider : SettingsKeyUseTransit);
-        case kSectionDirect:    return row == 0 ? SettingsKeyBaseURL : SettingsKeyAPIKey;
-        case kSectionModel:     return SettingsKeyModel;
-        case kSectionWebSearch: return row == 1 ? SettingsKeyTavilyAPIKey : (row == 2 ? SettingsKeyTavilyMaxResults : SettingsKeyWebSearchEnabled);
-        case kSectionPrompt:    return SettingsKeySystemPrompt;
-        default: return @"";
-    }
-}
-
-- (NSString *)_labelForLogical:(NSInteger)logical row:(NSInteger)row
-{
-    switch (logical) {
-        case kSectionTheme:
-            return row == 0 ? NSLocalizedString(@"深色模式", nil) : NSLocalizedString(@"字号", nil);
-        case kSectionTransit:
-            return row == 0 ? NSLocalizedString(@"使用中转", nil) :
-                   row == 1 ? NSLocalizedString(@"Transit URL", nil) :
-                              NSLocalizedString(@"Provider", nil);
-        case kSectionDirect:
-            return row == 0 ? NSLocalizedString(@"Base URL", nil) :
-                              NSLocalizedString(@"API Key", nil);
-        case kSectionModel:
-            return row == 0 ? NSLocalizedString(@"Model", nil) :
-                              NSLocalizedString(@"自动搜索", nil);
-        case kSectionWebSearch:
-            return row == 0 ? NSLocalizedString(@"启用", nil) :
-                   row == 1 ? NSLocalizedString(@"Tavily Key", nil) :
-                              NSLocalizedString(@"结果数", nil);
-        case kSectionPrompt:
-            return NSLocalizedString(@"Prompt", nil);
-        default:
-            return @"";
-    }
-}
-
-- (NSString *)_placeholderForLogical:(NSInteger)logical row:(NSInteger)row
-{
-    switch (logical) {
-        case kSectionTransit: return row == 1 ? kDefaultTransitURL : @"";
-        case kSectionDirect:  return row == 0 ? @"https://api.openai.com" : @"sk-...";
-        case kSectionModel:   return row == 0 ? @"gpt-4o-mini" : @"";
-        case kSectionWebSearch: return row == 1 ? @"tvly-..." : @"";
-        case kSectionPrompt:  return NSLocalizedString(@"You are a helpful assistant.", nil);
-        default: return @"";
-    }
-}
-
-- (void)dealloc
-{
-    [_tableView release];
-    [_fields release];
-    [_provider release];
-    [_availableModels release];
-    [super dealloc];
 }
 
 @end
