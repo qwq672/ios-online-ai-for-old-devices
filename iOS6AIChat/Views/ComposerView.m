@@ -83,12 +83,10 @@ static CGFloat const kPad = 6.0f;
                    forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_webSearchButton];
 
-        // Image upload button
-        UIButton *imgBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        [imgBtn addTarget:self action:@selector(_imageUploadTapped)
-         forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:imgBtn];
-        [imgBtn release];
+        // Image upload button — hidden until multipart upload is
+        // implemented. Currently just an empty placeholder.
+        // _imageUploadButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        // [self addSubview:_imageUploadButton];
 
         // Send button — drawn arrow icon.
         _sendButton = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -161,55 +159,14 @@ static CGFloat const kPad = 6.0f;
 
 - (void)_imageUploadTapped
 {
-    UIImagePickerController *picker = [[[UIImagePickerController alloc] init] autorelease];
-    picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
-    picker.allowsEditing = NO;
-    picker.delegate = self;
-    UIView *v = self;
-    while (v && ![v.nextResponder isKindOfClass:[UIViewController class]]) {
-        v = v.superview;
-    }
-    UIViewController *vc = (UIViewController *)v.nextResponder;
-    if (vc) [vc presentViewController:picker animated:YES completion:nil];
+    UIAlertView *av = [[[UIAlertView alloc]
+        initWithTitle:NSLocalizedString(@"图片上传", nil)
+              message:NSLocalizedString(@"功能开发中，敬请期待。", nil)
+             delegate:nil
+    cancelButtonTitle:NSLocalizedString(@"好", nil)
+    otherButtonTitles:nil] autorelease];
+    [av show];
 }
-
-- (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary *)info
-{
-    UIImage *image = [info objectForKey:UIImagePickerControllerOriginalImage];
-    [picker dismissViewControllerAnimated:YES completion:nil];
-    if (!image) return;
-    NSInteger maxDim = [[NSUserDefaults standardUserDefaults] integerForKey:@"imageMaxDim"];
-    if (maxDim == 0) maxDim = 1024;
-    CGFloat w = image.size.width, h = image.size.height;
-    if (w > maxDim || h > maxDim) {
-        CGFloat scale = maxDim / MAX(w, h);
-        w = (NSInteger)(w * scale);
-        h = (NSInteger)(h * scale);
-        UIGraphicsBeginImageContextWithOptions(CGSizeMake(w, h), NO, 0.0);
-        [image drawInRect:CGRectMake(0, 0, w, h)];
-        image = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
-    }
-    NSData *jpegData = UIImageJPEGRepresentation(image, 0.7);
-    if (!jpegData) return;
-    [jpegData retain]; // will be released after base64
-    // base64Encoding is iOS 7+ in public API but works on iOS 6 as private API.
-    // Use performSelector to avoid compile-time check.
-    NSString *base64 = [jpegData performSelector:@selector(base64Encoding)];
-    [jpegData release];
-    NSString *dataUrl = [NSString stringWithFormat:@"data:image/jpeg;base64,%@", base64];
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:@"ComposerViewImagePickedNotification"
-                      object:self
-                    userInfo:@{@"dataUrl": dataUrl}];
-}
-
-- (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker
-{
-    [picker dismissViewControllerAnimated:YES completion:nil];
-}
-
-- (void)dealloc
 
 - (void)_refreshToggleVisuals
 {
@@ -230,11 +187,6 @@ static CGFloat const kPad = 6.0f;
                  bg:ws?onBG:offBG
             iconType:IconTypeGlobe
            iconColor:ws?onIconColor:offIconColor];
-    // Image upload button icon.
-    if (imgBtn) {
-        [self _setButton:imgBtn bg:offBG iconType:IconTypeCamera iconColor:offIconColor];
-    }
-
     // Send button — always tinted with the theme tint, white arrow on top.
     UIColor *sendIconColor = [UIColor whiteColor];
     UIImage *sendIcon = [IconDrawing imageForType:IconTypeSendArrow
@@ -287,15 +239,7 @@ static CGFloat const kPad = 6.0f;
     _webSearchButton.frame = CGRectMake(x, toggleY, toggleW, 28);
     x += toggleW + toggleGap;
 
-    // Find the image upload button subview.
-    UIButton *imgBtn = nil;
-    for (UIView *v in self.subviews) {
-        if ([v isKindOfClass:[UIButton class]] && v != _deepThinkingButton && v != _webSearchButton && v != _sendButton) {
-            imgBtn = (UIButton *)v;
-            break;
-        }
-    }
-    if (imgBtn) imgBtn.frame = CGRectMake(x, toggleY, toggleW, 28);
+    // (Image upload button removed — not yet implemented.)
 
     // Send button on right of row 1.
     CGFloat sendW = 40.0f;
