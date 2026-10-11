@@ -280,7 +280,6 @@
     [super dealloc];
 }
 
-@end
 
 #pragma mark - Tavily web search (sync)
 
@@ -292,18 +291,16 @@
                             error:(NSError **)error
 {
     if (!query || query.length == 0) return nil;
-    NSString *base = useTransit ? (transitURL ?: @"https://api.tavily.com") : @"https://api.tavily.com";
-    NSString *endpoint = [base stringByTrimmingCharactersInSet:
-                          [NSCharacterSet characterSetWithCharactersInString:@"/"]];
-    endpoint = [endpoint stringByAppendingPathComponent:@"search"];
-    // If transit mode, we want the path to be /v1/tavily/search instead.
+    NSString *endpoint;
     if (useTransit) {
-        endpoint = [[base stringByTrimmingCharactersInSet:
-                    [NSCharacterSet characterSetWithCharactersInString:@"/"]]
-                    stringByAppendingPathComponent:@"v1/tavily/search"];
+        NSString *base = transitURL ?: @"https://api-ai.awa.lat";
+        base = [base stringByTrimmingCharactersInSet:
+                [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+        endpoint = [base stringByAppendingPathComponent:@"v1/tavily/search"];
+    } else {
+        endpoint = @"https://api.tavily.com/search";
     }
 
-    // Clamp maxResults to [1,8] per Tavily API limits.
     if (maxResults < 1) maxResults = 1;
     if (maxResults > 8) maxResults = 8;
 
@@ -339,7 +336,6 @@
     NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
     NSArray *results = [json objectForKey:@"results"];
     if (![results isKindOfClass:[NSArray class]]) return nil;
-    // Sanitise to NSArray<NSDictionary> with title/url/content keys.
     NSMutableArray *out = [NSMutableArray arrayWithCapacity:[results count]];
     for (NSDictionary *r in results) {
         if (![r isKindOfClass:[NSDictionary class]]) continue;
@@ -407,3 +403,5 @@
     }
     return out;
 }
+
+@end
