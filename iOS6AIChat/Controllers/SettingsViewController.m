@@ -582,7 +582,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
                 initWithTitle:NSLocalizedString(@"选择模型", nil)
                       message:NSLocalizedString(@"点选要用的模型", nil)
                      delegate:self
-            cancelButtonTitle:NSLocalizedString(@"取消", nil) ];
+            cancelButtonTitle:NSLocalizedString(@"取消", nil)
+            otherButtonTitles:nil];
             // Cap at 6 buttons (UIAlertView limit on iOS 6).
             NSInteger limit = MIN([models count], (NSUInteger)6);
             for (NSInteger i = 0; i < limit; i++) {
