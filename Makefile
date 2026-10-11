@@ -88,7 +88,7 @@ iOS6AIChat_CFLAGS  = -fno-objc-arc -fobjc-exceptions -fobjc-legacy-dispatch \
 		     -Wno-error=objc-method-access -Wno-objc-method-access \
 		     -std=gnu99 \
 		     -IiOS6AIChat -IiOS6AIChat/Models -IiOS6AIChat/Services \
-		     -IiOS6AIChat/Views -IiOS6AIChat/Controllers -IiOS6AIChat/Resources \
+		     -IiOS6AIChat/Views -IiOS6AIChat/Controllers -IiOS6AIChat/Resources
 iOS6AIChat_LDFLAGS = -framework UIKit -framework Foundation -framework CoreGraphics
 
 # === Packaging ===========================================================
