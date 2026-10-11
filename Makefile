@@ -108,9 +108,10 @@ ifneq ($(THEOS),)
     # Modern Theos master doesn't auto-include rules.mk at the top level,
     # which means master/application.mk never gets loaded and `make all`
     # ends up empty ("Nothing to be done for 'all'"). Explicitly include
-    # rules.mk here so the real `all::` target + application instance
-    # machinery is registered.
+    # rules.mk AND master/application.mk here so the real `all::` target
+    # + application instance machinery is registered.
     include $(THEOS)/makefiles/rules.mk
+    include $(THEOS)/makefiles/master/application.mk
 else
     $(error "THEOS env var not set. Install Theos: https://theos.dev/docs/installation-linux")
 endif
