@@ -309,8 +309,13 @@ titleForFooterInSection:(NSInteger)section
     //
     // All share the same textfield-host cell layout.
     NSString *key = [self _keyForLogical:logical row:indexPath.row];
-    NSString *current = [settings objectForKey:key];
-    if ([current isKindOfClass:[NSNumber class]]) current = [current stringValue];
+    id rawValue = [settings objectForKey:key];
+    NSString *current = nil;
+    if ([rawValue isKindOfClass:[NSNumber class]]) {
+        current = [NSString stringWithFormat:@"%@", rawValue];
+    } else if ([rawValue isKindOfClass:[NSString class]]) {
+        current = rawValue;
+    }
     if (!current) current = @"";
 
     UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(15, 8, 120, 28)];
