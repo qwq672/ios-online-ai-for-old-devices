@@ -45,7 +45,6 @@ on:
         default: '6.0'
 
 env:
-  THEOS_SCHEME: rootful
   DEFAULT_DEPLOYMENT: '6.0'
   DEFAULT_SDK: '6.0'
   # Public fallback repos for SDK acquisition.
@@ -220,8 +219,7 @@ jobs:
           SV="${{ steps.cfg.outputs.sdk_version }}"
           make clean || true
           make package \
-              TARGET="iphone:clang:${DT}:${SV}" \
-              THEOS_PACKAGE_SCHEME="$THEOS_SCHEME"
+              TARGET="iphone:clang:${DT}:${SV}"
           echo "--- packages/ ---"
           ls -la packages/ 2>/dev/null || ls -la *.deb 2>/dev/null
 
@@ -231,8 +229,7 @@ jobs:
           DT="${{ steps.cfg.outputs.deployment_target }}"
           SV="${{ steps.cfg.outputs.sdk_version }}"
           make ipa \
-              TARGET="iphone:clang:${DT}:${SV}" \
-              THEOS_PACKAGE_SCHEME="$THEOS_SCHEME"
+              TARGET="iphone:clang:${DT}:${SV}"
           ls -la iOS6AIChat-unsigned.ipa
 
       - name: Upload .deb artifact

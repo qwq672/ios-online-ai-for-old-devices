@@ -85,9 +85,11 @@ iOS6AIChat_CFLAGS  = -fno-objc-arc -fobjc-exceptions -fobjc-legacy-dispatch \
 iOS6AIChat_LDFLAGS = -framework UIKit -framework Foundation -framework CoreGraphics
 
 # === Packaging ===========================================================
-# Theos package scheme — rootful for legacy jailbreaks (iOS 6 era is rootful).
-# For rootless jailbreaks (modern, iOS 15+), override: make THEOS_PACKAGE_SCHEME=rootless
-THEOS_PACKAGE_SCHEME = rootful
+# Theos package scheme — modern Theos master no longer has a "rootful"
+# scheme name; the default (no scheme set) produces a rootful .deb which
+# is what iOS 6 era jailbreaks use. For rootless (modern, iOS 15+):
+#   make THEOS_PACKAGE_SCHEME=rootless
+#THEOS_PACKAGE_SCHEME = rootless
 
 # Install the .app under /Applications (becomes a system app on jailbreak).
 INSTALL_PATH = /Applications
@@ -108,20 +110,20 @@ endif
 # The .app is inside the staged .deb payload at .theos/_/Applications/.
 .PHONY: ipa clean-ipa show-app
 ipa: package
-	@echo "==> Locating staged .app bundle in .theos/_/"
-	@BUILT_APP=$$(find .theos/_ -name "iOS6AIChat.app" -type d 2>/dev/null | head -1); \
-	if [ -z "$$BUILT_APP" ]; then \
-	    echo "Could not find iOS6AIChat.app — did 'make package' succeed?"; exit 1; \
-	fi; \
-	echo "==> Found $$BUILT_APP"; \
-	rm -rf Payload iOS6AIChat-unsigned.ipa; \
-	mkdir Payload; \
-	cp -R "$$BUILT_APP" Payload/; \
-	zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null; \
-	echo "==> Built iOS6AIChat-unsigned.ipa"
+        @echo "==> Locating staged .app bundle in .theos/_/"
+        @BUILT_APP=$$(find .theos/_ -name "iOS6AIChat.app" -type d 2>/dev/null | head -1); \
+        if [ -z "$$BUILT_APP" ]; then \
+            echo "Could not find iOS6AIChat.app — did 'make package' succeed?"; exit 1; \
+        fi; \
+        echo "==> Found $$BUILT_APP"; \
+        rm -rf Payload iOS6AIChat-unsigned.ipa; \
+        mkdir Payload; \
+        cp -R "$$BUILT_APP" Payload/; \
+        zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null; \
+        echo "==> Built iOS6AIChat-unsigned.ipa"
 
 show-app: package
-	@find .theos/_ -name "iOS6AIChat.app" -type d -print -quit
+        @find .theos/_ -name "iOS6AIChat.app" -type d -print -quit
 
 clean-ipa:
-	rm -rf Payload iOS6AIChat-unsigned.ipa
+        rm -rf Payload iOS6AIChat-unsigned.ipa
