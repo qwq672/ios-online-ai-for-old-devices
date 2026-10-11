@@ -5,7 +5,7 @@
 //  Complete rewrite with cleaner layout per user feedback:
 //    - Each row: left label + right control (clearly separated)
 //    - Text fields use UITextBorderStyleRoundedRect (visible borders)
-    - Provider is an inline UISegmentedControl (3 segments), NOT a popup alert
+//    - Provider is an inline UISegmentedControl (3 segments), NOT a popup alert
 //    - Font size is a UISegmentedControl (5 segments)
 //    - Tavily max results is a UIStepper with live value label
 //    - All controls have autoresizingMask for flexible width
