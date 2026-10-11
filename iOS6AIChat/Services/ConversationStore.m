@@ -30,7 +30,11 @@ static NSString * const kConvFileExtension     = @"conv";
 - (id)init
 {
     if (self = [super init]) {
-        _mutableConversations = [NSMutableArray array];
+        // CRITICAL: MRC retain — [NSMutableArray array] is autoreleased.
+        // Assigning directly to the ivar without retain means the array
+        // gets deallocated at the next runloop drain, and any subsequent
+        // access (e.g. saveConversation:) hits a dangling pointer → crash.
+        _mutableConversations = [[NSMutableArray array] retain];
         NSString *docs = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,
                                                                 NSUserDomainMask,
                                                                 YES) lastObject];
@@ -130,7 +134,11 @@ static NSString * const kConvFileExtension     = @"conv";
         Conversation *c = [NSKeyedUnarchiver unarchiveObjectWithFile:path];
         if (c) [loaded addObject:c];
     }
-    _mutableConversations = loaded;
+    // CRITICAL: MRC retain — `loaded` is autoreleased. Without retain,
+    // the next runloop drain frees it and _mutableConversations becomes
+    // a dangling pointer. (This was the second-launch crash cause.)
+    [_mutableConversations release];
+    _mutableConversations = [loaded retain];
     [self _sortByUpdated];
 }
 

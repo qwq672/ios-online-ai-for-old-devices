@@ -80,12 +80,17 @@
 - (id)initWithCoder:(NSCoder *)coder
 {
     if (self = [super init]) {
-        _conversationID = [coder decodeObjectForKey:@"conversationID"];
-        _title           = [coder decodeObjectForKey:@"title"];
-        _messages        = [NSMutableArray arrayWithArray:
-                            [coder decodeObjectForKey:@"messages"]];
-        _createdAt       = [coder decodeObjectForKey:@"createdAt"];
-        _updatedAt       = [coder decodeObjectForKey:@"updatedAt"];
+        // decodeObjectForKey: returns autoreleased objects. For copy/retain
+        // properties (NSString / NSDate) the synthesized setter handles
+        // retention; but _messages is assigned directly to the ivar so we
+        // must explicitly retain, else it becomes a dangling pointer after
+        // the runloop drains (causes second-launch crash).
+        _conversationID = [[coder decodeObjectForKey:@"conversationID"] copy];
+        _title           = [[coder decodeObjectForKey:@"title"] copy];
+        NSArray *decoded = [coder decodeObjectForKey:@"messages"];
+        _messages        = [[NSMutableArray alloc] initWithArray:decoded ?: @[]];
+        _createdAt       = [[coder decodeObjectForKey:@"createdAt"] copy];
+        _updatedAt       = [[coder decodeObjectForKey:@"updatedAt"] copy];
     }
     return self;
 }

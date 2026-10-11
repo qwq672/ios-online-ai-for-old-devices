@@ -28,11 +28,13 @@
 - (id)initWithCoder:(NSCoder *)coder
 {
     if (self = [super init]) {
+        // decodeObjectForKey: returns autoreleased; assign-through-copy
+        // for NSString/NSDate (the property is declared `copy`).
         _role        = (MessageRole)[[coder decodeObjectForKey:@"role"] integerValue];
-        _content     = [coder decodeObjectForKey:@"content"];
-        _contentHTML = [coder decodeObjectForKey:@"contentHTML"];
-        _createdAt   = [coder decodeObjectForKey:@"createdAt"];
-        _messageID   = [coder decodeObjectForKey:@"messageID"];
+        _content     = [[coder decodeObjectForKey:@"content"] copy];
+        _contentHTML = [[coder decodeObjectForKey:@"contentHTML"] copy];
+        _createdAt   = [[coder decodeObjectForKey:@"createdAt"] copy];
+        _messageID   = [[coder decodeObjectForKey:@"messageID"] copy];
     }
     return self;
 }
