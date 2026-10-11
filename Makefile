@@ -82,10 +82,11 @@ iOS6AIChat_FRAMEWORKS = UIKit Foundation CoreGraphics
 # -I flags below: headers are imported by bare name (#import "Foo.h"),
 # so each subdirectory that contains .h files must be on the include path.
 iOS6AIChat_CFLAGS  = -fno-objc-arc -fobjc-exceptions -fobjc-legacy-dispatch \
-		     -Wno-deprecated -Wno-error=implicit-function-declaration \
-		     -std=gnu99 \
-		     -IiOS6AIChat -IiOS6AIChat/Models -IiOS6AIChat/Services \
-		     -IiOS6AIChat/Views -IiOS6AIChat/Controllers -IiOS6AIChat/Resources
+                     -Wno-deprecated -Wno-error=implicit-function-declaration \
+                     -Wno-error=unused-variable -Wno-unused-variable \
+                     -std=gnu99 \
+                     -IiOS6AIChat -IiOS6AIChat/Models -IiOS6AIChat/Services \
+                     -IiOS6AIChat/Views -IiOS6AIChat/Controllers -IiOS6AIChat/Resources
 iOS6AIChat_LDFLAGS = -framework UIKit -framework Foundation -framework CoreGraphics
 
 # === Packaging ===========================================================
@@ -128,26 +129,26 @@ endif
 # colon `:` which would conflict if Theos also defined `clean:`).
 .PHONY: clean
 clean::
-	rm -rf .theos obj build packages Payload *.deb iOS6AIChat-unsigned.ipa
+        rm -rf .theos obj build packages Payload *.deb iOS6AIChat-unsigned.ipa
 
 # Pack an unsigned .ipa from the .app Theos just produced.
 # The .app is inside the staged .deb payload at .theos/_/Applications/.
 .PHONY: ipa clean-ipa show-app
 ipa: package
-	@echo "==> Locating staged .app bundle in .theos/_/"
-	@BUILT_APP=$$(find .theos/_ -name "iOS6AIChat.app" -type d 2>/dev/null | head -1); \
-	if [ -z "$$BUILT_APP" ]; then \
-	    echo "Could not find iOS6AIChat.app — did 'make package' succeed?"; exit 1; \
-	fi; \
-	echo "==> Found $$BUILT_APP"; \
-	rm -rf Payload iOS6AIChat-unsigned.ipa; \
-	mkdir Payload; \
-	cp -R "$$BUILT_APP" Payload/; \
-	zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null; \
-	echo "==> Built iOS6AIChat-unsigned.ipa"
+        @echo "==> Locating staged .app bundle in .theos/_/"
+        @BUILT_APP=$$(find .theos/_ -name "iOS6AIChat.app" -type d 2>/dev/null | head -1); \
+        if [ -z "$$BUILT_APP" ]; then \
+            echo "Could not find iOS6AIChat.app — did 'make package' succeed?"; exit 1; \
+        fi; \
+        echo "==> Found $$BUILT_APP"; \
+        rm -rf Payload iOS6AIChat-unsigned.ipa; \
+        mkdir Payload; \
+        cp -R "$$BUILT_APP" Payload/; \
+        zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null; \
+        echo "==> Built iOS6AIChat-unsigned.ipa"
 
 show-app: package
-	@find .theos/_ -name "iOS6AIChat.app" -type d -print -quit
+        @find .theos/_ -name "iOS6AIChat.app" -type d -print -quit
 
 clean-ipa:
-	rm -rf Payload iOS6AIChat-unsigned.ipa
+        rm -rf Payload iOS6AIChat-unsigned.ipa
