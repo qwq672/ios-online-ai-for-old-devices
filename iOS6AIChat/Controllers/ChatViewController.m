@@ -386,7 +386,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                       conversationID:(NSString *)conversationID
                         assistantMsg:(Message *)assistantMsg
 {
-    _networkService.thinkingEnabled = deepThinking;
+    _networkService.thinkingEnabled = [ComposerView deepThinkingEnabled];
     [_networkService streamChatWithUseTransit:useTransit
                                     transitURL:transitURL
                                       baseURL:baseURL
