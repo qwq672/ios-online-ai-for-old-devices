@@ -218,6 +218,11 @@ jobs:
           DT="${{ steps.cfg.outputs.deployment_target }}"
           SV="${{ steps.cfg.outputs.sdk_version }}"
           make clean || true
+          # Modern Theos master has a bug: top-level `make package` doesn't
+          # load rules.mk, so the `$(THEOS_PACKAGE_DIR):` mkdir rule never
+          # gets defined. Pre-creating the packages/ directory sidesteps
+          # this — Make treats an existing file/dir as already up-to-date.
+          mkdir -p packages
           make package \
               TARGET="iphone:clang:${DT}:${SV}"
           echo "--- packages/ ---"
