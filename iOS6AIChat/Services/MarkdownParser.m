@@ -294,7 +294,7 @@ static void AppendAttrString(NSMutableAttributedString *out,
                                                                     options:0
                                                                       range:NSMakeRange(0, line.length)];
         if (ordMatch) {
-            NSString *numStr = [line substringWithRange:ordMatch.rangeAtIndex:1];
+            NSString *numStr = [line substringWithRange:[ordMatch rangeAtIndex:1]];
             NSString *body = [line substringFromIndex:ordMatch.range.location + ordMatch.range.length];
             NSString *prefix = [NSString stringWithFormat:@"%@.  ", numStr];
             [self _appendInlineMarkup:body
@@ -349,9 +349,11 @@ static void AppendAttrString(NSMutableAttributedString *out,
 
     UIFont *bold      = [UIFont boldSystemFontOfSize:baseFont.pointSize];
     UIFont *italic    = [UIFont italicSystemFontOfSize:baseFont.pointSize];
-    UIFont *boldItalic = [UIFont italicSystemFontWithName:@"HelveticaNeue-BoldItalic"
-                                                     size:baseFont.pointSize]
-                         ?: bold;
+    // For bold-italic, look up the named font directly. HelveticaNeue-BoldItalic
+    // is available on iOS 6+. Fall back to bold if unavailable.
+    UIFont *boldItalic = [UIFont fontWithName:@"HelveticaNeue-BoldItalic"
+                                         size:baseFont.pointSize]
+                        ?: bold;
     UIFont *mono      = [UIFont fontWithName:@"Courier" size:baseFont.pointSize - 1] ?: baseFont;
     UIFont *underlineFont = [UIFont systemFontOfSize:baseFont.pointSize];
 
