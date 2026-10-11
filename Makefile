@@ -105,16 +105,23 @@ THEOS_LEAN_PACKAGE = 1
 # === Theos bootstrap =====================================================
 ifneq ($(THEOS),)
     include $(THEOS)/makefiles/common.mk
+    # Modern Theos master doesn't auto-include rules.mk at the top level,
+    # which means master/application.mk never gets loaded and `make all`
+    # ends up empty ("Nothing to be done for 'all'"). Explicitly include
+    # rules.mk here so the real `all::` target + application instance
+    # machinery is registered.
+    include $(THEOS)/makefiles/rules.mk
 else
     $(error "THEOS env var not set. Install Theos: https://theos.dev/docs/installation-linux")
 endif
 
 # === Convenience targets =================================================
 
-# Local clean target — Theos' built-in `clean` may not exist on all
-# versions; this provides a fallback that wipes the local build dirs.
+# Local clean target — adds to Theos' built-in `clean` (note the double
+# colon `::`, which is Make's "add to existing rule" syntax vs. single
+# colon `:` which would conflict if Theos also defined `clean:`).
 .PHONY: clean
-clean:
+clean::
 	rm -rf .theos obj build packages Payload *.deb iOS6AIChat-unsigned.ipa
 
 # Pack an unsigned .ipa from the .app Theos just produced.
