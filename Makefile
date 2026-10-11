@@ -110,20 +110,20 @@ endif
 # The .app is inside the staged .deb payload at .theos/_/Applications/.
 .PHONY: ipa clean-ipa show-app
 ipa: package
-        @echo "==> Locating staged .app bundle in .theos/_/"
-        @BUILT_APP=$$(find .theos/_ -name "iOS6AIChat.app" -type d 2>/dev/null | head -1); \
-        if [ -z "$$BUILT_APP" ]; then \
-            echo "Could not find iOS6AIChat.app — did 'make package' succeed?"; exit 1; \
-        fi; \
-        echo "==> Found $$BUILT_APP"; \
-        rm -rf Payload iOS6AIChat-unsigned.ipa; \
-        mkdir Payload; \
-        cp -R "$$BUILT_APP" Payload/; \
-        zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null; \
-        echo "==> Built iOS6AIChat-unsigned.ipa"
+	@echo "==> Locating staged .app bundle in .theos/_/"
+	@BUILT_APP=$$(find .theos/_ -name "iOS6AIChat.app" -type d 2>/dev/null | head -1); \
+	if [ -z "$$BUILT_APP" ]; then \
+	    echo "Could not find iOS6AIChat.app — did 'make package' succeed?"; exit 1; \
+	fi; \
+	echo "==> Found $$BUILT_APP"; \
+	rm -rf Payload iOS6AIChat-unsigned.ipa; \
+	mkdir Payload; \
+	cp -R "$$BUILT_APP" Payload/; \
+	zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null; \
+	echo "==> Built iOS6AIChat-unsigned.ipa"
 
 show-app: package
-        @find .theos/_ -name "iOS6AIChat.app" -type d -print -quit
+	@find .theos/_ -name "iOS6AIChat.app" -type d -print -quit
 
 clean-ipa:
-        rm -rf Payload iOS6AIChat-unsigned.ipa
+	rm -rf Payload iOS6AIChat-unsigned.ipa
