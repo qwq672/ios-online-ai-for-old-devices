@@ -1,0 +1,16 @@
+Package: com.zai.iOS6AIChat
+Name: iOS6AIChat
+Version: 1.0.0-1
+Architecture: iphoneos-arm
+Description: iOS 6 skeuomorphic-styled AI chat client
+  OpenAI-compatible client with iOS 6 glossy bubble UI,
+  streaming SSE responses, conversation history, Markdown
+  rendering and a settings page for BaseURL/API Key/Model.
+  Faithfully recreates the 2012-era iOS 6 look on any iOS
+  version 6.0 and later.
+Maintainer: iOS6AIChat Contributors <noreply@example.com>
+Author: iOS6AIChat Contributors <noreply@example.com>
+Section: Applications
+Depends: mobilesubstrate
+Conflicts: com.zai.iOS6AIChat-beta
+Replaces: com.zai.iOS6AIChat-beta
