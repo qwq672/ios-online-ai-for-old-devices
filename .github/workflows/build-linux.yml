@@ -98,34 +98,19 @@ jobs:
           # Without cctools-port, Theos can't link iOS binaries (LLVM's
           # ld64.lld only supports arm64 Mach-O, not armv7/armv7s which iOS
           # 6 era devices require).
-          # We install cctools-port from the hashbang apt repo which hosts
-          # prebuilt Linux x86_64 binaries that speak the real Apple ld64
-          # protocol + 32-bit ARM.
+          # The canonical prebuilt iOS toolchain for Linux is hosted by
+          # L1ghtmann/llvm-project — it's what the Theos official install
+          # script (`theos/bin/install-theos`) downloads.
           set -e
-          echo "deb [signed-by=/etc/apt/keyrings/apt.hashbang.ai.gpg] https://apt.hashbang.ai/ubuntu jammy main" \
-            | sudo tee /etc/apt/sources.list.d/hashbang.list
-          sudo mkdir -p /etc/apt/keyrings
-          wget -qO - https://apt.hashbang.ai/apt.hashbang.ai.gpg \
-            | sudo tee /etc/apt/keyrings/apt.hashbang.ai.gpg >/dev/null
-          sudo apt-get update
-          sudo apt-get install -y cctools
-          # The cctools-port .deb installs binaries at /opt/procursus-cctools/.
-          # Symlink them into the path Theos expects.
-          CCTOOLS_PREFIX="/opt/procursus-cctools/linux/iphone/bin"
-          if [ ! -d "$CCTOOLS_PREFIX" ]; then
-            # Fallback: search the filesystem for where the cctools .deb installed.
-            CCTOOLS_PREFIX=$(dpkg -L cctools 2>/dev/null | grep -E 'bin/(ld|clang)$' | head -1 | xargs dirname 2>/dev/null)
-          fi
-          echo "cctools-port bin dir: $CCTOOLS_PREFIX"
-          sudo mkdir -p "$THEOS/toolchain/linux/iphone/bin"
-          for bin in clang clang++ ld ldid cctools codesign codesign_allocate; do
-            if [ -x "$CCTOOLS_PREFIX/$bin" ]; then
-              sudo ln -sf "$CCTOOLS_PREFIX/$bin" "$THEOS/toolchain/linux/iphone/bin/$bin"
-            fi
-          done
-          ls -la "$THEOS/toolchain/linux/iphone/bin" || true
-          # Sanity check: try the linker
-          "$THEOS/toolchain/linux/iphone/bin/ld" --version 2>&1 | head -3 || true
+          ARCH=$(uname -m)
+          echo "Downloading iOSToolchain-$ARCH.tar.xz from L1ghtmann/llvm-project…"
+          curl -fsSL "https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-$ARCH.tar.xz" \
+            | tar -xJvf - -C "$THEOS/toolchain/"
+          echo "Installed toolchain at $THEOS/toolchain/linux/iphone/"
+          ls -la "$THEOS/toolchain/linux/iphone/bin/" | head -20
+          # Sanity check
+          "$THEOS/toolchain/linux/iphone/bin/clang" --version 2>&1 | head -2
+          "$THEOS/toolchain/linux/iphone/bin/ld" -v 2>&1 | head -2
 
       - name: Determine deployment target / SDK version
         id: cfg
