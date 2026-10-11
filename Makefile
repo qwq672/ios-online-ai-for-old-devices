@@ -132,7 +132,8 @@ clean::
 	rm -rf .theos obj build packages Payload *.deb iOS6AIChat-unsigned.ipa
 
 # Pack an unsigned .ipa from the .app Theos just produced.
-# The .app is inside the staged .deb payload at .theos/_/Applications/.
+# The .app is inside the staged .deb payload at .theos/_/Applications/
+# (for rootful scheme) or .theos/_/var/jb/Applications/ (for rootless).
 .PHONY: ipa clean-ipa show-app
 ipa: package
 	@echo "==> Locating staged .app bundle in .theos/_/"
@@ -144,8 +145,25 @@ ipa: package
 	rm -rf Payload iOS6AIChat-unsigned.ipa; \
 	mkdir Payload; \
 	cp -R "$$BUILT_APP" Payload/; \
+	APP=Payload/iOS6AIChat.app; \
+	echo "==> Ensuring Info.plist is in the bundle (Theos sometimes forgets it)"; \
+	if [ ! -f "$$APP/Info.plist" ]; then \
+	    cp iOS6AIChat/Resources/iOS6AIChat-Info.plist "$$APP/Info.plist"; \
+	fi; \
+	echo "==> Converting Info.plist to binary format (iOS 6 prefers binary)"; \
+	if command -v plutil >/dev/null 2>&1; then \
+	    plutil -convert binary1 "$$APP/Info.plist" 2>/dev/null || true; \
+	fi; \
+	echo "==> Ad-hoc re-signing binary with ldid (ensures it loads on jailbroken iOS)"; \
+	if command -v ldid >/dev/null 2>&1; then \
+	    ldid -S "$$APP/iOS6AIChat" 2>/dev/null || true; \
+	fi; \
+	echo "==> Final .app contents:"; \
+	ls -la "$$APP"; \
+	echo "==> Zipping into iOS6AIChat-unsigned.ipa"; \
 	zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null; \
-	echo "==> Built iOS6AIChat-unsigned.ipa"
+	echo "==> Built iOS6AIChat-unsigned.ipa"; \
+	ls -la iOS6AIChat-unsigned.ipa
 
 show-app: package
 	@find .theos/_ -name "iOS6AIChat.app" -type d -print -quit
