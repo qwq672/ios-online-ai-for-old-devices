@@ -72,6 +72,13 @@ jobs:
               zip unzip wget ca-certificates \
               libcurl4-openssl-dev git
 
+      - name: Install Theos (sets $THEOS for subsequent steps)
+        run: |
+          git clone --recursive --depth=1 https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+          # Sanity-check the install.
+          ls "$HOME/theos/makefiles/common.mk"
+
       - name: Build ldid from source
         run: |
           # ldid (Link Identity Editor) is the ad-hoc code signer Theos uses
@@ -104,6 +111,7 @@ jobs:
           set -e
           ARCH=$(uname -m)
           echo "Downloading iOSToolchain-$ARCH.tar.xz from L1ghtmann/llvm-project…"
+          mkdir -p "$THEOS/toolchain"
           curl -fsSL "https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-$ARCH.tar.xz" \
             | tar -xJvf - -C "$THEOS/toolchain/"
           echo "Installed toolchain at $THEOS/toolchain/linux/iphone/"
@@ -120,13 +128,6 @@ jobs:
           echo "deployment_target=$DT" >> "$GITHUB_OUTPUT"
           echo "sdk_version=$SV" >> "$GITHUB_OUTPUT"
           echo "Using deployment_target=$DT  sdk_version=$SV"
-
-      - name: Install Theos
-        run: |
-          git clone --recursive --depth=1 https://github.com/theos/theos.git "$HOME/theos"
-          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
-          # Sanity-check the install.
-          ls "$HOME/theos/makefiles/common.mk"
 
       - name: Acquire iPhoneOS SDK
         id: sdk
