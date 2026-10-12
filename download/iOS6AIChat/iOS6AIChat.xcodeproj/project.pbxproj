@@ -1,0 +1,385 @@
+// !$*UTF8*$!
+//
+//  project.pbxproj
+//  iOS6AIChat
+//
+//  Objectively Compatible Xcode project file for iOS 6+ deployment.
+//  Hand-written — every 24-char hex UUID is stable and unique.
+//
+
+{
+        archiveVersion = 1;
+        classes = {
+        };
+        objectVersion = 46;
+        objects = {
+
+/* ===== PBXBuildFile ===== */
+
+                0B0000000000000000000001 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000000000000000000001 /* main.m */; };
+                0B0000000000000000000002 /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000000000000000000003 /* AppDelegate.m */; };
+                0B0000000000000000000004 /* iOS6Theme.m in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000000000000000000006 /* iOS6Theme.m */; };
+                0B0000000000000000000005 /* Message.m in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000000000000000000008 /* Message.m */; };
+                0B0000000000000000000006 /* Conversation.m in Sources */ = {isa = PBXBuildFile; fileRef = 0A000000000000000000000A /* Conversation.m */; };
+                0B0000000000000000000007 /* ConversationStore.m in Sources */ = {isa = PBXBuildFile; fileRef = 0A000000000000000000000C /* ConversationStore.m */; };
+                0B0000000000000000000008 /* NetworkService.m in Sources */ = {isa = PBXBuildFile; fileRef = 0A000000000000000000000E /* NetworkService.m */; };
+                0B0000000000000000000009 /* MarkdownParser.m in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000000000000000000010 /* MarkdownParser.m */; };
+                0B000000000000000000000A /* ChatBubbleView.m in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000000000000000000012 /* ChatBubbleView.m */; };
+                0B000000000000000000000B /* ChatMessageCell.m in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000000000000000000014 /* ChatMessageCell.m */; };
+                0B000000000000000000000C /* ComposerView.m in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000000000000000000016 /* ComposerView.m */; };
+                0B000000000000000000000D /* ChatViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000000000000000000018 /* ChatViewController.m */; };
+                0B000000000000000000000E /* HistoryViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 0A000000000000000000001A /* HistoryViewController.m */; };
+                0B000000000000000000000F /* SettingsViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 0A000000000000000000001C /* SettingsViewController.m */; };
+                0B0000000000000000000010 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0A000000000000000000001E /* UIKit.framework */; };
+                0B0000000000000000000011 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0A000000000000000000001F /* Foundation.framework */; };
+                0B0000000000000000000012 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0A0000000000000000000020 /* CoreGraphics.framework */; };
+
+/* ===== PBXFileReference ===== */
+
+                0A0000000000000000000001 /* main.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
+                0A0000000000000000000002 /* AppDelegate.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = "<group>"; };
+                0A0000000000000000000003 /* AppDelegate.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = AppDelegate.m; sourceTree = "<group>"; };
+                0A0000000000000000000004 /* iOS6AIChat-Prefix.pch */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "iOS6AIChat-Prefix.pch"; sourceTree = "<group>"; };
+                0A0000000000000000000005 /* iOS6Theme.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = iOS6Theme.h; sourceTree = "<group>"; };
+                0A0000000000000000000006 /* iOS6Theme.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = iOS6Theme.m; sourceTree = "<group>"; };
+                0A0000000000000000000007 /* Message.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = Message.h; sourceTree = "<group>"; };
+                0A0000000000000000000008 /* Message.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = Message.m; sourceTree = "<group>"; };
+                0A0000000000000000000009 /* Conversation.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = Conversation.h; sourceTree = "<group>"; };
+                0A000000000000000000000A /* Conversation.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = Conversation.m; sourceTree = "<group>"; };
+                0A000000000000000000000B /* ConversationStore.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ConversationStore.h; sourceTree = "<group>"; };
+                0A000000000000000000000C /* ConversationStore.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = ConversationStore.m; sourceTree = "<group>"; };
+                0A000000000000000000000D /* NetworkService.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NetworkService.h; sourceTree = "<group>"; };
+                0A000000000000000000000E /* NetworkService.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = NetworkService.m; sourceTree = "<group>"; };
+                0A000000000000000000000F /* MarkdownParser.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = MarkdownParser.h; sourceTree = "<group>"; };
+                0A0000000000000000000010 /* MarkdownParser.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = MarkdownParser.m; sourceTree = "<group>"; };
+                0A0000000000000000000011 /* ChatBubbleView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ChatBubbleView.h; sourceTree = "<group>"; };
+                0A0000000000000000000012 /* ChatBubbleView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = ChatBubbleView.m; sourceTree = "<group>"; };
+                0A0000000000000000000013 /* ChatMessageCell.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ChatMessageCell.h; sourceTree = "<group>"; };
+                0A0000000000000000000014 /* ChatMessageCell.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = ChatMessageCell.m; sourceTree = "<group>"; };
+                0A0000000000000000000015 /* ComposerView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ComposerView.h; sourceTree = "<group>"; };
+                0A0000000000000000000016 /* ComposerView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = ComposerView.m; sourceTree = "<group>"; };
+                0A0000000000000000000017 /* ChatViewController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ChatViewController.h; sourceTree = "<group>"; };
+                0A0000000000000000000018 /* ChatViewController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = ChatViewController.m; sourceTree = "<group>"; };
+                0A0000000000000000000019 /* HistoryViewController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = HistoryViewController.h; sourceTree = "<group>"; };
+                0A000000000000000000001A /* HistoryViewController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = HistoryViewController.m; sourceTree = "<group>"; };
+                0A000000000000000000001B /* SettingsViewController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SettingsViewController.h; sourceTree = "<group>"; };
+                0A000000000000000000001C /* SettingsViewController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = SettingsViewController.m; sourceTree = "<group>"; };
+                0A000000000000000000001D /* iOS6AIChat-Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = "iOS6AIChat-Info.plist"; sourceTree = "<group>"; };
+                0A000000000000000000001E /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+                0A000000000000000000001F /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
+                0A0000000000000000000020 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+                0A0000000000000000000021 /* iOS6AIChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iOS6AIChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
+
+/* ===== PBXGroup (folder hierarchy) ===== */
+
+                0C0000000000000000000001 /* = main group = */ = {
+                        isa = PBXGroup;
+                        children = (
+                                0C0000000000000000000008 /* Frameworks */,
+                                0C0000000000000000000002 /* iOS6AIChat */,
+                                0C0000000000000000000009 /* Products */,
+                        );
+                        sourceTree = "<group>";
+                };
+                0C0000000000000000000002 /* iOS6AIChat */ = {
+                        isa = PBXGroup;
+                        children = (
+                                0A0000000000000000000001 /* main.m */,
+                                0A0000000000000000000002 /* AppDelegate.h */,
+                                0A0000000000000000000003 /* AppDelegate.m */,
+                                0A0000000000000000000004 /* iOS6AIChat-Prefix.pch */,
+                                0A0000000000000000000005 /* iOS6Theme.h */,
+                                0A0000000000000000000006 /* iOS6Theme.m */,
+                                0C0000000000000000000003 /* Models */,
+                                0C0000000000000000000004 /* Services */,
+                                0C0000000000000000000005 /* Views */,
+                                0C0000000000000000000006 /* Controllers */,
+                                0C0000000000000000000007 /* Resources */,
+                        );
+                        path = iOS6AIChat;
+                        sourceTree = "<group>";
+                };
+                0C0000000000000000000003 /* Models */ = {
+                        isa = PBXGroup;
+                        children = (
+                                0A0000000000000000000007 /* Message.h */,
+                                0A0000000000000000000008 /* Message.m */,
+                                0A0000000000000000000009 /* Conversation.h */,
+                                0A000000000000000000000A /* Conversation.m */,
+                        );
+                        path = Models;
+                        sourceTree = "<group>";
+                };
+                0C0000000000000000000004 /* Services */ = {
+                        isa = PBXGroup;
+                        children = (
+                                0A000000000000000000000B /* ConversationStore.h */,
+                                0A000000000000000000000C /* ConversationStore.m */,
+                                0A000000000000000000000D /* NetworkService.h */,
+                                0A000000000000000000000E /* NetworkService.m */,
+                                0A000000000000000000000F /* MarkdownParser.h */,
+                                0A0000000000000000000010 /* MarkdownParser.m */,
+                        );
+                        path = Services;
+                        sourceTree = "<group>";
+                };
+                0C0000000000000000000005 /* Views */ = {
+                        isa = PBXGroup;
+                        children = (
+                                0A0000000000000000000011 /* ChatBubbleView.h */,
+                                0A0000000000000000000012 /* ChatBubbleView.m */,
+                                0A0000000000000000000013 /* ChatMessageCell.h */,
+                                0A0000000000000000000014 /* ChatMessageCell.m */,
+                                0A0000000000000000000015 /* ComposerView.h */,
+                                0A0000000000000000000016 /* ComposerView.m */,
+                        );
+                        path = Views;
+                        sourceTree = "<group>";
+                };
+                0C0000000000000000000006 /* Controllers */ = {
+                        isa = PBXGroup;
+                        children = (
+                                0A0000000000000000000017 /* ChatViewController.h */,
+                                0A0000000000000000000018 /* ChatViewController.m */,
+                                0A0000000000000000000019 /* HistoryViewController.h */,
+                                0A000000000000000000001A /* HistoryViewController.m */,
+                                0A000000000000000000001B /* SettingsViewController.h */,
+                                0A000000000000000000001C /* SettingsViewController.m */,
+                        );
+                        path = Controllers;
+                        sourceTree = "<group>";
+                };
+                0C0000000000000000000007 /* Resources */ = {
+                        isa = PBXGroup;
+                        children = (
+                                0A000000000000000000001D /* iOS6AIChat-Info.plist */,
+                        );
+                        path = Resources;
+                        sourceTree = "<group>";
+                };
+                0C0000000000000000000008 /* Frameworks */ = {
+                        isa = PBXGroup;
+                        children = (
+                                0A000000000000000000001E /* UIKit.framework */,
+                                0A000000000000000000001F /* Foundation.framework */,
+                                0A0000000000000000000020 /* CoreGraphics.framework */,
+                        );
+                        name = Frameworks;
+                        sourceTree = "<group>";
+                };
+                0C0000000000000000000009 /* Products */ = {
+                        isa = PBXGroup;
+                        children = (
+                                0A0000000000000000000021 /* iOS6AIChat.app */,
+                        );
+                        name = Products;
+                        sourceTree = "<group>";
+                };
+
+/* ===== PBXFrameworksBuildPhase ===== */
+
+                0D0000000000000000000002 /* Frameworks */ = {
+                        isa = PBXFrameworksBuildPhase;
+                        buildActionMask = 2147483647;
+                        files = (
+                                0B0000000000000000000010 /* UIKit.framework in Frameworks */,
+                                0B0000000000000000000011 /* Foundation.framework in Frameworks */,
+                                0B0000000000000000000012 /* CoreGraphics.framework in Frameworks */,
+                        );
+                        runOnlyForDeploymentPostprocessing = 0;
+                };
+
+/* ===== PBXResourcesBuildPhase ===== */
+
+                0D0000000000000000000003 /* Resources */ = {
+                        isa = PBXResourcesBuildPhase;
+                        buildActionMask = 2147483647;
+                        files = (
+                        );
+                        runOnlyForDeploymentPostprocessing = 0;
+                };
+
+/* ===== PBXSourcesBuildPhase ===== */
+
+                0D0000000000000000000001 /* Sources */ = {
+                        isa = PBXSourcesBuildPhase;
+                        buildActionMask = 2147483647;
+                        files = (
+                                0B0000000000000000000001 /* main.m in Sources */,
+                                0B0000000000000000000002 /* AppDelegate.m in Sources */,
+                                0B0000000000000000000004 /* iOS6Theme.m in Sources */,
+                                0B0000000000000000000005 /* Message.m in Sources */,
+                                0B0000000000000000000006 /* Conversation.m in Sources */,
+                                0B0000000000000000000007 /* ConversationStore.m in Sources */,
+                                0B0000000000000000000008 /* NetworkService.m in Sources */,
+                                0B0000000000000000000009 /* MarkdownParser.m in Sources */,
+                                0B000000000000000000000A /* ChatBubbleView.m in Sources */,
+                                0B000000000000000000000B /* ChatMessageCell.m in Sources */,
+                                0B000000000000000000000C /* ComposerView.m in Sources */,
+                                0B000000000000000000000D /* ChatViewController.m in Sources */,
+                                0B000000000000000000000E /* HistoryViewController.m in Sources */,
+                                0B000000000000000000000F /* SettingsViewController.m in Sources */,
+                        );
+                        runOnlyForDeploymentPostprocessing = 0;
+                };
+
+/* ===== PBXNativeTarget ===== */
+
+                0E0000000000000000000001 /* iOS6AIChat */ = {
+                        isa = PBXNativeTarget;
+                        buildConfigurationList = 1B0000000000000000000001 /* Build configuration list for PBXNativeTarget "iOS6AIChat" */;
+                        buildPhases = (
+                                0D0000000000000000000001 /* Sources */,
+                                0D0000000000000000000002 /* Frameworks */,
+                                0D0000000000000000000003 /* Resources */,
+                        );
+                        buildRules = (
+                        );
+                        dependencies = (
+                        );
+                        name = iOS6AIChat;
+                        productName = iOS6AIChat;
+                        productReference = 0A0000000000000000000021 /* iOS6AIChat.app */;
+                        productType = "com.apple.product-type.application";
+                };
+
+/* ===== PBXProject ===== */
+
+                0F0000000000000000000001 /* Project object */ = {
+                        isa = PBXProject;
+                        buildConfigurationList = 1B0000000000000000000002 /* Build configuration list for PBXProject */;
+                        compatibilityVersion = "Xcode 3.2";
+                        developmentRegion = English;
+                        hasScannedForEncodings = 0;
+                        knownRegions = (
+                                en,
+                                Base,
+                        );
+                        mainGroup = 0C0000000000000000000001 /* = main group = */;
+                        productRefGroup = 0C0000000000000000000009 /* Products */;
+                        projectDirPath = "";
+                        projectRoot = "";
+                        targets = (
+                                0E0000000000000000000001 /* iOS6AIChat */,
+                        );
+                };
+
+/* ===== XCBuildConfiguration (target) ===== */
+
+                1A0000000000000000000001 /* Debug */ = {
+                        isa = XCBuildConfiguration;
+                        buildSettings = {
+                                ALWAYS_SEARCH_USER_PATHS = NO;
+                                ARCHS = "$(ARCHS_STANDARD_32_BIT)";
+                                "CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
+                                COPY_PHASE_STRIP = NO;
+                                GCC_C_LANGUAGE_STANDARD = gnu99;
+                                GCC_DYNAMIC_NO_COMMON = NO;
+                                GCC_OPTIMIZATION_LEVEL = 0;
+                                GCC_PRECOMPILE_PREFIX_HEADER = YES;
+                                GCC_PREFIX_HEADER = "iOS6AIChat/iOS6AIChat-Prefix.pch";
+                                GCC_PREPROCESSOR_DEFINITIONS = (
+                                        "DEBUG=1",
+                                        "$(inherited)",
+                                );
+                                GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+                                INFOPLIST_FILE = "iOS6AIChat/Resources/iOS6AIChat-Info.plist";
+                                IPHONEOS_DEPLOYMENT_TARGET = 8.0;
+                                ONLY_ACTIVE_ARCH = YES;
+                                OTHER_LDFLAGS = "-ObjC";
+                                PRODUCT_NAME = "$(TARGET_NAME)";
+                                PROVISIONING_PROFILE = "";
+                                SDKROOT = iphoneos;
+                                TARGETED_DEVICE_FAMILY = "1,2";
+                                VALIDATE_PRODUCT = YES;
+                                WRAPPER_EXTENSION = app;
+                        };
+                        name = Debug;
+                };
+                1A0000000000000000000002 /* Release */ = {
+                        isa = XCBuildConfiguration;
+                        buildSettings = {
+                                ALWAYS_SEARCH_USER_PATHS = NO;
+                                ARCHS = "$(ARCHS_STANDARD_32_BIT)";
+                                "CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
+                                COPY_PHASE_STRIP = YES;
+                                GCC_C_LANGUAGE_STANDARD = gnu99;
+                                GCC_PRECOMPILE_PREFIX_HEADER = YES;
+                                GCC_PREFIX_HEADER = "iOS6AIChat/iOS6AIChat-Prefix.pch";
+                                INFOPLIST_FILE = "iOS6AIChat/Resources/iOS6AIChat-Info.plist";
+                                IPHONEOS_DEPLOYMENT_TARGET = 8.0;
+                                OTHER_LDFLAGS = "-ObjC";
+                                PRODUCT_NAME = "$(TARGET_NAME)";
+                                PROVISIONING_PROFILE = "";
+                                SDKROOT = iphoneos;
+                                TARGETED_DEVICE_FAMILY = "1,2";
+                                VALIDATE_PRODUCT = YES;
+                                WRAPPER_EXTENSION = app;
+                        };
+                        name = Release;
+                };
+
+/* ===== XCBuildConfiguration (project) ===== */
+
+                1A0000000000000000000003 /* Debug */ = {
+                        isa = XCBuildConfiguration;
+                        buildSettings = {
+                                CLANG_ENABLE_MODULES = YES;
+                                CLANG_ENABLE_OBJC_ARC = NO;
+                                CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+                                CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+                                "CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
+                                GCC_C_LANGUAGE_STANDARD = gnu99;
+                                GCC_WARN_ABOUT_RETURN_TYPE = YES;
+                                GCC_WARN_UNDECLARED_SELECTOR = YES;
+                                GCC_WARN_UNINITIALIZED_AUTOS = YES;
+                                GCC_WARN_UNUSED_FUNCTION = YES;
+                                GCC_WARN_UNUSED_VARIABLE = YES;
+                                IPHONEOS_DEPLOYMENT_TARGET = 8.0;
+                                SDKROOT = iphoneos;
+                        };
+                        name = Debug;
+                };
+                1A0000000000000000000004 /* Release */ = {
+                        isa = XCBuildConfiguration;
+                        buildSettings = {
+                                CLANG_ENABLE_MODULES = YES;
+                                CLANG_ENABLE_OBJC_ARC = NO;
+                                CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+                                CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+                                "CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
+                                GCC_C_LANGUAGE_STANDARD = gnu99;
+                                GCC_WARN_ABOUT_RETURN_TYPE = YES;
+                                GCC_WARN_UNDECLARED_SELECTOR = YES;
+                                GCC_WARN_UNINITIALIZED_AUTOS = YES;
+                                GCC_WARN_UNUSED_FUNCTION = YES;
+                                GCC_WARN_UNUSED_VARIABLE = YES;
+                                IPHONEOS_DEPLOYMENT_TARGET = 8.0;
+                                SDKROOT = iphoneos;
+                        };
+                        name = Release;
+                };
+
+/* ===== XCConfigurationList ===== */
+
+                1B0000000000000000000001 /* Build configuration list for PBXNativeTarget "iOS6AIChat" */ = {
+                        isa = XCConfigurationList;
+                        buildConfigurations = (
+                                1A0000000000000000000001 /* Debug */,
+                                1A0000000000000000000002 /* Release */,
+                        );
+                        defaultConfigurationIsVisible = 0;
+                        defaultConfigurationName = Release;
+                };
+                1B0000000000000000000002 /* Build configuration list for PBXProject */ = {
+                        isa = XCConfigurationList;
+                        buildConfigurations = (
+                                1A0000000000000000000003 /* Debug */,
+                                1A0000000000000000000004 /* Release */,
+                        );
+                        defaultConfigurationIsVisible = 0;
+                        defaultConfigurationName = Release;
+                };
+        };
+        rootObject = 0F0000000000000000000001 /* Project object */;
+}

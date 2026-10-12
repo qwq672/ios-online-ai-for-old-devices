@@ -1,0 +1,12 @@
+//
+//  iOS6AIChat-Prefix.pch
+//  iOS6AIChat
+//
+//  Precompiled header — imported by every .m file for faster builds.
+//
+
+#ifdef __OBJC__
+    #import <Foundation/Foundation.h>
+    #import <UIKit/UIKit.h>
+    #import "iOS6Theme.h"
+#endif

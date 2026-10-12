@@ -1,0 +1,24 @@
+# Build artifacts
+.theos/
+obj/
+build/
+build-local/
+packages/
+Payload/
+*.deb
+*.ipa
+*.o
+
+# Local toolchain installs (downloaded per-build)
+sdks/
+
+# macOS
+.DS_Store
+__MACOSX/
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/

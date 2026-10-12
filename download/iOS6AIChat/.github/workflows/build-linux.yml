@@ -1,0 +1,300 @@
+name: Build iOS IPA on Linux (Theos)
+
+# Cross-compiles the iOS6AIChat Xcode project on an Ubuntu runner
+# using Theos + cctools-port + iPhoneOS6.0.sdk. No Mac required.
+#
+# Outputs:
+#   - packages/iOS6AIChat_<ver>_iphoneos-arm.deb  → jailbroken iOS install
+#     (Cydia/Sileo, or scp + dpkg -i over SSH)
+#   - iOS6AIChat-unsigned.ipa                      → unsigned, pack via
+#     `make ipa`; install on any iOS device via Sideloadly/AltStore
+#
+# SDK source
+# -----------
+# Apple's iOS SDK is not redistributable, so the workflow cannot ship
+# iPhoneOS6.0.sdk inside the repo. Four SDK acquisition strategies are
+# supported, tried in order:
+#
+#   1. Repo secret  IOS_SDK_URL   → your own hosted SDK tarball URL
+#      (recommended — set this in repo Settings → Secrets and variables → Actions)
+#
+#   2. Repo secret  IOS_SDK_REPO  → a GitHub repo path that hosts the SDK
+#      as a tarball at its root (e.g. "iPhoneOS6.0.sdk.tar.xz")
+#
+#   3. Public theos/sdks mirror — only has iOS 10.3+ SDKs
+#
+#   4. Alex1s/iPhoneOS6.0.sdk — hosts the SDK as a directory inside the
+#      repo archive (not a tarball at root). The workflow handles the
+#      extraction + rename. This is the working default for iOS 6 builds.
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      deployment_target:
+        description: 'IPHONEOS_DEPLOYMENT_TARGET (e.g. 6.0 / 7.0 / 8.0)'
+        required: false
+        default: '6.0'
+      sdk_version:
+        description: 'SDK version to use (e.g. 6.0 / 7.1 / 9.0)'
+        required: false
+        default: '6.0'
+
+env:
+  DEFAULT_DEPLOYMENT: '6.0'
+  DEFAULT_SDK: '6.0'
+  # Public fallback repos for SDK acquisition.
+  FALLBACK_SDK_TARBALL_REPO: theos/sdks    # only has iOS 10.3+ SDKs
+  FALLBACK_SDK_ARCHIVE_REPO: Alex1s/iPhoneOS6.0.sdk  # SDK as a directory in repo archive
+
+jobs:
+  build:
+    name: Build unsigned .ipa + .deb on Ubuntu
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          set -e
+          sudo apt-get update
+          # Note: ldid is NOT in Ubuntu's default apt repos. We install the
+          # other deps here and build ldid from source in the next step.
+          sudo apt-get install -y --no-install-recommends \
+              clang make perl rsync fakeroot dpkg-dev \
+              libplist-dev libssl-dev libplist-utils \
+              zip unzip wget ca-certificates \
+              libcurl4-openssl-dev git
+
+      - name: Install Theos (sets $THEOS for subsequent steps)
+        run: |
+          git clone --recursive --depth=1 https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+          # Sanity-check the install.
+          ls "$HOME/theos/makefiles/common.mk"
+
+      - name: Build ldid from source
+        run: |
+          # ldid (Link Identity Editor) is the ad-hoc code signer Theos uses
+          # to put a fake signature on Mach-O binaries. Without it, `make
+          # package` cannot assemble the .deb. Ubuntu's stock repos don't
+          # ship ldid, so we clone sbingner/ldid and build it with the
+          # already-installed clang + libplist + openssl.
+          set -e
+          git clone --depth=1 https://github.com/sbingner/ldid.git /tmp/ldid
+          cd /tmp/ldid
+          # sbingner/ldid expects pkg-config for libplist + libcrypto.
+          # The Makefile uses the bare names "libplist" and "libcrypto"
+          # which are in libplist-dev and libssl-dev respectively. We
+          # bypass pkg-config here by setting empty strings.
+          make -j"$(nproc)" \
+              CFLAGS="-O2 -DLDID_VERSION=\\\"2.6.0\\\" -I/usr/include" \
+              LDFLAGS="-lplist-2.0 -lcrypto"
+          sudo install -m 0755 ldid /usr/local/bin/ldid
+          ldid -V 2>&1 | head -1
+
+      - name: Install cctools-port (real ld64 for armv7 Mach-O)
+        run: |
+          # Theos expects clang + ld64 at $THEOS/toolchain/linux/iphone/bin/.
+          # Without cctools-port, Theos can't link iOS binaries (LLVM's
+          # ld64.lld only supports arm64 Mach-O, not armv7/armv7s which iOS
+          # 6 era devices require).
+          # The canonical prebuilt iOS toolchain for Linux is hosted by
+          # L1ghtmann/llvm-project — it's what the Theos official install
+          # script (`theos/bin/install-theos`) downloads.
+          set -e
+          ARCH=$(uname -m)
+          echo "Downloading iOSToolchain-$ARCH.tar.xz from L1ghtmann/llvm-project…"
+          mkdir -p "$THEOS/toolchain"
+          curl -fsSL "https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-$ARCH.tar.xz" \
+            | tar -xJvf - -C "$THEOS/toolchain/"
+          echo "Installed toolchain at $THEOS/toolchain/linux/iphone/"
+          ls -la "$THEOS/toolchain/linux/iphone/bin/" | head -20
+          # Sanity check
+          "$THEOS/toolchain/linux/iphone/bin/clang" --version 2>&1 | head -2
+          "$THEOS/toolchain/linux/iphone/bin/ld" -v 2>&1 | head -2
+
+      - name: Determine deployment target / SDK version
+        id: cfg
+        run: |
+          DT="${{ github.event.inputs.deployment_target || env.DEFAULT_DEPLOYMENT }}"
+          SV="${{ github.event.inputs.sdk_version || env.DEFAULT_SDK }}"
+          echo "deployment_target=$DT" >> "$GITHUB_OUTPUT"
+          echo "sdk_version=$SV" >> "$GITHUB_OUTPUT"
+          echo "Using deployment_target=$DT  sdk_version=$SV"
+
+      - name: Acquire iPhoneOS SDK
+        id: sdk
+        run: |
+          set -euo pipefail
+          SDKVER="${{ steps.cfg.outputs.sdk_version }}"
+          SDKNAME="iPhoneOS${SDKVER}.sdk"
+          DESTDIR="$THEOS/sdks"
+          mkdir -p "$DESTDIR"
+          echo "Looking for SDK $SDKNAME"
+
+          # Strategy 1: secret URL → user-hosted SDK tarball
+          if [ -n "${{ secrets.IOS_SDK_URL }}" ]; then
+            echo "Trying secret IOS_SDK_URL…"
+            wget -q -O /tmp/sdk.bin "${{ secrets.IOS_SDK_URL }}"
+            file /tmp/sdk.bin
+            if file /tmp/sdk.bin | grep -qi 'xz archive'; then
+              tar xf /tmp/sdk.bin -C "$DESTDIR"
+            elif file /tmp/sdk.bin | grep -qi 'zip archive'; then
+              unzip -q /tmp/sdk.bin -d "$DESTDIR"
+            elif file /tmp/sdk.bin | grep -qi 'gzip'; then
+              tar xzf /tmp/sdk.bin -C "$DESTDIR"
+            else
+              echo "Unknown SDK archive format"; exit 1
+            fi
+          fi
+
+          # Strategy 2: secret repo path → raw GitHub fetch
+          if [ ! -d "$DESTDIR/$SDKNAME" ] && [ -n "${{ secrets.IOS_SDK_REPO }}" ]; then
+            echo "Trying secret IOS_SDK_REPO = ${{ secrets.IOS_SDK_REPO }}"
+            for ext in tar.xz tar.gz zip; do
+              URL="https://github.com/${{ secrets.IOS_SDK_REPO }}/raw/main/${SDKNAME}.${ext}"
+              if wget -q --spider "$URL"; then
+                wget -q -O /tmp/sdk.bin "$URL"
+                case "$ext" in
+                  tar.xz) tar xf /tmp/sdk.bin -C "$DESTDIR" ;;
+                  tar.gz) tar xzf /tmp/sdk.bin -C "$DESTDIR" ;;
+                  zip)    unzip -q /tmp/sdk.bin -d "$DESTDIR" ;;
+                esac
+                break
+              fi
+            done
+          fi
+
+          # Strategy 3: fallback to public theos/sdks mirror (only has iOS 10.3+)
+          if [ ! -d "$DESTDIR/$SDKNAME" ]; then
+            echo "Falling back to public mirror $FALLBACK_SDK_TARBALL_REPO"
+            for ext in tar.xz tar.gz zip; do
+              URL="https://github.com/$FALLBACK_SDK_TARBALL_REPO/raw/main/${SDKNAME}.${ext}"
+              if wget -q --spider "$URL"; then
+                wget -q -O /tmp/sdk.bin "$URL"
+                case "$ext" in
+                  tar.xz) tar xf /tmp/sdk.bin -C "$DESTDIR" ;;
+                  tar.gz) tar xzf /tmp/sdk.bin -C "$DESTDIR" ;;
+                  zip)    unzip -q /tmp/sdk.bin -d "$DESTDIR" ;;
+                esac
+                break
+              fi
+            done
+          fi
+
+          # Strategy 4: SDK hosted as a directory inside a GitHub repo archive
+          # (e.g. Alex1s/iPhoneOS6.0.sdk — when extracted, the repo archive
+          # contains iPhoneOS6.0.sdk-main/ which we then rename to the
+          # canonical iPhoneOS6.0.sdk name)
+          if [ ! -d "$DESTDIR/$SDKNAME" ]; then
+            echo "Trying archive repo $FALLBACK_SDK_ARCHIVE_REPO"
+            for branch in main master; do
+              URL="https://github.com/$FALLBACK_SDK_ARCHIVE_REPO/archive/refs/heads/$branch.tar.gz"
+              if wget -q --spider "$URL"; then
+                echo "  downloading archive ($branch)…"
+                wget -q -O /tmp/sdk-repo.bin "$URL"
+                # Extract into a scratch dir so we can locate + rename the
+                # SDK folder before installing it into $THEOS/sdks/.
+                SCRATCH=$(mktemp -d)
+                tar xzf /tmp/sdk-repo.bin -C "$SCRATCH"
+                # Find the SDK directory inside the extracted repo.
+                FOUND_SDK=$(find "$SCRATCH" -maxdepth 2 -type d -name "$SDKNAME" | head -1)
+                if [ -z "$FOUND_SDK" ]; then
+                  # Try alternative naming: <SDKNAME>-<branch>/
+                  FOUND_SDK=$(find "$SCRATCH" -maxdepth 2 -type d -name "${SDKNAME}-*" | head -1)
+                fi
+                if [ -n "$FOUND_SDK" ]; then
+                  mv "$FOUND_SDK" "$DESTDIR/$SDKNAME"
+                  echo "  installed from $FOUND_SDK"
+                else
+                  echo "  SDK dir not found in $FALLBACK_SDK_ARCHIVE_REPO archive"
+                fi
+                rm -rf "$SCRATCH"
+                break
+              fi
+            done
+          fi
+
+          if [ ! -d "$DESTDIR/$SDKNAME" ]; then
+            echo "❌ Could not obtain $SDKNAME."
+            echo "   Set one of these repo secrets:"
+            echo "   - IOS_SDK_URL  (direct URL to a tarball you host)"
+            echo "   - IOS_SDK_REPO (e.g. 'theos/sdks')"
+            exit 1
+          fi
+
+          echo "✅ SDK ready: $DESTDIR/$SDKNAME"
+          ls "$DESTDIR"
+
+      - name: Build .deb with Theos
+        env:
+          THEOS_VERBOSE: "1"
+        run: |
+          set -euo pipefail
+          DT="${{ steps.cfg.outputs.deployment_target }}"
+          SV="${{ steps.cfg.outputs.sdk_version }}"
+          make clean || true
+          # Modern Theos master has a bug: top-level `make package` doesn't
+          # load rules.mk, so the `$(THEOS_PACKAGE_DIR):` mkdir rule never
+          # gets defined. Pre-creating the packages/ directory sidesteps
+          # this — Make treats an existing file/dir as already up-to-date.
+          mkdir -p packages
+          # Run a `make` first (default target) to actually compile + link,
+          # then `make package` to pack into .deb. Theos' `make package`
+          # alone sometimes skips the compile step.
+          make TARGET="iphone:clang:${DT}:${SV}" 2>&1 | tail -80 || true
+          echo "---"
+          make package \
+              TARGET="iphone:clang:${DT}:${SV}"
+          echo "--- packages/ ---"
+          ls -la packages/ 2>/dev/null || ls -la *.deb 2>/dev/null
+          echo "--- .theos/_ tree ---"
+          find .theos/_ -type d 2>/dev/null | head -30 || true
+          find .theos/_ -type f 2>/dev/null | head -30 || true
+
+      - name: Pack unsigned .ipa
+        run: |
+          set -euo pipefail
+          DT="${{ steps.cfg.outputs.deployment_target }}"
+          SV="${{ steps.cfg.outputs.sdk_version }}"
+          make ipa \
+              TARGET="iphone:clang:${DT}:${SV}"
+          ls -la iOS6AIChat-unsigned.ipa
+
+      - name: Upload .deb artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS6AIChat-deb
+          path: |
+            packages/*.deb
+            *.deb
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload .ipa artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS6AIChat-unsigned-ipa-linux
+          path: iOS6AIChat-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach artifacts to release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            packages/*.deb
+            *.deb
+            iOS6AIChat-unsigned.ipa
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
