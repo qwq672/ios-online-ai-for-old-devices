@@ -2,19 +2,11 @@
 //  ComposerView.h
 //  iOS6AIChat
 //
-//  Bottom composer bar with:
-//     - iOS 6 textured pinstripe background
-//     - Rounded, glossed UITextView ("Type a message…")
-//     - Glossed tinted Send button
-//     - Deep Thinking toggle button (left of input)
-//       — when ON, sends prepend a chain-of-thought system instruction
-//       so the model shows step-by-step reasoning before answering.
-//     - Web Search toggle button (left of Deep Thinking)
-//       — when ON, ChatVC does a Tavily /search first and injects
-//       results as context before the AI request.
+//  Simple single-row composer:
+//    [💡DT] [🌐Web] [   input field (multi-line)   ] [➤Send]
 //
-//  Sends a ComposerViewSendMessageNotification with the current text +
-//  deepThinking + webSearch flags when the user taps Send.
+//  All on ONE row. Height starts at 44pt, grows as text expands.
+//  Uses UIButtonTypeRoundedRect for iOS 6 native button look.
 //
 
 #import <UIKit/UIKit.h>
@@ -38,11 +30,10 @@ extern NSString *const ComposerViewSendMessageWebSearchKey;
 @property (nonatomic, assign) id<ComposerViewDelegate> delegate;
 @property (nonatomic, retain) UITextView *textView;
 @property (nonatomic, retain) UIButton  *sendButton;
-@property (nonatomic, retain) UIButton *deepThinkingButton;   // toggle, persists to NSUserDefaults
-@property (nonatomic, retain) UIButton *webSearchButton;      // toggle, persists to NSUserDefaults
-@property (nonatomic, assign) BOOL isStreaming;   // YES: disable send button
+@property (nonatomic, retain) UIButton *deepThinkingButton;
+@property (nonatomic, retain) UIButton *webSearchButton;
+@property (nonatomic, assign) BOOL isStreaming;
 
-// Convenience accessors for the toggles' persisted state.
 + (BOOL)deepThinkingEnabled;
 + (void)setDeepThinkingEnabled:(BOOL)enabled;
 + (BOOL)webSearchEnabled;

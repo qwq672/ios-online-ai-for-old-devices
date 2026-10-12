@@ -74,7 +74,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
     CGRect tableFrame = CGRectMake(0, 0,
                                     self.view.bounds.size.width,
-                                    self.view.bounds.size.height - 86);
+                                    self.view.bounds.size.height - 48);
     _tableView = [[UITableView alloc] initWithFrame:tableFrame style:UITableViewStylePlain];
     _tableView.dataSource = self;
     _tableView.delegate = self;
@@ -91,7 +91,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     [self.view addSubview:_tableView];
 
     // Composer initial height = row1 (34) + small gap + min row2 (44) + pad (6) ≈ 86.
-    CGFloat composerInitH = 86.0f;
+    CGFloat composerInitH = 48.0f;  // single-row composer
     _composer = [[ComposerView alloc] initWithFrame:CGRectMake(0,
                                                                  self.view.bounds.size.height - composerInitH,
                                                                  self.view.bounds.size.width,
@@ -132,6 +132,10 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
     _tableView.backgroundColor = [UIColor clearColor];
     _composer.backgroundColor = [iOS6Theme pinstripeBackground];
+    // Refresh toggle button icons.
+    if ([_composer respondsToSelector:@selector(_refreshToggleVisuals)]) {
+        [_composer performSelector:@selector(_refreshToggleVisuals)];
+    }
     if (self.navigationController) {
         [iOS6Theme styleNavigationController:self.navigationController
                                        title:NSLocalizedString(@"聊天", nil)
