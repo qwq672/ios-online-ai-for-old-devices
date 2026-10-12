@@ -42,22 +42,25 @@
     // Style chat + history with system icons; settings uses a custom-drawn
     // gear icon (UITabBarSystemItemMore is too generic, UITabBarSystemItemContacts
     // is misleading).
-    [iOS6Theme styleNavigationController:chatNav     title:NSLocalizedString(@"聊天", nil)     systemIcon:UITabBarSystemItemFavorites];
-    // Override Chat tab icon with custom drawn speech bubble.
-    chatNav.tabBarItem.image = [IconDrawing imageForType:IconTypeChatBubble size:CGSizeMake(30, 30) color:[UIColor blackColor]];
-    [iOS6Theme styleNavigationController:historyNav  title:NSLocalizedString(@"历史", nil)     systemIcon:UITabBarSystemItemHistory];
-    [iOS6Theme styleNavigationController:settingsNav title:NSLocalizedString(@"设置", nil)     systemIcon:UITabBarSystemItemMore];
-    // Override Settings tab icon with custom drawn gear.
-    settingsNav.tabBarItem.image = [IconDrawing imageForType:IconTypeGear size:CGSizeMake(30, 30) color:[UIColor blackColor]];
-
-    // Replace the Settings tab icon with a drawn gear.
-    UIImage *gearIcon = [IconDrawing imageForType:IconTypeGear
-                                              size:CGSizeMake(30, 30)
-                                             color:[UIColor blackColor]];
-    // UITabBarItem image is treated as an alpha mask — the colour doesn't
-    // matter; iOS tints the icon blue when selected, grey when not.
-    settingsNav.tabBarItem.image = gearIcon;
-    settingsNav.tabBarItem.title = NSLocalizedString(@"设置", nil);
+    // Create tab bar items with custom images at init time (avoids double-tap bug).
+    UIImage *chatIcon = [IconDrawing imageForType:IconTypeChatBubble size:CGSizeMake(30, 30) color:[UIColor blackColor]];
+    chatNav.tabBarItem = [[[UITabBarItem alloc] initWithTitle:NSLocalizedString(@"聊天", nil) image:chatIcon tag:0] autorelease];
+    chatNav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
+    chatNav.navigationBar.tintColor = [iOS6Theme tintColor];
+    chatNav.navigationBar.translucent = NO;
+    chatNav.topViewController.title = NSLocalizedString(@"聊天", nil);
+    UIImage *historyIcon = [IconDrawing imageForType:IconTypeClock size:CGSizeMake(30, 30) color:[UIColor blackColor]];
+    historyNav.tabBarItem = [[[UITabBarItem alloc] initWithTitle:NSLocalizedString(@"历史", nil) image:historyIcon tag:0] autorelease];
+    historyNav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
+    historyNav.navigationBar.tintColor = [iOS6Theme tintColor];
+    historyNav.navigationBar.translucent = NO;
+    historyNav.topViewController.title = NSLocalizedString(@"历史", nil);
+    UIImage *gearIcon = [IconDrawing imageForType:IconTypeGear size:CGSizeMake(30, 30) color:[UIColor blackColor]];
+    settingsNav.tabBarItem = [[[UITabBarItem alloc] initWithTitle:NSLocalizedString(@"设置", nil) image:gearIcon tag:0] autorelease];
+    settingsNav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
+    settingsNav.navigationBar.tintColor = [iOS6Theme tintColor];
+    settingsNav.navigationBar.translucent = NO;
+    settingsNav.topViewController.title = NSLocalizedString(@"设置", nil);
 
     UITabBarController *tbc = [[[UITabBarController alloc] init] autorelease];
     tbc.viewControllers = [NSArray arrayWithObjects:chatNav, historyNav, settingsNav, nil];
@@ -82,25 +85,11 @@
     // with the current theme palette.
     UITabBarController *tbc = self.tabBarController;
     NSArray *navs = tbc.viewControllers;
-    NSArray *titles = @[@"聊天", @"历史", @"设置"];
-    NSArray *icons = @[
-        [NSNumber numberWithInt:UITabBarSystemItemFavorites],
-        [NSNumber numberWithInt:UITabBarSystemItemHistory],
-        [NSNumber numberWithInt:UITabBarSystemItemMore],
-    ];
     for (NSUInteger i = 0; i < [navs count]; i++) {
         UINavigationController *nav = [navs objectAtIndex:i];
-        [iOS6Theme styleNavigationController:nav
-                                       title:[titles objectAtIndex:i]
-                                  systemIcon:(UITabBarSystemItem)[[icons objectAtIndex:i] intValue]];
+        nav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
+        nav.navigationBar.tintColor = [iOS6Theme tintColor];
     }
-    // Re-apply the gear icon for Settings (styleNavigationController resets
-    // the tabBarItem).
-    UINavigationController *settingsNav = [navs objectAtIndex:2];
-    UIImage *gearIcon = [IconDrawing imageForType:IconTypeGear
-                                              size:CGSizeMake(30, 30)
-                                             color:[UIColor blackColor]];
-    settingsNav.tabBarItem.image = gearIcon;
 
     [iOS6Theme styleTabBarController:tbc];
 }

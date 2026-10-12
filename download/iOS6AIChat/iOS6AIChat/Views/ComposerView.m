@@ -2,10 +2,9 @@
 //  ComposerView.m
 //  iOS6AIChat
 //
-//  SIMPLE single-row composer — one row, no nesting bugs.
-//  Layout: [💡] [🌐] [input field] [➤]
-//  All buttons use UIButtonTypeRoundedRect (iOS 6 native look).
-//  Input field has white bg + rounded border (visible, tappable).
+//  Single-row composer: [📷] [💡] [🌐] [input] [➤]
+//  Image button picks from photo library, compresses, base64 encodes.
+//  Badge shows pending image count.
 //
 
 #import "ComposerView.h"
@@ -17,18 +16,22 @@ NSString *const ComposerViewSendMessageNotification = @"ComposerViewSendMessageN
 NSString *const ComposerViewSendMessageTextKey           = @"ComposerViewSendMessageTextKey";
 NSString *const ComposerViewSendMessageDeepThinkingKey = @"ComposerViewSendMessageDeepThinkingKey";
 NSString *const ComposerViewSendMessageWebSearchKey     = @"ComposerViewSendMessageWebSearchKey";
+NSString *const ComposerViewSendMessageImagesKey         = @"ComposerViewSendMessageImagesKey";
 
 static NSString * const kUDKeyDeepThinking = @"composer.deepThinking";
 static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 
-@interface ComposerView ()
+@interface ComposerView () {
+    NSMutableArray *_pendingImages;
+}
 @end
 
 @implementation ComposerView
 
 @synthesize textView=_textView, sendButton=_sendButton, isStreaming=_isStreaming,
             delegate=_delegate, deepThinkingButton=_deepThinkingButton,
-            webSearchButton=_webSearchButton;
+            webSearchButton=_webSearchButton, imageButton=_imageButton,
+            imageBadge=_imageBadge;
 
 - (id)initWithFrame:(CGRect)frame
 {
@@ -36,48 +39,64 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         self.backgroundColor = [iOS6Theme pinstripeBackground];
         self.clipsToBounds = YES;
 
-        // --- Input text view (the main input field) ---
-        // Created FIRST so it's at the bottom of the z-order (buttons on top
-        // won't block its touch events since they're side-by-side, not overlapping).
+        // Pending images array (base64 data URLs).
+        _pendingImages = [[NSMutableArray alloc] init];
+
+        // Text view (main input).
         _textView = [[UITextView alloc] initWithFrame:CGRectZero];
         _textView.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
         _textView.delegate = self;
         _textView.backgroundColor = [UIColor whiteColor];
-        _textView.scrollEnabled = YES;
         _textView.editable = YES;
         _textView.userInteractionEnabled = YES;
-        // Add a "Done" button above the keyboard to dismiss it.
+        _textView.returnKeyType = UIReturnKeyDefault;
+        _textView.textColor = [iOS6Theme textColor];
+        _textView.layer.cornerRadius = 8.0f;
+        _textView.layer.borderWidth = 1.0f;
+        _textView.layer.borderColor = [[UIColor lightGrayColor] CGColor];
+        if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
+            [_textView performSelector:@selector(setTextContainerInset:)
+                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(6, 8, 6, 8)]];
+        }
+        // Done button on keyboard.
         UIToolbar *kbdToolbar = [[[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, 320, 44)] autorelease];
         kbdToolbar.barStyle = UIBarStyleDefault;
         UIBarButtonItem *flex = [[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil] autorelease];
         UIBarButtonItem *done = [[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(_keyboardDone)] autorelease];
         kbdToolbar.items = [NSArray arrayWithObjects:flex, done, nil];
         _textView.inputAccessoryView = kbdToolbar;
-        _textView.returnKeyType = UIReturnKeyDefault;
-        _textView.textColor = [iOS6Theme textColor];
-        _textView.layer.cornerRadius = 8.0f;
-        _textView.layer.borderWidth = 1.0f;
-        _textView.layer.borderColor = [[UIColor lightGrayColor] CGColor];
-        // Text container inset for padding (iOS 7+ guarded).
-        if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
-            [_textView performSelector:@selector(setTextContainerInset:)
-                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(6, 8, 6, 8)]];
-        }
         [self addSubview:_textView];
 
-        // --- Deep Thinking toggle (iOS 6 rounded rect button) ---
+        // Image button.
+        _imageButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+        [_imageButton addTarget:self action:@selector(_imageButtonTapped)
+                forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:_imageButton];
+
+        // Image badge (shows count).
+        _imageBadge = [[UILabel alloc] initWithFrame:CGRectZero];
+        _imageBadge.font = [UIFont boldSystemFontOfSize:10];
+        _imageBadge.textColor = [UIColor whiteColor];
+        _imageBadge.backgroundColor = [UIColor redColor];
+        _imageBadge.textAlignment = NSTextAlignmentCenter;
+        _imageBadge.layer.cornerRadius = 8.0f;
+        _imageBadge.layer.masksToBounds = YES;
+        _imageBadge.hidden = YES;
+        [self addSubview:_imageBadge];
+
+        // DT button.
         _deepThinkingButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
         [_deepThinkingButton addTarget:self action:@selector(_deepThinkingTapped)
                       forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_deepThinkingButton];
 
-        // --- Web Search toggle (iOS 6 rounded rect button) ---
+        // Web button.
         _webSearchButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
         [_webSearchButton addTarget:self action:@selector(_webSearchTapped)
                     forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_webSearchButton];
 
-        // --- Send button (iOS 6 rounded rect with arrow icon) ---
+        // Send button.
         _sendButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
         [_sendButton addTarget:self action:@selector(_sendTapped)
               forControlEvents:UIControlEventTouchUpInside];
@@ -103,149 +122,152 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     [_sendButton setAlpha:isStreaming ? 0.4f : 1.0f];
 }
 
-#pragma mark - Layout (THE CRITICAL PART)
+#pragma mark - Layout
 
 - (void)layoutSubviews
 {
     [super layoutSubviews];
-
     CGFloat w = self.bounds.size.width;
     CGFloat h = self.bounds.size.height;
-    CGFloat pad = 6.0f;
-    CGFloat gap = 4.0f;
-    CGFloat btnW = 36.0f;
-    CGFloat sendW = 44.0f;
-    CGFloat btnH = 30.0f;
+    CGFloat pad = 6.0f, gap = 4.0f;
+    CGFloat btnW = 34.0f, sendW = 40.0f, btnH = 30.0f;
     CGFloat btnY = (h - btnH) / 2.0f;
+    CGFloat x = pad;
 
-    // Left: DT button
-    _deepThinkingButton.frame = CGRectMake(pad, btnY, btnW, btnH);
+    // Image button (leftmost).
+    _imageButton.frame = CGRectMake(x, btnY, btnW, btnH);
+    // Badge on top-right of image button.
+    _imageBadge.frame = CGRectMake(x + btnW - 10, btnY - 4, 16, 16);
+    x += btnW + gap;
 
-    // Next: Web button
-    CGFloat x = pad + btnW + gap;
+    // DT button.
+    _deepThinkingButton.frame = CGRectMake(x, btnY, btnW, btnH);
+    x += btnW + gap;
+
+    // Web button.
     _webSearchButton.frame = CGRectMake(x, btnY, btnW, btnH);
     x += btnW + gap;
 
-    // Right: Send button
+    // Send button (right).
     CGFloat sendX = w - sendW - pad;
     _sendButton.frame = CGRectMake(sendX, btnY, sendW, btnH);
 
-    // Middle: text view fills the gap
+    // Text view (middle, fills remaining space).
     CGFloat tvX = x + gap;
     CGFloat tvW = sendX - gap - tvX;
-    if (tvW < 60) tvW = 60; // minimum width safety
+    if (tvW < 60) tvW = 60;
     CGFloat tvH = h - 2 * pad;
     if (tvH < 30) tvH = 30;
     _textView.frame = CGRectMake(tvX, pad, tvW, tvH);
 }
 
-#pragma mark - Toggle persistence
+#pragma mark - Toggles
 
-+ (BOOL)deepThinkingEnabled
-{
-    NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyDeepThinking];
-    return n ? [n boolValue] : YES;
-}
++ (BOOL)deepThinkingEnabled { NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyDeepThinking]; return n ? [n boolValue] : YES; }
++ (void)setDeepThinkingEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyDeepThinking]; [[NSUserDefaults standardUserDefaults] synchronize]; }
++ (BOOL)webSearchEnabled { NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyWebSearch]; return n ? [n boolValue] : NO; }
++ (void)setWebSearchEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyWebSearch]; [[NSUserDefaults standardUserDefaults] synchronize]; }
 
-+ (void)setDeepThinkingEnabled:(BOOL)enabled
-{
-    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kUDKeyDeepThinking];
-    [[NSUserDefaults standardUserDefaults] synchronize];
-}
+- (void)_deepThinkingTapped { BOOL v = ![[self class] deepThinkingEnabled]; [[self class] setDeepThinkingEnabled:v]; [self _refreshToggleVisuals]; }
+- (void)_webSearchTapped { BOOL v = ![[self class] webSearchEnabled]; [[self class] setWebSearchEnabled:v]; [self _refreshToggleVisuals]; }
 
-+ (BOOL)webSearchEnabled
-{
-    NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyWebSearch];
-    return n ? [n boolValue] : NO;
-}
-
-+ (void)setWebSearchEnabled:(BOOL)enabled
-{
-    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kUDKeyWebSearch];
-    [[NSUserDefaults standardUserDefaults] synchronize];
-}
-
-- (void)_deepThinkingTapped
-{
-    BOOL v = ![[self class] deepThinkingEnabled];
-    [[self class] setDeepThinkingEnabled:v];
-    [self _refreshToggleVisuals];
-}
-
-- (void)_webSearchTapped
-{
-    BOOL v = ![[self class] webSearchEnabled];
-    [[self class] setWebSearchEnabled:v];
-    [self _refreshToggleVisuals];
-}
+- (void)_keyboardDone { [_textView resignFirstResponder]; }
 
 - (void)_refreshToggleVisuals
 {
     BOOL dt = [[self class] deepThinkingEnabled];
     BOOL ws = [[self class] webSearchEnabled];
-
-    // Use icon image on the buttons.
-    UIImage *bulb = [IconDrawing imageForType:IconTypeLightbulb size:CGSizeMake(16, 16)
-                                       color:dt ? [iOS6Theme tintColor] : [UIColor grayColor]];
-    UIImage *globe = [IconDrawing imageForType:IconTypeGlobe size:CGSizeMake(16, 16)
-                                         color:ws ? [iOS6Theme tintColor] : [UIColor grayColor]];
-    UIImage *arrow = [IconDrawing imageForType:IconTypeSendArrow size:CGSizeMake(18, 18)
-                                          color:[iOS6Theme tintColor]];
-
+    UIImage *bulb = [IconDrawing imageForType:IconTypeLightbulb size:CGSizeMake(16, 16) color:dt ? [iOS6Theme tintColor] : [UIColor grayColor]];
+    UIImage *globe = [IconDrawing imageForType:IconTypeGlobe size:CGSizeMake(16, 16) color:ws ? [iOS6Theme tintColor] : [UIColor grayColor]];
+    UIImage *cam = [IconDrawing imageForType:IconTypeCamera size:CGSizeMake(16, 16) color:[UIColor grayColor]];
+    UIImage *arrow = [IconDrawing imageForType:IconTypeSendArrow size:CGSizeMake(18, 18) color:[iOS6Theme tintColor]];
     [_deepThinkingButton setImage:bulb forState:UIControlStateNormal];
     [_webSearchButton setImage:globe forState:UIControlStateNormal];
+    [_imageButton setImage:cam forState:UIControlStateNormal];
     [_sendButton setImage:arrow forState:UIControlStateNormal];
-
-    // Title to empty (image only).
-    [_deepThinkingButton setTitle:@"" forState:UIControlStateNormal];
-    [_webSearchButton setTitle:@"" forState:UIControlStateNormal];
-    [_sendButton setTitle:@"" forState:UIControlStateNormal];
-
-    // Highlight state when ON.
-    if (dt) {
-        [_deepThinkingButton setSelected:YES];
-    } else {
-        [_deepThinkingButton setSelected:NO];
-    }
-    if (ws) {
-        [_webSearchButton setSelected:YES];
-    } else {
-        [_webSearchButton setSelected:NO];
-    }
+    // Update badge.
+    NSUInteger cnt = [_pendingImages count];
+    _imageBadge.hidden = (cnt == 0);
+    _imageBadge.text = [NSString stringWithFormat:@"%d", (int)cnt];
 }
 
-- (void)_keyboardDone
+#pragma mark - Image picker
+
+- (void)_imageButtonTapped
 {
-    [_textView resignFirstResponder];
+    UIImagePickerController *picker = [[[UIImagePickerController alloc] init] autorelease];
+    picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
+    picker.allowsEditing = NO;
+    picker.delegate = self;
+    UIView *v = self;
+    while (v && ![v.nextResponder isKindOfClass:[UIViewController class]]) v = v.superview;
+    UIViewController *vc = (UIViewController *)v.nextResponder;
+    if (vc) [vc presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary *)info
+{
+    UIImage *image = [info objectForKey:UIImagePickerControllerOriginalImage];
+    [picker dismissViewControllerAnimated:YES completion:nil];
+    if (!image) return;
+
+    // Compress: read max dimension from settings.
+    NSInteger maxDim = [[NSUserDefaults standardUserDefaults] integerForKey:@"imageMaxDim"];
+    if (maxDim == 0) maxDim = 1024;
+    CGFloat w = image.size.width, h = image.size.height;
+    if (w > maxDim || h > maxDim) {
+        CGFloat scale = (CGFloat)maxDim / MAX(w, h);
+        w = (NSInteger)(w * scale);
+        h = (NSInteger)(h * scale);
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(w, h), NO, 0.0);
+        [image drawInRect:CGRectMake(0, 0, w, h)];
+        image = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+    }
+    NSData *jpegData = UIImageJPEGRepresentation(image, 0.7);
+    if (!jpegData) return;
+    NSString *base64 = [jpegData performSelector:@selector(base64Encoding)];
+    NSString *dataUrl = [NSString stringWithFormat:@"data:image/jpeg;base64,%@", base64];
+    [_pendingImages addObject:dataUrl];
+    [self _refreshToggleVisuals];
+}
+
+- (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker
+{
+    [picker dismissViewControllerAnimated:YES completion:nil];
 }
 
 #pragma mark - Send
 
 - (void)_sendTapped
 {
-    NSString *text = [_textView.text stringByTrimmingCharactersInSet:
-                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (text.length == 0) return;
+    NSString *text = [_textView.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (text.length == 0 && [_pendingImages count] == 0) return;
     [_textView resignFirstResponder];
 
     BOOL dt = [[self class] deepThinkingEnabled];
     BOOL ws = [[self class] webSearchEnabled];
-    if ([_delegate respondsToSelector:@selector(composer:didSendText:deepThinking:webSearch:)]) {
-        [_delegate composer:self didSendText:text deepThinking:dt webSearch:ws];
+    NSArray *imgs = [_pendingImages count] > 0 ? [NSArray arrayWithArray:_pendingImages] : nil;
+
+    if ([_delegate respondsToSelector:@selector(composer:didSendText:images:deepThinking:webSearch:)]) {
+        [_delegate composer:self didSendText:text images:imgs deepThinking:dt webSearch:ws];
     }
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:ComposerViewSendMessageNotification object:self
-                    userInfo:@{
-                        ComposerViewSendMessageTextKey: text,
-                        ComposerViewSendMessageDeepThinkingKey: @(dt),
-                        ComposerViewSendMessageWebSearchKey: @(ws)
-                    }];
+    [[NSNotificationCenter defaultCenter] postNotificationName:ComposerViewSendMessageNotification object:self
+        userInfo:@{
+            ComposerViewSendMessageTextKey: text ?: @"",
+            ComposerViewSendMessageDeepThinkingKey: @(dt),
+            ComposerViewSendMessageWebSearchKey: @(ws),
+            ComposerViewSendMessageImagesKey: imgs ?: [NSNull null]
+        }];
+
     [self clearText];
 }
 
 - (void)clearText
 {
     _textView.text = @"";
+    [_pendingImages removeAllObjects];
+    [self _refreshToggleVisuals];
     [self textViewDidChange:_textView];
 }
 
@@ -253,12 +275,11 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 
 - (void)textViewDidChange:(UITextView *)textView
 {
-    // Auto-grow: measure text, resize composer if needed.
     CGSize measured = [_textView sizeThatFits:CGSizeMake(_textView.frame.size.width, CGFLOAT_MAX)];
-    CGFloat needed = measured.height + 12; // 12 = top+bottom padding
+    CGFloat needed = measured.height + 12;
     if (needed < 30) needed = 30;
     if (needed > 100) needed = 100;
-    CGFloat newH = needed + 12; // 12 = top+bottom margin in composer
+    CGFloat newH = needed + 12;
     if ((NSInteger)newH != (NSInteger)self.bounds.size.height) {
         CGRect f = self.frame;
         f.size.height = newH;
@@ -271,13 +292,6 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     }
 }
 
-- (BOOL)textView:(UITextView *)textView shouldChangeTextInRange:(NSRange)range
-    replacementText:(NSString *)text
-{
-    // Don't intercept newline — let it insert a newline (multi-line input).
-    return YES;
-}
-
 - (void)dealloc
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
@@ -285,6 +299,9 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     [_sendButton release];
     [_deepThinkingButton release];
     [_webSearchButton release];
+    [_imageButton release];
+    [_imageBadge release];
+    [_pendingImages release];
     [super dealloc];
 }
 

@@ -280,7 +280,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 {
     NSInteger logical = [self _logicalSectionForDisplayed:section];
     switch (logical) {
-        case kSectionTheme:     return 2;
+        case kSectionTheme:     return 3;  // dark mode, font size, image compression
         case kSectionTransit:    return 3;
         case kSectionDirect:     return 2;
         case kSectionModel:      return 2;
@@ -453,6 +453,23 @@ titleForFooterInSection:(NSInteger)section
     CGRect f = cell.contentView.bounds;
     seg.frame = CGRectMake(f.size.width - 230 - kPad, (kRowH - 30) / 2, 230, 30);
     [cell.contentView addSubview:seg];
+    return cell;
+    }
+    if (row == 2) {
+    // Image compression setting.
+    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"图片压缩", nil)]];
+    NSArray *imgItems = @[@"原图", @"1024", @"2048"];
+    UISegmentedControl *imgSeg = [[[UISegmentedControl alloc] initWithItems:imgItems] autorelease];
+    NSInteger maxDim = [[NSUserDefaults standardUserDefaults] integerForKey:@"imageMaxDim"];
+    if (maxDim == 0) imgSeg.selectedSegmentIndex = 0;
+    else if (maxDim <= 1024) imgSeg.selectedSegmentIndex = 1;
+    else imgSeg.selectedSegmentIndex = 2;
+    [imgSeg addTarget:self action:@selector(_imageCompressionChanged:)
+     forControlEvents:UIControlEventValueChanged];
+    imgSeg.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    CGRect f2 = cell.contentView.bounds;
+    imgSeg.frame = CGRectMake(f2.size.width - 230 - kPad, (kRowH - 30) / 2, 230, 30);
+    [cell.contentView addSubview:imgSeg];
     return cell;
 }
 
@@ -764,6 +781,15 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 }
 
 #pragma mark - Toggle handlers
+
+- (IBAction)_imageCompressionChanged:(UISegmentedControl *)seg
+{
+    NSInteger maxDim = 0;
+    if (seg.selectedSegmentIndex == 1) maxDim = 1024;
+    else if (seg.selectedSegmentIndex == 2) maxDim = 2048;
+    [[NSUserDefaults standardUserDefaults] setInteger:maxDim forKey:@"imageMaxDim"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
 
 - (IBAction)_darkModeToggle:(UISwitch *)sw
 {

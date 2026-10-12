@@ -20,6 +20,8 @@ typedef enum {
 @property (nonatomic, assign) MessageRole role;
 @property (nonatomic, copy)   NSString     *content;     // raw text or markdown
 @property (nonatomic, copy)   NSString     *contentHTML; // optional: rendered HTML cache
+@property (nonatomic, copy)   NSString     *thinking;    // AI reasoning content (separate from answer)
+@property (nonatomic, retain) NSArray      *images;    // array of base64 data URLs for vision API
 @property (nonatomic, strong) NSDate       *createdAt;
 @property (nonatomic, copy)   NSString     *messageID;   // UUID
 
