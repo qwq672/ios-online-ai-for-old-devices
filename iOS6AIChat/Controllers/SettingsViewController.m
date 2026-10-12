@@ -728,27 +728,44 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
                 [fail show];
                 return;
             }
-            UIAlertView *av = [[UIAlertView alloc]
+            // Use UIActionSheet (slides up from bottom, like WiFi picker).
+            UIActionSheet *sheet = [[UIActionSheet alloc]
                 initWithTitle:NSLocalizedString(@"选择模型", nil)
-                      message:NSLocalizedString(@"点选要用的模型", nil)
                      delegate:self
             cancelButtonTitle:NSLocalizedString(@"取消", nil)
+       destructiveButtonTitle:nil
             otherButtonTitles:nil];
-            NSInteger limit = MIN([models count], (NSUInteger)6);
+            NSInteger limit = MIN([models count], (NSUInteger)8);
             for (NSInteger i = 0; i < limit; i++) {
                 NSString *mid = [models objectAtIndex:i];
-                [av addButtonWithTitle:mid];
+                [sheet addButtonWithTitle:mid];
             }
-            [av setTag:400];
-            [av show];
-            [av release];
+            [sheet setTag:400];
+            [sheet showInView:self.view];
+            [sheet release];
             self.availableModels = [NSMutableArray arrayWithArray:[models subarrayWithRange:NSMakeRange(0, limit)]];
         });
     });
 }
 
+// Handle UIActionSheet for model picker (tag 400).
+- (void)actionSheet:(UIActionSheet *)actionSheet
+clickedButtonAtIndex:(NSInteger)buttonIndex
+{
+    if (actionSheet.tag == 400 && buttonIndex >= 0 && buttonIndex < (NSInteger)[_availableModels count]) {
+        NSString *chosen = [_availableModels objectAtIndex:buttonIndex];
+        NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+        [d setObject:chosen forKey:SettingsKeyModel];
+        [d synchronize];
+        [_fields release];
+        _fields = [[NSMutableDictionary alloc] init];
+        [_tableView reloadData];
+    }
+}
+
+// Keep the alertView delegate for reset confirmation (tag 100).
 - (void)alertView:(UIAlertView *)alertView
-didDismissWithButtonIndex:(NSInteger)buttonIndex
+clickedButtonAtIndex:(NSInteger)buttonIndex
 {
     if (alertView.tag == 400 && buttonIndex > 0) {
         NSString *chosen = [_availableModels objectAtIndex:buttonIndex - 1];

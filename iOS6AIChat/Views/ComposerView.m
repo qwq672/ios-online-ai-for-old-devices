@@ -46,6 +46,13 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         _textView.scrollEnabled = YES;
         _textView.editable = YES;
         _textView.userInteractionEnabled = YES;
+        // Add a "Done" button above the keyboard to dismiss it.
+        UIToolbar *kbdToolbar = [[[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, 320, 44)] autorelease];
+        kbdToolbar.barStyle = UIBarStyleDefault;
+        UIBarButtonItem *flex = [[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil] autorelease];
+        UIBarButtonItem *done = [[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(_keyboardDone)] autorelease];
+        kbdToolbar.items = [NSArray arrayWithObjects:flex, done, nil];
+        _textView.inputAccessoryView = kbdToolbar;
         _textView.returnKeyType = UIReturnKeyDefault;
         _textView.textColor = [iOS6Theme textColor];
         _textView.layer.cornerRadius = 8.0f;
@@ -205,6 +212,11 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     } else {
         [_webSearchButton setSelected:NO];
     }
+}
+
+- (void)_keyboardDone
+{
+    [_textView resignFirstResponder];
 }
 
 #pragma mark - Send

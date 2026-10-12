@@ -48,11 +48,8 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                                                  selector:@selector(_onLoadConversation:)
                                                      name:ChatViewControllerDidLoadConversationNotification
                                                    object:nil];
-        // Listen for direct "send" notifications from the composer.
-        [[NSNotificationCenter defaultCenter] addObserver:self
-                                                 selector:@selector(_onComposerSend:)
-                                                     name:ComposerViewSendMessageNotification
-                                                   object:nil];
+        // NOTE: We use the delegate method only — the notification would cause
+        // duplicate sends (both delegate AND notification fire = message sent twice).
     }
     return self;
 }
@@ -108,7 +105,13 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     }
     [self _reload];
 
-    // Navigation items — a "new chat" button.
+    // Tap on table view background to dismiss keyboard.
+    UITapGestureRecognizer *tap = [[[UITapGestureRecognizer alloc]
+        initWithTarget:self action:@selector(_dismissKeyboard)] autorelease];
+    tap.cancelsTouchesInView = NO; // don't block cell taps
+    [_tableView addGestureRecognizer:tap];
+
+// Navigation items — a "new chat" button.
     self.navigationItem.rightBarButtonItem = [[[UIBarButtonItem alloc]
                                                  initWithBarButtonSystemItem:UIBarButtonSystemItemAdd
                                                  target:self
@@ -187,6 +190,11 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                               animated:animated];
 }
 
+- (void)_dismissKeyboard
+{
+    [_composer.textView resignFirstResponder];
+}
+
 #pragma mark - Composer delegate
 
 - (void)composer:(ComposerView *)c didSendText:(NSString *)text
@@ -200,13 +208,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     [self _adjustForComposerHeight];
 }
 
-- (void)_onComposerSend:(NSNotification *)note
-{
-    NSString *text = [[note userInfo] objectForKey:ComposerViewSendMessageTextKey];
-    BOOL dt = [[[note userInfo] objectForKey:ComposerViewSendMessageDeepThinkingKey] boolValue];
-    BOOL ws = [[[note userInfo] objectForKey:ComposerViewSendMessageWebSearchKey] boolValue];
-    if (text.length > 0) [self _sendUserMessage:text deepThinking:dt webSearch:ws];
-}
+// _onComposerSend: removed — using delegate method only to avoid duplicate sends.
 
 - (void)_adjustForComposerHeight
 {
@@ -442,13 +444,9 @@ didFailForConversationID:(NSString *)conversationID
     if ([_conversation.messages count] == 0) return;
     NSIndexPath *lastIdx = [NSIndexPath indexPathForRow:[_conversation.messages count] - 1
                                               inSection:0];
-    // Reload the last row only — minimises visual churn.
-    if ([_tableView indexPathForSelectedRow] || [_tableView numberOfSections] > 0) {
-        [_tableView reloadRowsAtIndexPaths:[NSArray arrayWithObject:lastIdx]
-                          withRowAnimation:UITableViewRowAnimationNone];
-    } else {
-        [_tableView reloadData];
-    }
+    // Use reloadData — reloadRowsAtIndexPaths can crash on iOS 6 if
+    // the data source changed between calls.
+    [_tableView reloadData];
     [self _scrollToBottomAnimated:YES];
 }
 
