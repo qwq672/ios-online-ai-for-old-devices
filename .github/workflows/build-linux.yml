@@ -1,0 +1,84 @@
+name: Build iOS IPA on Linux (Theos)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      deployment_target:
+        description: 'iOS deployment target'
+        required: false
+        default: '6.0'
+      sdk_version:
+        description: 'SDK version'
+        required: false
+        default: '6.0'
+
+env:
+  DEFAULT_DEPLOYMENT: '6.0'
+  DEFAULT_SDK: '6.0'
+  FALLBACK_SDK_ARCHIVE_REPO: Alex1s/iPhoneOS6.0.sdk
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang make perl rsync fakeroot dpkg-dev libplist-dev libssl-dev libplist-utils zip unzip wget ca-certificates git
+      - name: Install Theos
+        run: |
+          git clone --recursive --depth=1 https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+      - name: Build ldid
+        run: |
+          git clone --depth=1 https://github.com/sbingner/ldid.git /tmp/ldid
+          cd /tmp/ldid
+          make -j$(nproc) CFLAGS="-O2 -DLDID_VERSION=\"2.6.0\" -I/usr/include" LDFLAGS="-lplist-2.0 -lcrypto"
+          sudo install -m 0755 ldid /usr/local/bin/ldid
+      - name: Install cctools
+        run: |
+          ARCH=$(uname -m)
+          mkdir -p "$THEOS/toolchain"
+          curl -fsSL "https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-$ARCH.tar.xz" | tar -xJvf - -C "$THEOS/toolchain/"
+      - name: Get SDK
+        run: |
+          SDKNAME="iPhoneOS6.0.sdk"
+          DESTDIR="$THEOS/sdks"
+          mkdir -p "$DESTDIR"
+          URL="https://github.com/$FALLBACK_SDK_ARCHIVE_REPO/archive/refs/heads/main.tar.gz"
+          wget -q -O /tmp/sdk.bin "$URL"
+          SCRATCH=$(mktemp -d)
+          tar xzf /tmp/sdk.bin -C "$SCRATCH"
+          FOUND_SDK=$(find "$SCRATCH" -maxdepth 2 -type d -name "${SDKNAME}-*" | head -1)
+          if [ -n "$FOUND_SDK" ]; then mv "$FOUND_SDK" "$DESTDIR/$SDKNAME"; fi
+          rm -rf "$SCRATCH"
+      - name: Build
+        env:
+          THEOS_VERBOSE: "1"
+        run: |
+          mkdir -p packages
+          make clean || true
+          make package TARGET="iphone:clang:6.0:6.0" 2>&1 | tail -80 || true
+          make package TARGET="iphone:clang:6.0:6.0"
+      - name: Pack IPA
+        run: |
+          BUILT_APP=$(find .theos/_ -name "iOS6AIChat.app" -type d | head -1)
+          if [ -z "$BUILT_APP" ]; then echo "No .app found"; exit 1; fi
+          rm -rf Payload iOS6AIChat-unsigned.ipa
+          mkdir Payload
+          cp -R "$BUILT_APP" Payload/
+          APP=Payload/iOS6AIChat.app
+          if [ ! -f "$APP/Info.plist" ]; then cp iOS6AIChat/Resources/iOS6AIChat-Info.plist "$APP/Info.plist"; fi
+          for icon in Icon.png Icon@2x.png Icon-72.png Icon-72@2x.png; do
+            [ -f "iOS6AIChat/Resources/Icons/$icon" ] && cp "iOS6AIChat/Resources/Icons/$icon" "$APP/$icon"
+          done
+          ldid -S "$APP/iOS6AIChat" 2>/dev/null || true
+          zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS6AIChat-unsigned-ipa-linux
+          path: iOS6AIChat-unsigned.ipa
+          if-no-files-found: error

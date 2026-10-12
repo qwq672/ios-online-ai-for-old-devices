@@ -1,0 +1,296 @@
+//
+//  IconDrawing.m
+//  iOS6AIChat
+//
+//  Each icon is drawn at the centre of the requested size box. Stroke
+//  weights and proportions are tuned for ~28pt button icons.
+//
+
+#import "IconDrawing.h"
+
+@implementation IconDrawing
+
++ (UIImage *)imageForType:(IconType)type
+                     size:(CGSize)size
+                    color:(UIColor *)color
+{
+    if (!color) color = [UIColor blackColor];
+    UIGraphicsBeginImageContextWithOptions(size, NO, 0.0);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    CGContextSetFillColorWithColor(ctx, color.CGColor);
+    CGContextSetStrokeColorWithColor(ctx, color.CGColor);
+
+    CGFloat w = size.width, h = size.height;
+    CGFloat cx = w * 0.5f, cy = h * 0.5f;
+
+    switch (type) {
+        case IconTypeLightbulb:   [self _drawLightbulb:ctx cx:cx cy:cy w:w h:h]; break;
+        case IconTypeGlobe:        [self _drawGlobe:ctx cx:cx cy:cy w:w h:h]; break;
+        case IconTypeCamera:       [self _drawCamera:ctx cx:cx cy:cy w:w h:h]; break;
+        case IconTypeSendArrow:    [self _drawSendArrow:ctx cx:cx cy:cy w:w h:h]; break;
+        case IconTypeGear:         [self _drawGear:ctx cx:cx cy:cy w:w h:h]; break;
+        case IconTypeChatBubble:   [self _drawChatBubble:ctx cx:cx cy:cy w:w h:h]; break;
+        case IconTypeClock:        [self _drawClock:ctx cx:cx cy:cy w:w h:h]; break;
+    }
+
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    // UIGraphicsGetImageFromCurrentImageContext returns an autoreleased
+    // image — return as-is (callers retain via property setters or button
+    // setBackgroundImage: which retains internally).
+    return img;
+}
+
+#pragma mark - Lightbulb
+
++ (void)_drawLightbulb:(CGContextRef)ctx cx:(CGFloat)cx cy:(CGFloat)cy w:(CGFloat)w h:(CGFloat)h
+{
+    // Bulb: circle at upper-middle.
+    CGFloat bulbR = MIN(w, h) * 0.32f;
+    CGRect bulbRect = CGRectMake(cx - bulbR, cy - bulbR * 1.05f, bulbR * 2, bulbR * 2);
+    CGContextFillEllipseInRect(ctx, bulbRect);
+
+    // Base: trapezoid below the bulb.
+    CGFloat baseTopW = bulbR * 1.2f;
+    CGFloat baseBotW = bulbR * 0.9f;
+    CGFloat baseH = bulbR * 0.6f;
+    CGFloat baseTop = cy + bulbR * 0.85f;
+    CGContextBeginPath(ctx);
+    CGContextMoveToPoint(ctx, cx - baseTopW/2, baseTop);
+    CGContextAddLineToPoint(ctx, cx + baseTopW/2, baseTop);
+    CGContextAddLineToPoint(ctx, cx + baseBotW/2, baseTop + baseH);
+    CGContextAddLineToPoint(ctx, cx - baseBotW/2, baseTop + baseH);
+    CGContextClosePath(ctx);
+    CGContextFillPath(ctx);
+
+    // Two thin base rings.
+    CGFloat ringH = MAX(1.0f, bulbR * 0.12f);
+    for (NSInteger i = 0; i < 2; i++) {
+        CGFloat ry = baseTop + baseH * 0.35f + ringH * 2.0f * i;
+        CGRect rrect = CGRectMake(cx - baseBotW * 0.55f, ry, baseBotW * 1.1f, ringH);
+        CGContextFillRect(ctx, rrect);
+    }
+
+    // Filament hint: a small "M" shape inside the bulb (in cutout style).
+    // For simplicity, we just leave the bulb solid — silhouette icons
+    // typically don't show interior detail at this size.
+}
+
++ (void)_drawGlobe:(CGContextRef)ctx cx:(CGFloat)cx cy:(CGFloat)cy w:(CGFloat)w h:(CGFloat)h
+{
+    CGFloat r = MIN(w, h) * 0.42f;
+    CGRect circle = CGRectMake(cx - r, cy - r, r * 2, r * 2);
+
+    // Outline (ring).
+    CGContextSetLineWidth(ctx, MAX(1.5f, r * 0.12f));
+    CGContextStrokeEllipseInRect(ctx, circle);
+
+    // Vertical ellipse (prime meridian).
+    CGRect merid = CGRectMake(cx - r * 0.45f, cy - r, r * 0.9f, r * 2);
+    CGContextStrokeEllipseInRect(ctx, merid);
+
+    // Horizontal lines (equator + 2 tropics).
+    CGContextSetLineWidth(ctx, MAX(1.0f, r * 0.08f));
+    // Equator (straight line through middle).
+    CGContextMoveToPoint(ctx, cx - r, cy);
+    CGContextAddLineToPoint(ctx, cx + r, cy);
+    CGContextStrokePath(ctx);
+
+    // Upper tropic (slight curve).
+    CGRect tropicUp = CGRectMake(cx - r, cy - r * 0.55f, r * 2, r * 0.5f);
+    CGContextStrokeEllipseInRect(ctx, tropicUp);
+    // Clip the upper half by re-stroking a small arc only:
+    // Simpler: just draw two horizontal chords to simulate tropics.
+    // Already have the equator; the upper tropic arc appears as the
+    // top half of the small ellipse — the bottom half overlaps the
+    // globe body, so visually it looks fine.
+
+    // Lower tropic.
+    CGRect tropicDn = CGRectMake(cx - r, cy + r * 0.05f, r * 2, r * 0.5f);
+    CGContextStrokeEllipseInRect(ctx, tropicDn);
+}
+
+#pragma mark - Camera
+
++ (void)_drawCamera:(CGContextRef)ctx cx:(CGFloat)cx cy:(CGFloat)cy w:(CGFloat)w h:(CGFloat)h
+{
+    CGFloat bodyW = w * 0.7f;
+    CGFloat bodyH = h * 0.5f;
+    CGFloat cornerR = bodyH * 0.18f;
+    CGRect body = CGRectMake(cx - bodyW/2, cy - bodyH/2 + bodyH*0.1f, bodyW, bodyH);
+
+    // Body: rounded rectangle.
+    UIBezierPath *bp = [UIBezierPath bezierPathWithRoundedRect:body cornerRadius:cornerR];
+    CGContextAddPath(ctx, [bp CGPath]);
+    CGContextFillPath(ctx);
+
+    // Lens: circle in the body.
+    CGFloat lensR = bodyH * 0.4f;
+    CGRect lens = CGRectMake(cx - lensR, cy + bodyH*0.1f - lensR, lensR * 2, lensR * 2);
+    // Cut out a hole by using EO-fill (draw body again + lens, even-odd).
+    CGContextAddEllipseInRect(ctx, lens);
+    CGContextAddPath(ctx, [bp CGPath]);
+    CGContextEOFillPath(ctx);
+
+    // Flash hump on top.
+    CGFloat humpW = bodyW * 0.35f;
+    CGFloat humpH = bodyH * 0.35f;
+    CGRect hump = CGRectMake(cx - humpW/2, body.origin.y - humpH, humpW, humpH);
+    CGContextAddRect(ctx, hump);
+    CGContextFillRect(ctx, hump);
+
+    // Outer lens ring (thin outline).
+    CGFloat ringInset = lensR * 0.25f;
+    CGRect ring = CGRectInset(lens, ringInset, ringInset);
+    CGContextSetLineWidth(ctx, MAX(1.0f, lensR * 0.18f));
+    CGContextStrokeEllipseInRect(ctx, ring);
+}
+
+#pragma mark - Send Arrow
+
++ (void)_drawSendArrow:(CGContextRef)ctx cx:(CGFloat)cx cy:(CGFloat)cy w:(CGFloat)w h:(CGFloat)h
+{
+    // Paper-plane style arrow pointing right.
+    CGFloat arrowW = w * 0.55f;
+    CGFloat arrowH = h * 0.55f;
+    CGFloat tipX = cx + arrowW * 0.5f;
+    CGFloat tailX = cx - arrowW * 0.5f;
+    CGFloat topY = cy - arrowH * 0.5f;
+    CGFloat botY = cy + arrowH * 0.5f;
+    CGFloat midY = cy;
+
+    // Triangle body.
+    CGContextBeginPath(ctx);
+    CGContextMoveToPoint(ctx, tipX, midY);
+    CGContextAddLineToPoint(ctx, tailX, topY);
+    CGContextAddLineToPoint(ctx, tailX, botY);
+    CGContextClosePath(ctx);
+    CGContextFillPath(ctx);
+
+    // Fold line (white cut through middle — visually splits the paper plane).
+    CGContextSetBlendMode(ctx, kCGBlendModeDestinationOut);
+    CGContextSetLineWidth(ctx, MAX(1.0f, arrowH * 0.15f));
+    CGContextMoveToPoint(ctx, tipX, midY);
+    CGContextAddLineToPoint(ctx, tailX, midY);
+    CGContextStrokePath(ctx);
+    CGContextSetBlendMode(ctx, kCGBlendModeNormal);
+}
+
+#pragma mark - Gear
+
++ (void)_drawGear:(CGContextRef)ctx cx:(CGFloat)cx cy:(CGFloat)cy w:(CGFloat)w h:(CGFloat)h
+{
+    // N teeth around a circle. iOS 6 tab bar icons are 30x30pt — make
+    // the gear ~22pt diameter to leave 4pt padding on each side.
+    CGFloat r = MIN(w, h) * 0.42f;
+    CGFloat toothLen = r * 0.22f;
+    NSInteger nTeeth = 8;
+    CGFloat toothHalfAngle = M_PI / (nTeeth * 2.6f);
+
+    CGContextBeginPath(ctx);
+    for (NSInteger i = 0; i < nTeeth; i++) {
+        CGFloat a = (CGFloat)i * 2.0f * M_PI / (CGFloat)nTeeth;
+        // Tooth corners: tip1, tip2 (outside), valley1, valley2 (inside).
+        CGFloat aTip1 = a - toothHalfAngle;
+        CGFloat aTip2 = a + toothHalfAngle;
+        CGFloat aValley1 = a + toothHalfAngle;
+        CGFloat aValley2 = a + (2.0f * M_PI / nTeeth) - toothHalfAngle;
+
+        CGFloat rOuter = r + toothLen;
+        CGFloat rInner = r;
+
+        // Outer arc point 1
+        CGFloat x1 = cx + rOuter * cosf(aTip1);
+        CGFloat y1 = cy + rOuter * sinf(aTip1);
+        // Outer arc point 2
+        CGFloat x2 = cx + rOuter * cosf(aTip2);
+        CGFloat y2 = cy + rOuter * sinf(aTip2);
+        // Inner arc point 1 (end of tooth 1, start of valley)
+        CGFloat x3 = cx + rInner * cosf(aValley1);
+        CGFloat y3 = cy + rInner * sinf(aValley1);
+        // Inner arc point 2 (end of valley, start of tooth 2)
+        CGFloat x4 = cx + rInner * cosf(aValley2);
+        CGFloat y4 = cy + rInner * sinf(aValley2);
+
+        if (i == 0) CGContextMoveToPoint(ctx, x1, y1);
+        else CGContextAddLineToPoint(ctx, x1, y1);
+        CGContextAddLineToPoint(ctx, x2, y2);
+        CGContextAddLineToPoint(ctx, x3, y3);
+        // Valley arc (small inner arc to next tooth start).
+        CGContextAddArc(ctx, cx, cy, rInner, aValley1, aValley2, 0);
+        (void)x4; (void)y4;
+    }
+    CGContextClosePath(ctx);
+    CGContextFillPath(ctx);
+
+    // Centre hole (cut out).
+    CGFloat holeR = r * 0.4f;
+    CGRect hole = CGRectMake(cx - holeR, cy - holeR, holeR * 2, holeR * 2);
+    CGContextSetBlendMode(ctx, kCGBlendModeDestinationOut);
+    CGContextFillEllipseInRect(ctx, hole);
+    CGContextSetBlendMode(ctx, kCGBlendModeNormal);
+}
+
+#pragma mark - Chat bubble
+
++ (void)_drawChatBubble:(CGContextRef)ctx cx:(CGFloat)cx cy:(CGFloat)cy w:(CGFloat)w h:(CGFloat)h
+{
+    CGFloat bw = w * 0.7f;
+    CGFloat bh = h * 0.55f;
+    CGFloat cornerR = bh * 0.2f;
+    CGRect body = CGRectMake(cx - bw/2, cy - bh/2 - h*0.05f, bw, bh);
+
+    // Bubble body (rounded rectangle).
+    UIBezierPath *bp = [UIBezierPath bezierPathWithRoundedRect:body cornerRadius:cornerR];
+    CGContextAddPath(ctx, [bp CGPath]);
+    CGContextFillPath(ctx);
+
+    // Tail (triangle at bottom-left).
+    CGFloat tailW = bw * 0.18f;
+    CGFloat tailH = bh * 0.4f;
+    CGContextBeginPath(ctx);
+    CGContextMoveToPoint(ctx, body.origin.x + bw * 0.18f, body.origin.y + body.size.height);
+    CGContextAddLineToPoint(ctx, body.origin.x + bw * 0.18f + tailW, body.origin.y + body.size.height);
+    CGContextAddLineToPoint(ctx, body.origin.x + bw * 0.18f + tailW * 0.4f, body.origin.y + body.size.height + tailH);
+    CGContextClosePath(ctx);
+    CGContextFillPath(ctx);
+
+    // Three dots inside the bubble (white cutouts).
+    CGFloat dotR = bh * 0.08f;
+    CGFloat dotY = body.origin.y + body.size.height * 0.5f;
+    CGFloat dotSpacing = bw * 0.18f;
+    CGContextSetBlendMode(ctx, kCGBlendModeDestinationOut);
+    for (NSInteger i = -1; i <= 1; i++) {
+        CGRect dot = CGRectMake(cx + i * dotSpacing - dotR, dotY - dotR, dotR * 2, dotR * 2);
+        CGContextFillEllipseInRect(ctx, dot);
+    }
+    CGContextSetBlendMode(ctx, kCGBlendModeNormal);
+}
+
+#pragma mark - Clock
+
++ (void)_drawClock:(CGContextRef)ctx cx:(CGFloat)cx cy:(CGFloat)cy w:(CGFloat)w h:(CGFloat)h
+{
+    CGFloat r = MIN(w, h) * 0.42f;
+    CGRect circle = CGRectMake(cx - r, cy - r, r * 2, r * 2);
+    CGContextSetLineWidth(ctx, MAX(2.0f, r * 0.18f));
+    CGContextStrokeEllipseInRect(ctx, circle);
+
+    // Hour hand (short, up).
+    CGContextSetLineWidth(ctx, MAX(1.5f, r * 0.14f));
+    CGContextMoveToPoint(ctx, cx, cy);
+    CGContextAddLineToPoint(ctx, cx, cy - r * 0.5f);
+    CGContextStrokePath(ctx);
+
+    // Minute hand (longer, right).
+    CGContextMoveToPoint(ctx, cx, cy);
+    CGContextAddLineToPoint(ctx, cx + r * 0.75f, cy);
+    CGContextStrokePath(ctx);
+
+    // Centre dot.
+    CGFloat dotR = r * 0.1f;
+    CGRect dot = CGRectMake(cx - dotR, cy - dotR, dotR * 2, dotR * 2);
+    CGContextFillEllipseInRect(ctx, dot);
+}
+
+@end
