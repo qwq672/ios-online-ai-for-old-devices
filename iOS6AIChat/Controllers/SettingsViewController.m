@@ -442,7 +442,8 @@ titleForFooterInSection:(NSInteger)section
         [cell.contentView addSubview:sw];
         return cell;
     }
-    // Font size segmented control.
+    if (row == 1) {
+        // Font size segmented control.
     [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"字号", nil)]];
     NSArray *items = @[@"S", @"M", @"L", @"XL", @"XXL"];
     UISegmentedControl *seg = [[[UISegmentedControl alloc] initWithItems:items] autorelease];
@@ -456,20 +457,22 @@ titleForFooterInSection:(NSInteger)section
     return cell;
     }
     if (row == 2) {
-    // Image compression setting.
-    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"图片压缩", nil)]];
-    NSArray *imgItems = @[@"原图", @"1024", @"2048"];
-    UISegmentedControl *imgSeg = [[[UISegmentedControl alloc] initWithItems:imgItems] autorelease];
-    NSInteger maxDim = [[NSUserDefaults standardUserDefaults] integerForKey:@"imageMaxDim"];
-    if (maxDim == 0) imgSeg.selectedSegmentIndex = 0;
-    else if (maxDim <= 1024) imgSeg.selectedSegmentIndex = 1;
-    else imgSeg.selectedSegmentIndex = 2;
-    [imgSeg addTarget:self action:@selector(_imageCompressionChanged:)
-     forControlEvents:UIControlEventValueChanged];
-    imgSeg.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    CGRect f2 = cell.contentView.bounds;
-    imgSeg.frame = CGRectMake(f2.size.width - 230 - kPad, (kRowH - 30) / 2, 230, 30);
-    [cell.contentView addSubview:imgSeg];
+        // Image compression setting.
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"图片压缩", nil)]];
+        NSArray *imgItems = @[@"原图", @"1024", @"2048"];
+        UISegmentedControl *imgSeg = [[[UISegmentedControl alloc] initWithItems:imgItems] autorelease];
+        NSInteger maxDim = [[NSUserDefaults standardUserDefaults] integerForKey:@"imageMaxDim"];
+        if (maxDim == 0) imgSeg.selectedSegmentIndex = 0;
+        else if (maxDim <= 1024) imgSeg.selectedSegmentIndex = 1;
+        else imgSeg.selectedSegmentIndex = 2;
+        [imgSeg addTarget:self action:@selector(_imageCompressionChanged:)
+         forControlEvents:UIControlEventValueChanged];
+        imgSeg.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f2 = cell.contentView.bounds;
+        imgSeg.frame = CGRectMake(f2.size.width - 230 - kPad, (kRowH - 30) / 2, 230, 30);
+        [cell.contentView addSubview:imgSeg];
+        return cell;
+    }
     return cell;
 }
 
