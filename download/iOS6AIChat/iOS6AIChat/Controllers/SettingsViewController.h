@@ -39,7 +39,8 @@ extern NSString *const ProviderIDOllama;
                               <UITableViewDataSource,
                                UITableViewDelegate,
                                UITextFieldDelegate,
-                               UIAlertViewDelegate>
+                               UIAlertViewDelegate,
+                               UIActionSheetDelegate>
 
 @property (nonatomic, retain) UITableView *tableView;
 
