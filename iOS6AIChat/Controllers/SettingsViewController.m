@@ -763,7 +763,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     }
 }
 
-// Keep the alertView delegate for reset confirmation (tag 100).
+// Original alertView:clickedButtonAtIndex: handles tag 100 (reset) and tag 200 (provider).
 - (void)alertView:(UIAlertView *)alertView
 clickedButtonAtIndex:(NSInteger)buttonIndex
 {
