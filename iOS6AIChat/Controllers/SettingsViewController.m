@@ -283,7 +283,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         case kSectionTheme:     return 3;  // dark mode, font size, image compression
         case kSectionTransit:    return 3;
         case kSectionDirect:     return 2;
-        case kSectionModel:      return 2;
+        case kSectionModel:      return 3;
         case kSectionWebSearch:  return 3;
         case kSectionPrompt:     return 1;
         case kSectionAbout:      return 5;  // author / email / version / github / license
@@ -579,7 +579,20 @@ titleForFooterInSection:(NSInteger)section
     cell.textLabel.numberOfLines = 2;
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
     return cell;
-}
+    }
+    // row 2: "model supports images" toggle.
+    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"支持图片识别", nil)]];
+    UISwitch *imgSw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+    BOOL imgSupport = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelSupportsImages];
+    [imgSw setOn:imgSupport animated:NO];
+    [imgSw addTarget:self action:@selector(_imageSupportToggle:)
+     forControlEvents:UIControlEventValueChanged];
+    imgSw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    CGRect imgSwF = cell.contentView.bounds;
+    imgSw.frame = CGRectMake(imgSwF.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+    [cell.contentView addSubview:imgSw];
+    return cell;
+
 
 - (UITableViewCell *)_webSearchCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
 {
@@ -785,6 +798,14 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 
 #pragma mark - Toggle handlers
 
+- (IBAction)_imageSupportToggle:(UISwitch *)sw
+{
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyModelSupportsImages];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    // Post notification so ComposerView updates image button visibility.
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"iOS6ThemeDidChangeNotification" object:nil];
+}
+
 - (IBAction)_imageCompressionChanged:(UISegmentedControl *)seg
 {
     NSInteger maxDim = 0;
@@ -918,7 +939,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         switch (logical) {
             case kSectionTheme:     return 0;
             case kSectionTransit:    return 1;
-            case kSectionModel:      return 2;
+            case kSectionModel:      return 3;
             case kSectionWebSearch:  return 3;
             case kSectionPrompt:     return 4;
             case kSectionAbout:      return 5;
