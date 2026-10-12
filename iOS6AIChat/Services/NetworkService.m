@@ -84,7 +84,19 @@
         NSString *role = m.isUser      ? @"user" :
                          m.isAssistant ? @"assistant" :
                                          @"system";
-        [msgs addObject:@{ @"role": role, @"content": m.content ?: @"" }];
+        // Multi-modal: if message has images, send array content format.
+        if (m.images && [m.images count] > 0) {
+            NSMutableArray *content = [NSMutableArray array];
+            if (m.content && m.content.length > 0) {
+                [content addObject:@{@"type": @"text", @"text": m.content}];
+            }
+            for (NSString *dataUrl in m.images) {
+                [content addObject:@{@"type": @"image_url", @"image_url": @{@"url": dataUrl}}];
+            }
+            [msgs addObject:@{@"role": role, @"content": content}];
+        } else {
+            [msgs addObject:@{@"role": role, @"content": m.content ?: @""}];
+        }
     }
 
     NSDictionary *body = @{

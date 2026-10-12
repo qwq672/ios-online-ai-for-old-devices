@@ -2,11 +2,8 @@
 //  ComposerView.h
 //  iOS6AIChat
 //
-//  Simple single-row composer:
-//    [💡DT] [🌐Web] [   input field (multi-line)   ] [➤Send]
-//
-//  All on ONE row. Height starts at 44pt, grows as text expands.
-//  Uses UIButtonTypeRoundedRect for iOS 6 native button look.
+//  Single-row composer with image upload:
+//    [📷] [💡DT] [🌐Web] [   input field   ] [➤Send]
 //
 
 #import <UIKit/UIKit.h>
@@ -15,23 +12,27 @@ extern NSString *const ComposerViewSendMessageNotification;
 extern NSString *const ComposerViewSendMessageTextKey;
 extern NSString *const ComposerViewSendMessageDeepThinkingKey;
 extern NSString *const ComposerViewSendMessageWebSearchKey;
+extern NSString *const ComposerViewSendMessageImagesKey;
 
 @class ComposerView;
 
 @protocol ComposerViewDelegate <NSObject>
 @optional
 - (void)composer:(ComposerView *)composer didSendText:(NSString *)text
+              images:(NSArray *)images
         deepThinking:(BOOL)deepThinking webSearch:(BOOL)webSearch;
 - (void)composerDidChangeHeight:(ComposerView *)composer;
 @end
 
-@interface ComposerView : UIView <UITextViewDelegate>
+@interface ComposerView : UIView <UITextViewDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate>
 
 @property (nonatomic, assign) id<ComposerViewDelegate> delegate;
 @property (nonatomic, retain) UITextView *textView;
 @property (nonatomic, retain) UIButton  *sendButton;
 @property (nonatomic, retain) UIButton *deepThinkingButton;
 @property (nonatomic, retain) UIButton *webSearchButton;
+@property (nonatomic, retain) UIButton *imageButton;
+@property (nonatomic, retain) UILabel  *imageBadge;
 @property (nonatomic, assign) BOOL isStreaming;
 
 + (BOOL)deepThinkingEnabled;

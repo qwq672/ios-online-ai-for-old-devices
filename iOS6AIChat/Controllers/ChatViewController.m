@@ -198,9 +198,10 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 #pragma mark - Composer delegate
 
 - (void)composer:(ComposerView *)c didSendText:(NSString *)text
+              images:(NSArray *)images
         deepThinking:(BOOL)deepThinking webSearch:(BOOL)webSearch
 {
-    [self _sendUserMessage:text deepThinking:deepThinking webSearch:webSearch];
+    [self _sendUserMessage:text images:images deepThinking:deepThinking webSearch:webSearch];
 }
 
 - (void)composerDidChangeHeight:(ComposerView *)composer
@@ -230,6 +231,11 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
 - (void)_sendUserMessage:(NSString *)text
 {
+    [self _sendUserMessage:text images:nil deepThinking:[ComposerView deepThinkingEnabled] webSearch:[ComposerView webSearchEnabled]];
+}
+
+- (void)_sendUserMessage:(NSString *)text images:(NSArray *)images deepThinking:(BOOL)deepThinking webSearch:(BOOL)webSearch
+{
     [self _sendUserMessage:text deepThinking:[ComposerView deepThinkingEnabled]
                           webSearch:[ComposerView webSearchEnabled]];
 }
@@ -244,6 +250,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     }
 
     Message *userMsg = [Message messageWithRole:MessageRoleUser content:text];
+    if (images && [images count] > 0) {
+        userMsg.images = images;
+    }
     [_conversation appendMessage:userMsg];
 
     // Append an empty assistant placeholder — this cell will visibly
@@ -288,9 +297,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
         if (maxResults < 1) maxResults = 1;
         if (maxResults > 8) maxResults = 8;
         if (tavilyKey.length > 0) {
-            // Show a transient "正在联网搜索…" placeholder by replacing the
-            // assistant placeholder content.
-            assistantMsg.content = NSLocalizedString(@"🔍 正在联网搜索…", nil);
+            // Show a VISIBLE search card message (not just updating placeholder).
+            // This is a separate assistant message that shows search progress.
+            assistantMsg.content = [NSString stringWithFormat:@"🔍 正在搜索: \"%@\"", text];
             [self _refreshLastRow];
 
             // Synchronous Tavily call on background queue, then continue.
@@ -308,9 +317,25 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                                                          error:&err];
                 searchResults = [results retain];
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    // Re-enable "…" placeholder while AI streams.
-                    assistantMsg.content = @"…";
+                    // Update the search card with results.
+                    NSMutableString *cardContent = [NSMutableString string];
+                    [cardContent appendFormat:@"✓ 已搜索: \"%@\" (%d 条结果)\n\n", text, (int)[results count]];
+                    NSInteger ri = 1;
+                    for (NSDictionary *r in results) {
+                        [cardContent appendFormat:@"%d. %@\n   URL: %@\n   %@\n\n",
+                            (int)ri++,
+                            [r objectForKey:@"title"],
+                            [r objectForKey:@"url"],
+                            [r objectForKey:@"content"]];
+                    }
+                    assistantMsg.content = cardContent;
                     [self _refreshLastRow];
+                    // Append a NEW assistant placeholder for the AI response.
+                    Message *aiMsg = [Message messageWithRole:MessageRoleAssistant content:@"…"];
+                    [_conversation appendMessage:aiMsg];
+                    [[ConversationStore sharedStore] saveConversation:_conversation];
+                    [_tableView reloadData];
+                    [self _scrollToBottomAnimated:YES];
 
                     // Inject search results into the conversation as a system
                     // message just before the AI call. We do NOT persist
