@@ -38,6 +38,8 @@ NSString *const SettingsKeySystemPrompt       = @"systemPrompt";
 NSString *const SettingsKeyWebSearchEnabled = @"webSearchEnabled";
 NSString *const SettingsKeyTavilyAPIKey      = @"tavilyAPIKey";
 NSString *const SettingsKeyTavilyMaxResults  = @"tavilyMaxResults";
+NSString *const SettingsKeyImageMaxDim = @"imageMaxDim";
+NSString *const SettingsKeyModelSupportsImages = @"modelSupportsImages";
 
 NSString *const ProviderIDZhipu  = @"zhipu";
 NSString *const ProviderIDOpenAI = @"openai";
