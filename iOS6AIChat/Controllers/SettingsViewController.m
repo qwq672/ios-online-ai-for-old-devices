@@ -572,13 +572,14 @@ titleForFooterInSection:(NSInteger)section
         [cell.contentView addSubview:btn];
         return cell;
     }
-    // row 1: hint row about how to use 搜索.
-    cell.textLabel.text = NSLocalizedString(@"点「搜索」可自动列出 /v1/models 的模型；也可手填", nil);
-    cell.textLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
-    cell.textLabel.textColor = [iOS6Theme secondaryTextColor];
-    cell.textLabel.numberOfLines = 2;
-    cell.selectionStyle = UITableViewCellSelectionStyleNone;
-    return cell;
+    if (row == 1) {
+        // Hint row about how to use search.
+        cell.textLabel.text = NSLocalizedString(@"点「搜索」可自动列出 /v1/models 的模型；也可手填", nil);
+        cell.textLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
+        cell.textLabel.textColor = [iOS6Theme secondaryTextColor];
+        cell.textLabel.numberOfLines = 2;
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        return cell;
     }
     // row 2: "model supports images" toggle.
     [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"支持图片识别", nil)]];
@@ -592,7 +593,7 @@ titleForFooterInSection:(NSInteger)section
     imgSw.frame = CGRectMake(imgSwF.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
     [cell.contentView addSubview:imgSw];
     return cell;
-
+}
 
 - (UITableViewCell *)_webSearchCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
 {
