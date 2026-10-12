@@ -236,14 +236,6 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
 - (void)_sendUserMessage:(NSString *)text images:(NSArray *)images deepThinking:(BOOL)deepThinking webSearch:(BOOL)webSearch
 {
-    [self _sendUserMessage:text deepThinking:[ComposerView deepThinkingEnabled]
-                          webSearch:[ComposerView webSearchEnabled]];
-}
-
-- (void)_sendUserMessage:(NSString *)text
-            deepThinking:(BOOL)deepThinking
-                webSearch:(BOOL)webSearch
-{
     if (!_conversation) {
         Conversation *c = [[ConversationStore sharedStore] createNewConversation];
         self.conversation = c;
