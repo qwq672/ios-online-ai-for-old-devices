@@ -134,11 +134,12 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     CGFloat btnY = (h - btnH) / 2.0f;
     CGFloat x = pad;
 
-    // Image button (leftmost).
-    _imageButton.frame = CGRectMake(x, btnY, btnW, btnH);
-    // Badge on top-right of image button.
-    _imageBadge.frame = CGRectMake(x + btnW - 10, btnY - 4, 16, 16);
-    x += btnW + gap;
+    // Image button (leftmost) — hidden if model doesn't support images.
+    if (!_imageButton.hidden) {
+        _imageButton.frame = CGRectMake(x, btnY, btnW, btnH);
+        _imageBadge.frame = CGRectMake(x + btnW - 10, btnY - 4, 16, 16);
+        x += btnW + gap;
+    }
 
     // DT button.
     _deepThinkingButton.frame = CGRectMake(x, btnY, btnW, btnH);
@@ -185,10 +186,11 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     [_webSearchButton setImage:globe forState:UIControlStateNormal];
     [_imageButton setImage:cam forState:UIControlStateNormal];
     [_sendButton setImage:arrow forState:UIControlStateNormal];
-    // Update badge.
-    NSUInteger cnt = [_pendingImages count];
-    _imageBadge.hidden = (cnt == 0);
-    _imageBadge.text = [NSString stringWithFormat:@"%d", (int)cnt];
+    // Check if model supports images — hide button if not.
+    BOOL imgSupport = [[NSUserDefaults standardUserDefaults] boolForKey:@"modelSupportsImages"];
+    _imageButton.hidden = !imgSupport;
+    _imageBadge.hidden = !imgSupport || ([_pendingImages count] == 0);
+    _imageBadge.text = [NSString stringWithFormat:@"%d", (int)[_pendingImages count]];
 }
 
 #pragma mark - Image picker
@@ -212,10 +214,11 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     if (!image) return;
 
     // Compress: read max dimension from settings.
+    // maxDim == 0 means "原图" (original) — skip compression entirely.
     NSInteger maxDim = [[NSUserDefaults standardUserDefaults] integerForKey:@"imageMaxDim"];
-    if (maxDim == 0) maxDim = 1024;
-    CGFloat w = image.size.width, h = image.size.height;
-    if (w > maxDim || h > maxDim) {
+    if (maxDim > 0) {
+        CGFloat w = image.size.width, h = image.size.height;
+        if (w > maxDim || h > maxDim) {
         CGFloat scale = (CGFloat)maxDim / MAX(w, h);
         w = (NSInteger)(w * scale);
         h = (NSInteger)(h * scale);
@@ -224,6 +227,8 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         image = UIGraphicsGetImageFromCurrentImageContext();
         UIGraphicsEndImageContext();
     }
+    }
+    // maxDim == 0: send original image (no resize).
     NSData *jpegData = UIImageJPEGRepresentation(image, 0.7);
     if (!jpegData) return;
     NSString *base64 = [jpegData performSelector:@selector(base64Encoding)];
