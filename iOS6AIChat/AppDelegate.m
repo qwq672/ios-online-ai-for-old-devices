@@ -62,15 +62,6 @@
     settingsNav.navigationBar.translucent = NO;
     settingsNav.topViewController.title = NSLocalizedString(@"设置", nil);
 
-    // Replace the Settings tab icon with a drawn gear.
-    UIImage *gearIcon = [IconDrawing imageForType:IconTypeGear
-                                              size:CGSizeMake(30, 30)
-                                             color:[UIColor blackColor]];
-    // UITabBarItem image is treated as an alpha mask — the colour doesn't
-    // matter; iOS tints the icon blue when selected, grey when not.
-    settingsNav.tabBarItem.image = gearIcon;
-    settingsNav.tabBarItem.title = NSLocalizedString(@"设置", nil);
-
     UITabBarController *tbc = [[[UITabBarController alloc] init] autorelease];
     tbc.viewControllers = [NSArray arrayWithObjects:chatNav, historyNav, settingsNav, nil];
     [iOS6Theme styleTabBarController:tbc];
