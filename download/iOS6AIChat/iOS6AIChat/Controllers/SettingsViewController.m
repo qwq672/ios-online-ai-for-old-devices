@@ -763,21 +763,6 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     }
 }
 
-// Original alertView:clickedButtonAtIndex: handles tag 100 (reset) and tag 200 (provider).
-- (void)alertView:(UIAlertView *)alertView
-clickedButtonAtIndex:(NSInteger)buttonIndex
-{
-    if (alertView.tag == 400 && buttonIndex > 0) {
-        NSString *chosen = [_availableModels objectAtIndex:buttonIndex - 1];
-        NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-        [d setObject:chosen forKey:SettingsKeyModel];
-        [d synchronize];
-        [_fields release];
-        _fields = [[NSMutableDictionary alloc] init];
-        [_tableView reloadData];
-    }
-}
-
 #pragma mark - Toggle handlers
 
 - (IBAction)_darkModeToggle:(UISwitch *)sw
