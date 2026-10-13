@@ -99,17 +99,30 @@
         }
     }
 
-    NSDictionary *body = @{
+    // Check streaming output setting (default YES).
+    BOOL doStream = YES;
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingOutput"]) {
+        doStream = [[NSUserDefaults standardUserDefaults] boolForKey:@"streamingOutput"];
+    }
+    // Check model supports thinking (default ON).
+    BOOL doThink = NO;
+    if (self.thinkingEnabled) {
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"modelSupportsThinking"]) {
+            doThink = [[NSUserDefaults standardUserDefaults] boolForKey:@"modelSupportsThinking"];
+        } else {
+            doThink = YES; // default ON
+        }
+    }
+
+    NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:@{
         @"model":       model ?: @"gpt-3.5-turbo",
         @"messages":    msgs,
-        // Check streaming output setting (default YES)
-        BOOL doStream = YES;
-        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingOutput"]) {
-            doStream = [[NSUserDefaults standardUserDefaults] boolForKey:@"streamingOutput"];
-        }
         @"stream":      @(doStream),
         @"temperature": [NSNumber numberWithFloat:(float)temperature]
-    };
+    }];
+    if (doThink) {
+        [body setObject:@{@"type": @"enabled"} forKey:@"thinking"];
+    }
     NSError *jsonErr = nil;
     NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body
                                                        options:0
