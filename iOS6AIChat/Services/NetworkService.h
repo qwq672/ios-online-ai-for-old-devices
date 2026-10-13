@@ -27,6 +27,7 @@
 @interface NetworkService : NSObject <NSURLConnectionDelegate>
 
 @property (nonatomic, assign) id<NetworkServiceDelegate> delegate;
+@property (nonatomic, assign) BOOL thinkingEnabled;
 
 // Kick off a streaming chat completion.
 - (BOOL)streamChatWithUseTransit:(BOOL)useTransit
@@ -86,6 +87,9 @@
 - (void)networkService:(NetworkService *)svc
    didReceiveChunkForConversationID:(NSString *)conversationID
                        fullText:(NSString *)fullText;
+- (void)networkService:(NetworkService *)svc
+didReceiveThinkingForConversationID:(NSString *)conversationID
+                          thinkingText:(NSString *)thinkingText;
 - (void)networkService:(NetworkService *)svc
  didFinishForConversationID:(NSString *)conversationID
                        fullText:(NSString *)fullText;
