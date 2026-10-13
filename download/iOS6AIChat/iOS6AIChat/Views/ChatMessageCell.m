@@ -57,6 +57,20 @@
     self.renderedAttr = [MarkdownParser attributedStringFromMarkdown:message.content
                                                              baseFont:base
                                                                 width:textWidth];
+    // If message has images, show them below the text.
+    if (_message.images && [_message.images count] > 0) {
+        // Resize text view to make room for images.
+        // For now, append image URLs as text (full UIImageView rendering
+        // requires layout changes). At least user can see something was sent.
+        NSMutableAttributedString *withImages = [NSMutableAttributedString new];
+        [withImages appendAttributedString:_renderedAttr];
+        [withImages appendAttributedString:[[[NSAttributedString alloc]
+            initWithString:@"\n📎 " attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12], NSForegroundColorAttributeName: [iOS6Theme secondaryTextColor]}] autorelease]];
+        [withImages appendAttributedString:[[[NSAttributedString alloc]
+            initWithString:[NSString stringWithFormat:@"%d image(s)", (int)[_message.images count]]
+            attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12], NSForegroundColorAttributeName: [iOS6Theme secondaryTextColor]}] autorelease]];
+        _renderedAttr = [withImages autorelease];
+    }
     _textView.attributedText = _renderedAttr;
     [self setNeedsLayout];
 }

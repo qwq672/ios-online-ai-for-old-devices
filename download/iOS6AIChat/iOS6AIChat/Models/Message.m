@@ -30,7 +30,7 @@
     if (self = [super init]) {
         // decodeObjectForKey: returns autoreleased; assign-through-copy
         // for NSString/NSDate (the property is declared `copy`).
-        _role        = (MessageRole)[[coder decodeObjectForKey:@"role"] integerValue];
+        _role        = (MessageRole)[coder decodeIntegerForKey:@"role"];
         _content     = [[coder decodeObjectForKey:@"content"] copy];
         _contentHTML = [[coder decodeObjectForKey:@"contentHTML"] copy];
         _createdAt   = [[coder decodeObjectForKey:@"createdAt"] copy];

@@ -53,7 +53,7 @@
 {
     NSString *base = useTransit ? transitURL : baseURL;
     if (!base || base.length == 0) {
-        base = useTransit ? @"https://api-ai.awa.lat" : @"https://api.openai.com";
+        base = useTransit ? @"https://ai-transit.awa.lat" : @"https://api.openai.com";
     }
     NSString *endpoint = [base stringByTrimmingCharactersInSet:
                           [NSCharacterSet characterSetWithCharactersInString:@"/"]];
@@ -102,7 +102,12 @@
     NSDictionary *body = @{
         @"model":       model ?: @"gpt-3.5-turbo",
         @"messages":    msgs,
-        @"stream":      @YES,
+        // Check streaming output setting (default YES)
+        BOOL doStream = YES;
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingOutput"]) {
+            doStream = [[NSUserDefaults standardUserDefaults] boolForKey:@"streamingOutput"];
+        }
+        @"stream":      @(doStream),
         @"temperature": [NSNumber numberWithFloat:(float)temperature]
     };
     NSError *jsonErr = nil;
@@ -310,7 +315,7 @@
     if (!query || query.length == 0) return nil;
     NSString *endpoint;
     if (useTransit) {
-        NSString *base = transitURL ?: @"https://api-ai.awa.lat";
+        NSString *base = transitURL ?: @"https://ai-transit.awa.lat";
         base = [base stringByTrimmingCharactersInSet:
                 [NSCharacterSet characterSetWithCharactersInString:@"/"]];
         endpoint = [base stringByAppendingPathComponent:@"v1/tavily/search"];
@@ -377,7 +382,7 @@
 {
     NSString *base = useTransit ? transitURL : baseURL;
     if (!base || base.length == 0) {
-        base = useTransit ? @"https://api-ai.awa.lat" : @"https://api.openai.com";
+        base = useTransit ? @"https://ai-transit.awa.lat" : @"https://api.openai.com";
     }
     NSString *endpoint = [base stringByTrimmingCharactersInSet:
                           [NSCharacterSet characterSetWithCharactersInString:@"/"]];

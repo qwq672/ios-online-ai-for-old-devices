@@ -40,6 +40,8 @@ NSString *const SettingsKeyTavilyAPIKey      = @"tavilyAPIKey";
 NSString *const SettingsKeyTavilyMaxResults  = @"tavilyMaxResults";
 NSString *const SettingsKeyImageMaxDim = @"imageMaxDim";
 NSString *const SettingsKeyModelSupportsImages = @"modelSupportsImages";
+NSString *const SettingsKeyModelSupportsThinking = @"modelSupportsThinking";
+NSString *const SettingsKeyStreamingOutput = @"streamingOutput";
 
 NSString *const ProviderIDZhipu  = @"zhipu";
 NSString *const ProviderIDOpenAI = @"openai";
@@ -47,7 +49,7 @@ NSString *const ProviderIDOllama = @"ollama";
 
 NSString *const iOS6ThemeDidChangeNotification = @"iOS6ThemeDidChangeNotification";
 
-static NSString *const kDefaultTransitURL = @"https://api-ai.awa.lat";
+static NSString *const kDefaultTransitURL = @"https://ai-transit.awa.lat";
 
 // Layout constants.
 static CGFloat const kLabelWidth = 100.0f;
@@ -141,11 +143,8 @@ enum {
     _tableView.backgroundColor = [UIColor clearColor];
     _tableView.backgroundView = nil;  // remove iOS 6 default striped pattern
     // Re-style the nav bar with the current dark/light mode.
-    if (self.navigationController) {
-        [iOS6Theme styleNavigationController:self.navigationController
-                                       title:NSLocalizedString(@"设置", nil)
-                                  systemIcon:UITabBarSystemItemMore];
-    }
+    // Tab bar icons are set once at launch — do NOT re-style here
+    // (styleNavigationController resets tabBarItem to system icon)
 }
 
 - (void)_themeChanged
@@ -344,6 +343,14 @@ titleForFooterInSection:(NSInteger)section
         cell.contentView.backgroundColor = [iOS6Theme bubbleAssistantColor];
     }
     for (UIView *v in cell.contentView.subviews) [v removeFromSuperview];
+    // Reset cell properties to prevent reuse artifacts.
+    cell.textLabel.text = @"";
+    cell.textLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
+    cell.textLabel.textColor = [iOS6Theme textColor];
+    cell.textLabel.textAlignment = NSTextAlignmentLeft;
+    cell.textLabel.numberOfLines = 1;
+    cell.accessoryType = UITableViewCellAccessoryNone;
+    cell.selectionStyle = UITableViewCellSelectionStyleNone;
     cell.contentView.backgroundColor = [iOS6Theme bubbleAssistantColor];
     cell.backgroundColor = [iOS6Theme bubbleAssistantColor];
 

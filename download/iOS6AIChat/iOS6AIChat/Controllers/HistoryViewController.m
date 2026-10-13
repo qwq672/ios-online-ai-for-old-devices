@@ -62,11 +62,8 @@ static NSString *const kCellReuseID = @"HistoryCell";
     _tableView.backgroundColor = [UIColor clearColor];
     _tableView.backgroundView = nil;  // remove iOS 6 default striped pattern
     // Re-style navbar with current palette (dark/light).
-    if (self.navigationController) {
-        [iOS6Theme styleNavigationController:self.navigationController
-                                       title:NSLocalizedString(@"历史", nil)
-                                  systemIcon:UITabBarSystemItemHistory];
-    }
+    // Tab bar icons are set once at launch — do NOT re-style here
+    // (styleNavigationController resets tabBarItem to system icon)
     [_tableView reloadData];
 }
 

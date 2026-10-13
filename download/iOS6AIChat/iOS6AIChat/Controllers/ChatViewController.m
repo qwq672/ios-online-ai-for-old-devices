@@ -139,11 +139,8 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     if ([_composer respondsToSelector:@selector(_refreshToggleVisuals)]) {
         [_composer performSelector:@selector(_refreshToggleVisuals)];
     }
-    if (self.navigationController) {
-        [iOS6Theme styleNavigationController:self.navigationController
-                                       title:NSLocalizedString(@"聊天", nil)
-                                  systemIcon:UITabBarSystemItemFavorites];
-    }
+    // Tab bar icons are set once at launch — do NOT re-style here
+    // (styleNavigationController resets tabBarItem to system icon)
     [_tableView reloadData];
     [self _scrollToBottomAnimated:NO];
 }
@@ -291,13 +288,11 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
         if (tavilyKey.length > 0) {
             // Show a VISIBLE search card message (not just updating placeholder).
             // This is a separate assistant message that shows search progress.
-            assistantMsg.content = [NSString stringWithFormat:@"🔍 正在搜索: \"%@\"", text];
+            assistantMsg.content = [NSString stringWithFormat:@"🔍 正在搜索: \"%@\"\n\n请稍候…", text];
             [self _refreshLastRow];
 
-            // Synchronous Tavily call on background queue, then continue.
-            // NOTE: we use dispatch_sync here so the AI request waits for
-            // results. Caller is the main thread, so this would deadlock —
-            // dispatch_async instead and call _launchAPIStream from inside.
+            // Run Tavily search on background queue, then dispatch back to
+            // main to update the search card and launch the AI stream.
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
                 NetworkService *svc = [[[NetworkService alloc] init] autorelease];
                 NSError *err = nil;

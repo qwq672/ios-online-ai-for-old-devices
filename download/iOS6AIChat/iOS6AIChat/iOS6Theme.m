@@ -27,39 +27,39 @@ static CGFloat const kFontScale[] = { 0.85f, 1.0f, 1.15f, 1.3f, 1.5f };
 // The deep emerald accent on a cool grey background gives a more
 // sophisticated "professional journal" look — distinct from the
 // bronze-on-cream warmth of the previous iteration.
-static NSString * const kHexLightTint           = @"#0F7B5D";   // deep emerald (sophisticated, not bright)
-static NSString * const kHexLightNavbarTop      = @"#1A8B6F";   // emerald (slightly brighter on top)
-static NSString * const kHexLightNavbarBottom   = @"#0A5440";   // dark emerald
-static NSString * const kHexLightTabbarTop      = @"#E8EEF0";   // cool cream
-static NSString * const kHexLightTabbarBottom   = @"#9CA8B0";   // cool grey
-static NSString * const kHexLightPinstripe      = @"#E8EBEE";  // muted   // very pale cool
-static NSString * const kHexLightPinstripeBG    = @"#DDE2E5";  // muted cool grey   // soft cool grey
-static NSString * const kHexLightBubbleUser     = @"#D5E8E2";   // pale emerald-tinted
-static NSString * const kHexLightBubbleUserB    = @"#3A6B5D";   // emerald border
-static NSString * const kHexLightBubbleAI       = @"#FAFBFC";   // near-white
-static NSString * const kHexLightBubbleAIB      = @"#C5CDD2";   // soft cool grey border
-static NSString * const kHexLightText           = @"#111820";  // darker for contrast   // deep navy-charcoal
-static NSString * const kHexLightTextSecondary  = @"#4A5868";  // darker secondary   // cool grey
-static NSString * const kHexLightCodeBG         = @"#ECEFF2";   // pale cool grey
-static NSString * const kHexLightCodeBorder     = @"#C5CDD2";
+static NSString * const kHexLightTint           = @"#007AFF";  // iOS standard blue   // deep emerald (sophisticated, not bright)
+static NSString * const kHexLightNavbarTop      = @"#FFFFFF";  // white panel   // emerald (slightly brighter on top)
+static NSString * const kHexLightNavbarBottom   = @"#E8E8E8";  // light grey bottom   // dark emerald
+static NSString * const kHexLightTabbarTop      = @"#FFFFFF";  // white   // cool cream
+static NSString * const kHexLightTabbarBottom   = @"#D0D0D0";  // light grey   // cool grey
+static NSString * const kHexLightPinstripe      = @"#F7F7F7";  // near-white  // muted   // very pale cool
+static NSString * const kHexLightPinstripeBG    = @"#EFEFEF";  // light grey bg  // muted cool grey   // soft cool grey
+static NSString * const kHexLightBubbleUser     = @"#DCF8C6";  // iMessage green   // pale emerald-tinted
+static NSString * const kHexLightBubbleUserB    = @"#A8D8A0";  // green border   // emerald border
+static NSString * const kHexLightBubbleAI       = @"#FFFFFF";  // white   // near-white
+static NSString * const kHexLightBubbleAIB      = @"#D0D0D0";  // grey border   // soft cool grey border
+static NSString * const kHexLightText           = @"#000000";  // black  // darker for contrast   // deep navy-charcoal
+static NSString * const kHexLightTextSecondary  = @"#666666";  // grey  // darker secondary   // cool grey
+static NSString * const kHexLightCodeBG         = @"#F5F5F5";  // light grey   // pale cool grey
+static NSString * const kHexLightCodeBorder     = @"#D0D0D0";
 
 // Dark palette — deep navy-charcoal + warm amber accent.
 // The amber-on-charcoal contrast creates the "Rolex boutique" feel.
-static NSString * const kHexDarkTint            = @"#B8915A";  // muted amber (less bright)   // warm amber gold
-static NSString * const kHexDarkNavbarTop       = @"#1A2025";   // dark navy-charcoal
-static NSString * const kHexDarkNavbarBottom    = @"#0A0E12";   // near-black navy
-static NSString * const kHexDarkTabbarTop        = @"#1A2025";
-static NSString * const kHexDarkTabbarBottom     = @"#08090C";
-static NSString * const kHexDarkPinstripe        = @"#1F252B";
-static NSString * const kHexDarkPinstripeBG     = @"#0A0D10";  // darker
-static NSString * const kHexDarkBubbleUser      = @"#1A2530";  // darker   // deep emerald-tinted charcoal
-static NSString * const kHexDarkBubbleUserB     = @"#3A5A4D";
-static NSString * const kHexDarkBubbleAI        = @"#15191E";  // darker   // charcoal
-static NSString * const kHexDarkBubbleAIB       = @"#3A4250";
-static NSString * const kHexDarkText            = @"#D5CDB8";  // less bright cream   // warm cream
-static NSString * const kHexDarkTextSecondary   = @"#9CA0A8";
-static NSString * const kHexDarkCodeBG          = @"#1F252B";
-static NSString * const kHexDarkCodeBorder      = @"#3A4250";
+static NSString * const kHexDarkTint            = @"#0A84FF";  // iOS dark blue  // muted amber (less bright)   // warm amber gold
+static NSString * const kHexDarkNavbarTop       = @"#1C1C1E";  // near-black   // dark navy-charcoal
+static NSString * const kHexDarkNavbarBottom    = @"#000000";  // black   // near-black navy
+static NSString * const kHexDarkTabbarTop        = @"#1C1C1E";  // near-black
+static NSString * const kHexDarkTabbarBottom     = @"#000000";  // black
+static NSString * const kHexDarkPinstripe        = @"#2C2C2E";  // dark grey
+static NSString * const kHexDarkPinstripeBG     = @"#1C1C1E";  // near-black bg  // darker
+static NSString * const kHexDarkBubbleUser      = @"#2C2C2E";  // dark grey  // darker   // deep emerald-tinted charcoal
+static NSString * const kHexDarkBubbleUserB     = @"#48484A";  // grey border
+static NSString * const kHexDarkBubbleAI        = @"#1C1C1E";  // near-black  // darker   // charcoal
+static NSString * const kHexDarkBubbleAIB       = @"#48484A";  // grey border
+static NSString * const kHexDarkText            = @"#FFFFFF";  // white  // less bright cream   // warm cream
+static NSString * const kHexDarkTextSecondary   = @"#8E8E93";  // iOS grey
+static NSString * const kHexDarkCodeBG          = @"#2C2C2E";  // dark grey
+static NSString * const kHexDarkCodeBorder      = @"#48484A";
 
 @implementation iOS6Theme
 
