@@ -7,7 +7,8 @@
 
 @interface HistoryViewController : UIViewController
                               <UITableViewDataSource,
-                               UITableViewDelegate>
+                               UITableViewDelegate,
+                               UISearchBarDelegate>
 
 @property (nonatomic, retain) UITableView *tableView;
 @property (nonatomic, retain) UIBarButtonItem *editButton;

@@ -82,7 +82,8 @@ static NSString *const kCellReuseID = @"HistoryCell";
 
 - (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText
 {
-    _searchText = [searchText retain];
+    [_searchText release];
+    _searchText = [searchText copy];
     [_tableView reloadData];
 }
 

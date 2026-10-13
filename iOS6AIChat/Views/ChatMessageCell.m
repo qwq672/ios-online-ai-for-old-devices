@@ -5,6 +5,7 @@
 
 #import "ChatMessageCell.h"
 #import "iOS6Theme.h"
+#import <QuartzCore/QuartzCore.h>
 #import "MarkdownParser.h"
 
 @interface ChatMessageCell () {
