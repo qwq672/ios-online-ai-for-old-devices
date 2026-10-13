@@ -1,0 +1,18 @@
+Package: awa.qwq672.iosonlineai
+Name: iOS6AIChat
+Version: 261013-1
+Architecture: iphoneos-arm
+Description: iOS 6 skeuomorphic-styled AI chat client
+  Multi-provider (Zhipu GLM / OpenAI / Ollama) with optional
+  transit relay (default api-ai.awa.lat), streaming SSE responses,
+  conversation history, Markdown rendering, dark mode, font size
+  adjustment, deep thinking toggle, Tavily web search integration
+  and a settings page for transit URL / API Key / Model picker.
+  Faithfully recreates the 2012-era iOS 6 look on any iOS
+  version 6.0 and later.
+Maintainer: qwq672 <qwq672@users.noreply.github.com>
+Author: qwq672
+Section: Applications
+Depends: mobilesubstrate
+Conflicts: awa.qwq672.iosonlineai-beta
+Replaces: awa.qwq672.iosonlineai-beta
