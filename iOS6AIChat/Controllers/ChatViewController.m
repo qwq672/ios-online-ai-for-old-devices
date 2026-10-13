@@ -272,8 +272,12 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     // If deep thinking is on, augment the system prompt with a chain-of-
     // thought instruction.
     if (deepThinking) {
-        systemPrompt = [NSString stringWithFormat:
-            @"%@ Think step by step before answering. Show your reasoning process prefixed with \"Reasoning:\" and then give the final answer prefixed with \"Answer:\".",
+        // Deep thinking: just ask the model to think step by step.
+    // Don't ask for "Reasoning:" / "Answer:" prefixes — those would appear
+    // in the content and confuse the parser. The model's native
+    // reasoning_content field is where thinking should go.
+    systemPrompt = [NSString stringWithFormat:
+            @"%@ Think step by step before answering the question.",
             systemPrompt];
     }
 
@@ -286,8 +290,8 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
         if (maxResults < 1) maxResults = 1;
         if (maxResults > 8) maxResults = 8;
         if (tavilyKey.length > 0) {
-            // Show a VISIBLE search card message (not just updating placeholder).
-            // This is a separate assistant message that shows search progress.
+            // Show a visible search card and run Tavily search.
+            // If search fails, we still proceed to AI — search is optional.
             assistantMsg.content = [NSString stringWithFormat:@"🔍 正在搜索: \"%@\"\n\n请稍候…", text];
             [self _refreshLastRow];
 
@@ -457,10 +461,14 @@ didFailForConversationID:(NSString *)conversationID
 - (void)_refreshLastRow
 {
     if ([_conversation.messages count] == 0) return;
+    // Throttle: only reload every 0.3s to reduce CPU usage during streaming.
+    static NSTimeInterval lastReload = 0;
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    if (now - lastReload < 0.3) return; // skip if less than 300ms since last reload
+    lastReload = now;
+
     NSIndexPath *lastIdx = [NSIndexPath indexPathForRow:[_conversation.messages count] - 1
                                               inSection:0];
-    // Use reloadData — reloadRowsAtIndexPaths can crash on iOS 6 if
-    // the data source changed between calls.
     [_tableView reloadData];
     [self _scrollToBottomAnimated:YES];
 }

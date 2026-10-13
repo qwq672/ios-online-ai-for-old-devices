@@ -10,6 +10,7 @@
 #import "ComposerView.h"
 #import "iOS6Theme.h"
 #import "IconDrawing.h"
+#import "NSDataBase64.h"
 #import <QuartzCore/QuartzCore.h>
 
 NSString *const ComposerViewSendMessageNotification = @"ComposerViewSendMessageNotification";
@@ -231,7 +232,7 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     // maxDim == 0: send original image (no resize).
     NSData *jpegData = UIImageJPEGRepresentation(image, 0.7);
     if (!jpegData) return;
-    NSString *base64 = [jpegData performSelector:@selector(base64Encoding)];
+    NSString *base64 = [jpegData base64String]; // uses our NSDataBase64 category
     NSString *dataUrl = [NSString stringWithFormat:@"data:image/jpeg;base64,%@", base64];
     [_pendingImages addObject:dataUrl];
     [self _refreshToggleVisuals];

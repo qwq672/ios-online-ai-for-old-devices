@@ -6,6 +6,7 @@
 #import "ChatMessageCell.h"
 #import "iOS6Theme.h"
 #import <QuartzCore/QuartzCore.h>
+#import "NSDataBase64.h"
 #import "MarkdownParser.h"
 
 @interface ChatMessageCell () {
@@ -80,15 +81,10 @@
             NSString *dataUrl = [_message.images objectAtIndex:i];
             // Decode base64.
             NSString *base64 = [dataUrl substringFromIndex:[@"data:image/jpeg;base64," length]];
-            // Use performSelector for base64 decoding (iOS 6 private API).
-            NSData *imgData = [NSData performSelector:@selector(dataWithBase64EncodedString:) withObject:base64];
-            if (!imgData) {
-                // Fallback: try the other base64 method.
-                imgData = [NSData alloc];
-                // Can't easily decode without a category. Just show a placeholder.
-                [imgData release];
-                continue;
-            }
+            // Use our own base64 decoder (works on iOS 6, no private API).
+            NSData *imgData = [NSData dataFromBase64String:base64];
+            [imgData autorelease]; // dataFromBase64String returns retained
+            if (!imgData) continue;
             UIImage *img = [UIImage imageWithData:imgData];
             if (!img) continue;
             UIImageView *iv = [[[UIImageView alloc] initWithImage:img] autorelease];

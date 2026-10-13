@@ -54,6 +54,7 @@ iOS6AIChat_FILES = \
     iOS6AIChat/Services/ConversationStore.m \
     iOS6AIChat/Services/NetworkService.m \
     iOS6AIChat/Services/MarkdownParser.m \
+    iOS6AIChat/Services/NSDataBase64.m \
     iOS6AIChat/Views/ChatBubbleView.m \
     iOS6AIChat/Views/ChatMessageCell.m \
     iOS6AIChat/Views/ComposerView.m \
