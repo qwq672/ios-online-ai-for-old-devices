@@ -18,6 +18,11 @@ static NSString *const kCellReuseID = @"HistoryCell";
 @interface HistoryViewController ()
 @end
 
+@interface HistoryViewController () {
+    NSString *_searchText;
+}
+@end
+
 @implementation HistoryViewController
 
 @synthesize tableView=_tableView, editButton=_editButton;
@@ -51,6 +56,12 @@ static NSString *const kCellReuseID = @"HistoryCell";
     _tableView.opaque = NO;
     [self.view addSubview:_tableView];
 
+    // Search bar for filtering conversations.
+    UISearchBar *searchBar = [[[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 44)] autorelease];
+    searchBar.placeholder = NSLocalizedString(@"搜索对话", nil);
+    searchBar.delegate = self;
+    _tableView.tableHeaderView = searchBar;
+
     self.navigationItem.rightBarButtonItem = self.editButtonItem;
 }
 
@@ -67,6 +78,19 @@ static NSString *const kCellReuseID = @"HistoryCell";
     [_tableView reloadData];
 }
 
+#pragma mark - UISearchBarDelegate
+
+- (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText
+{
+    _searchText = [searchText retain];
+    [_tableView reloadData];
+}
+
+- (void)searchBarSearchBarButtonClicked:(UISearchBar *)searchBar
+{
+    [searchBar resignFirstResponder];
+}
+
 #pragma mark - Table data source
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
@@ -76,6 +100,13 @@ static NSString *const kCellReuseID = @"HistoryCell";
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
+    if (_searchText && _searchText.length > 0) {
+        NSInteger cnt = 0;
+        for (Conversation *conv in [ConversationStore sharedStore].conversations) {
+            if ([conv.displayTitle rangeOfString:_searchText options:NSCaseInsensitiveSearch].location != NSNotFound) cnt++;
+        }
+        return cnt;
+    }
     return (NSInteger)[[ConversationStore sharedStore].conversations count];
 }
 
@@ -88,14 +119,48 @@ static NSString *const kCellReuseID = @"HistoryCell";
                                        reuseIdentifier:kCellReuseID] autorelease];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     }
-    Conversation *c = [[[ConversationStore sharedStore].conversations
-                          objectAtIndex:indexPath.row] retain];
+    NSArray *allConvs = [ConversationStore sharedStore].conversations;
+    Conversation *c = nil;
+    if (_searchText && _searchText.length > 0) {
+        NSMutableArray *filtered = [NSMutableArray array];
+        for (Conversation *conv in allConvs) {
+            if ([conv.displayTitle rangeOfString:_searchText options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                [filtered addObject:conv];
+            }
+        }
+        c = [[filtered objectAtIndex:indexPath.row] retain];
     cell.textLabel.text       = [c displayTitle];
     NSDateFormatter *df = [[[NSDateFormatter alloc] init] autorelease];
     [df setDateFormat: @"yyyy-MM-dd HH:mm"];
     cell.detailTextLabel.text = [df stringFromDate:c.updatedAt];
     [c release];
     return cell;
+    } else {
+    Conversation *c = [[allConvs objectAtIndex:indexPath.row] retain];
+    cell.textLabel.text = [c displayTitle];
+    NSDateFormatter *df = [[[NSDateFormatter alloc] init] autorelease];
+    [df setDateFormat: @"yyyy-MM-dd HH:mm"];
+    cell.detailTextLabel.text = [df stringFromDate:c.updatedAt];
+    [c release];
+    return cell;
+    }
+}
+
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForHeaderInSection:section];
+    if (!title || title.length == 0) return nil;
+    UIView *header = [[[UIView alloc] initWithFrame:CGRectMake(0, 0, tableView.bounds.size.width, 30)] autorelease];
+    header.backgroundColor = [UIColor clearColor];
+    UILabel *label = [[[UILabel alloc] initWithFrame:CGRectMake(16, 8, tableView.bounds.size.width - 32, 20)] autorelease];
+    label.text = title;
+    label.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
+    label.textColor = [iOS6Theme secondaryTextColor];
+    label.backgroundColor = [UIColor clearColor];
+    label.shadowColor = nil;
+    label.shadowOffset = CGSizeZero;
+    [header addSubview:label];
+    return header;
 }
 
 - (NSString *)tableView:(UITableView *)tableView

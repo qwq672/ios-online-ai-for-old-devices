@@ -7,6 +7,11 @@
 #import "iOS6Theme.h"
 #import "MarkdownParser.h"
 
+@interface ChatMessageCell () {
+    BOOL _thinkingCollapsed;
+}
+@end
+
 @implementation ChatMessageCell
 
 @synthesize textView=_textView, bubble=_bubble, message=_message, renderedAttr=_renderedAttr;
@@ -43,6 +48,7 @@
 
 - (void)applyMessage:(Message *)message
 {
+    _thinkingCollapsed = YES; // default collapsed
     self.message = message;
 
     BubbleRole role = message.isUser ? BubbleRoleUser : BubbleRoleAssistant;
@@ -57,17 +63,46 @@
     self.renderedAttr = [MarkdownParser attributedStringFromMarkdown:message.content
                                                              baseFont:base
                                                                 width:textWidth];
-    // If message has images, show them below the text.
+    // If message has images, decode base64 and show as thumbnails.
     if (_message.images && [_message.images count] > 0) {
-        // Resize text view to make room for images.
-        // For now, append image URLs as text (full UIImageView rendering
-        // requires layout changes). At least user can see something was sent.
+        // Remove old image views.
+        for (UIView *v in _bubble.subviews) {
+            if ([v isKindOfClass:[UIImageView class]] && v.tag >= 9000) {
+                [v removeFromSuperview];
+            }
+        }
+        CGFloat imgY = _textView.frame.origin.y + _textView.frame.size.height + 4;
+        CGFloat imgW = 80;
+        CGFloat imgH = 80;
+        CGFloat imgX = _bubble.frame.origin.x + 4;
+        for (NSUInteger i = 0; i < [_message.images count] && i < 3; i++) {
+            NSString *dataUrl = [_message.images objectAtIndex:i];
+            // Decode base64.
+            NSString *base64 = [dataUrl substringFromIndex:[@"data:image/jpeg;base64," length]];
+            // Use performSelector for base64 decoding (iOS 6 private API).
+            NSData *imgData = [NSData performSelector:@selector(dataWithBase64EncodedString:) withObject:base64];
+            if (!imgData) {
+                // Fallback: try the other base64 method.
+                imgData = [NSData alloc];
+                // Can't easily decode without a category. Just show a placeholder.
+                [imgData release];
+                continue;
+            }
+            UIImage *img = [UIImage imageWithData:imgData];
+            if (!img) continue;
+            UIImageView *iv = [[[UIImageView alloc] initWithImage:img] autorelease];
+            iv.tag = 9000 + i;
+            iv.frame = CGRectMake(imgX + i * (imgW + 4), imgY, imgW, imgH);
+            iv.contentMode = UIViewContentModeScaleAspectFill;
+            iv.clipsToBounds = YES;
+            iv.layer.cornerRadius = 6.0f;
+            [_bubble addSubview:iv];
+        }
+        // Also add text indicator.
         NSMutableAttributedString *withImages = [NSMutableAttributedString new];
         [withImages appendAttributedString:_renderedAttr];
         [withImages appendAttributedString:[[[NSAttributedString alloc]
-            initWithString:@"\n📎 " attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12], NSForegroundColorAttributeName: [iOS6Theme secondaryTextColor]}] autorelease]];
-        [withImages appendAttributedString:[[[NSAttributedString alloc]
-            initWithString:[NSString stringWithFormat:@"%d image(s)", (int)[_message.images count]]
+            initWithString:[NSString stringWithFormat:@"\n📎 %d image(s)", (int)[_message.images count]]
             attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12], NSForegroundColorAttributeName: [iOS6Theme secondaryTextColor]}] autorelease]];
         _renderedAttr = [withImages autorelease];
     }

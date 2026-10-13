@@ -298,6 +298,26 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     return kRowH;
 }
 
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
+{
+    // Custom header view — no default shadow (which looks bad in dark mode).
+    NSString *title = [self tableView:tableView titleForHeaderInSection:section];
+    if (!title || title.length == 0) return nil;
+    UIView *header = [[[UIView alloc] initWithFrame:CGRectMake(0, 0, tableView.bounds.size.width, 30)] autorelease];
+    header.backgroundColor = [UIColor clearColor];
+    UILabel *label = [[[UILabel alloc] initWithFrame:CGRectMake(16, 8, tableView.bounds.size.width - 32, 20)] autorelease];
+    label.text = title;
+    label.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
+    label.textColor = [iOS6Theme secondaryTextColor];
+    label.backgroundColor = [UIColor clearColor];
+    // No shadowOffset — this removes the iOS 6 default text shadow that
+    // looks like "glow" in dark mode.
+    label.shadowColor = nil;
+    label.shadowOffset = CGSizeZero;
+    [header addSubview:label];
+    return header;
+}
+
 - (NSString *)tableView:(UITableView *)tableView
 titleForHeaderInSection:(NSInteger)section
 {

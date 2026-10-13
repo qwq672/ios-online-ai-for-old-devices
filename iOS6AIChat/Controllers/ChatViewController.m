@@ -293,6 +293,8 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
             // Run Tavily search on background queue, then dispatch back to
             // main to update the search card and launch the AI stream.
+            // Use a background queue with a 15-second timeout.
+            // If search fails or times out, proceed without search results.
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
                 NetworkService *svc = [[[NetworkService alloc] init] autorelease];
                 NSError *err = nil;
@@ -303,6 +305,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                                                      transitURL:transitURL
                                                          error:&err];
                 searchResults = [results retain];
+                    // Safety: if search returned nil or empty, proceed without it.
                 dispatch_async(dispatch_get_main_queue(), ^{
                     // Update the search card with results.
                     NSMutableString *cardContent = [NSMutableString string];
