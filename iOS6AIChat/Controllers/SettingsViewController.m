@@ -52,7 +52,7 @@ NSString *const iOS6ThemeDidChangeNotification = @"iOS6ThemeDidChangeNotificatio
 static NSString *const kDefaultTransitURL = @"https://ai-transit.awa.lat";
 
 // Layout constants.
-static CGFloat const kLabelWidth = 100.0f;
+static CGFloat const kLabelWidth = 80.0f;
 static CGFloat const kPad = 12.0f;
 static CGFloat const kRowH = 44.0f;
 
@@ -431,7 +431,7 @@ titleForFooterInSection:(NSInteger)section
     f.keyboardType = kbdType;
     f.secureTextEntry = secure;
     f.delegate = self;
-    f.backgroundColor = [UIColor whiteColor];
+    f.backgroundColor = [iOS6Theme isDarkMode] ? [UIColor colorWithRed:0.11f green:0.11f blue:0.12f alpha:1.0f] : [UIColor whiteColor];
     f.textColor = [iOS6Theme textColor];
     f.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleLeftMargin;
     // Store the NSUserDefaults key on the field itself so _persistField
@@ -481,7 +481,7 @@ titleForFooterInSection:(NSInteger)section
      forControlEvents:UIControlEventValueChanged];
     seg.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     CGRect f = cell.contentView.bounds;
-    seg.frame = CGRectMake(f.size.width - 230 - kPad, (kRowH - 30) / 2, 230, 30);
+    seg.frame = CGRectMake(f.size.width - 165 - kPad, (kRowH - 30) / 2, 165, 30);
     [cell.contentView addSubview:seg];
     return cell;
     }
@@ -546,7 +546,7 @@ titleForFooterInSection:(NSInteger)section
      forControlEvents:UIControlEventValueChanged];
     seg.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     CGRect f = cell.contentView.bounds;
-    seg.frame = CGRectMake(f.size.width - 230 - kPad, (kRowH - 30) / 2, 230, 30);
+    seg.frame = CGRectMake(f.size.width - 165 - kPad, (kRowH - 30) / 2, 165, 30);
     [cell.contentView addSubview:seg];
     return cell;
 }
@@ -711,7 +711,7 @@ titleForFooterInSection:(NSInteger)section
     NSArray *values = @[
         @"qwq672",
         @"b167963232@163.com",
-        @"1.0.0",
+        [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"261013",
         @"qwq672/ios-online-ai-for-old-devices",
         @"MIT"
     ];

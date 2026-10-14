@@ -300,15 +300,19 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
             // Use a background queue with a 15-second timeout.
             // If search fails or times out, proceed without search results.
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                NetworkService *svc = [[[NetworkService alloc] init] autorelease];
-                NSError *err = nil;
-                NSArray *results = [svc tavilySearchWithQuery:text
-                                                         apiKey:tavilyKey
-                                                    maxResults:maxResults
-                                                    useTransit:useTransit
-                                                     transitURL:transitURL
-                                                         error:&err];
-                searchResults = [results retain];
+                @try {
+                    NetworkService *svc = [[[NetworkService alloc] init] autorelease];
+                    NSError *err = nil;
+                    NSArray *results = [svc tavilySearchWithQuery:text
+                                                             apiKey:tavilyKey
+                                                        maxResults:maxResults
+                                                        useTransit:useTransit
+                                                         transitURL:transitURL
+                                                             error:&err];
+                    searchResults = [results retain];
+                } @catch (NSException *e) {
+                    searchResults = nil;
+                }
                     // Safety: if search returned nil or empty, proceed without it.
                 dispatch_async(dispatch_get_main_queue(), ^{
                     // Update the search card with results.

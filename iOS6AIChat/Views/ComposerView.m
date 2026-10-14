@@ -47,14 +47,14 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         _textView = [[UITextView alloc] initWithFrame:CGRectZero];
         _textView.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
         _textView.delegate = self;
-        _textView.backgroundColor = [UIColor whiteColor];
+        _textView.backgroundColor = [iOS6Theme isDarkMode] ? [UIColor colorWithRed:0.11f green:0.11f blue:0.12f alpha:1.0f] : [UIColor whiteColor];
         _textView.editable = YES;
         _textView.userInteractionEnabled = YES;
         _textView.returnKeyType = UIReturnKeyDefault;
         _textView.textColor = [iOS6Theme textColor];
         _textView.layer.cornerRadius = 8.0f;
         _textView.layer.borderWidth = 1.0f;
-        _textView.layer.borderColor = [[UIColor lightGrayColor] CGColor];
+        _textView.layer.borderColor = [iOS6Theme isDarkMode] ? [[UIColor colorWithRed:0.3f green:0.3f blue:0.3f alpha:1.0f] CGColor] : [[UIColor lightGrayColor] CGColor];
         if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
             [_textView performSelector:@selector(setTextContainerInset:)
                              withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(6, 8, 6, 8)]];
