@@ -540,16 +540,18 @@ didFailForConversationID:(NSString *)conversationID
 - (void)_refreshLastRowForce:(BOOL)force
 {
     if ([_conversation.messages count] == 0) return;
-    // Throttle: only reload every 0.25s to reduce CPU usage during streaming.
+    // Throttle: only reload every 0.4s to reduce CPU usage during streaming.
+    // Was 0.25s but for long AI responses the Markdown re-render +
+    // boundingRect was still too slow on iOS 6 hardware. 0.4s gives the
+    // CPU more headroom while keeping the streaming feel responsive.
     static NSTimeInterval lastReload = 0;
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-    if (!force && now - lastReload < 0.25) return; // skip if less than 250ms since last reload
+    if (!force && now - lastReload < 0.4) return; // skip if less than 400ms
     lastReload = now;
 
     NSIndexPath *lastIdx = [NSIndexPath indexPathForRow:[_conversation.messages count] - 1
                                               inSection:0];
     // Use reloadRowsAtIndexPaths instead of reloadData — much cheaper.
-    // Only the streaming row needs a height + content refresh.
     @try {
         [_tableView beginUpdates];
         [_tableView reloadRowsAtIndexPaths:[NSArray arrayWithObject:lastIdx]

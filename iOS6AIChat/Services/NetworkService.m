@@ -723,14 +723,26 @@
 {
     if (!query || query.length == 0) return nil;
     NSString *endpoint;
-    if (useTransit) {
-        NSString *base = transitURL ?: @"https://ai-transit.awa.lat";
-        base = [base stringByTrimmingCharactersInSet:
-                [NSCharacterSet characterSetWithCharactersInString:@"/"]];
-        endpoint = [base stringByAppendingPathComponent:@"v1/tavily/search"];
-    } else {
-        endpoint = @"https://api.tavily.com/search";
+    // Force transit for Tavily regardless of the useTransit flag.
+    // Why: api.tavily.com uses modern TLS (Let's Encrypt ECDSA / TLS 1.3)
+    // that iOS 6's NSURLConnection cannot negotiate — direct calls fail
+    // with NSURLErrorDomain -1012 (NSURLErrorUserAuthenticationRequired,
+    // which on iOS 6 is also returned for cert trust failures when the
+    // user cancels the trust dialog). Routing through the transit server
+    // avoids this entirely because the transit server uses Python's
+    // modern `requests` library.
+    //
+    // If transitURL is explicitly empty, fall back to a hardcoded default
+    // transit URL so the feature still works for users who skipped the
+    // transit step.
+    NSString *base = transitURL;
+    if (!base || base.length == 0) {
+        base = @"https://ai-transit.awa.lat";
     }
+    base = [base stringByTrimmingCharactersInSet:
+            [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+    endpoint = [base stringByAppendingPathComponent:@"v1/tavily/search"];
+    BOOL actuallyUseTransit = YES;  // forced — see comment above
 
     if (maxResults < 1) maxResults = 1;
     if (maxResults > 8) maxResults = 8;
@@ -750,7 +762,7 @@
                                                       timeoutInterval:30.0];
     [req setHTTPMethod:@"POST"];
     [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-    if (useTransit) [req setValue:@"tavily" forHTTPHeaderField:@"X-Provider"];
+    if (actuallyUseTransit) [req setValue:@"tavily" forHTTPHeaderField:@"X-Provider"];
     [req setHTTPBody:bodyData];
 
     NSURLResponse *resp = nil;

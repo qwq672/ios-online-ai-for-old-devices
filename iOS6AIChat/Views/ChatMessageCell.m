@@ -25,6 +25,9 @@
 // NSCache auto-evicts under memory pressure so we don't blow up.
 static NSCache *gImageCache = nil;
 static NSCache *gHeightCache = nil;   // messageID@width -> NSNumber height
+static NSCache *gRenderedAttrCache = nil;  // messageID+contentLen -> NSAttributedString
+                                          // shared between cell render + height calc
+                                          // so we don't run MarkdownParser twice.
 static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 
 @interface ChatMessageCell () {
@@ -55,8 +58,46 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         [gImageCache setTotalCostLimit:32 * 1024 * 1024];  // 32 MB cap
         gHeightCache = [[NSCache alloc] init];
         [gHeightCache setCountLimit:512];
+        gRenderedAttrCache = [[NSCache alloc] init];
+        [gRenderedAttrCache setCountLimit:256];   // up to 256 rendered attrs
         gExpandedThinking = [[NSMutableDictionary alloc] init];
     });
+}
+
+// Look up or compute the rendered attributed string for a message.
+// Shared by both the cell render and the height calc — saves one
+// MarkdownParser run per streaming chunk (which was the perf killer
+// for long AI replies).
++ (NSAttributedString *)_renderedAttrForMessage:(Message *)message
+                                        width:(CGFloat)width
+{
+    [self _initializeCaches];
+    if (!message) return nil;
+    NSString *cacheKey = [NSString stringWithFormat:@"%@_%.0f_%lu",
+                          message.messageID, (double)width,
+                          (unsigned long)message.content.length];
+    NSAttributedString *cached = [gRenderedAttrCache objectForKey:cacheKey];
+    if (cached) return cached;
+    UIFont *base = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
+    // Wrap MarkdownParser in @try — some unusual content (very long
+    // lines, unusual unicode, edge-case markdown) can crash the parser
+    // during streaming. Fall back to plain attributed string.
+    NSAttributedString *attr = nil;
+    @try {
+        attr = [MarkdownParser attributedStringFromMarkdown:message.content
+                                                     baseFont:base
+                                                        width:width];
+    } @catch (NSException *e) {
+        // Fall back to plain rendering with the base font.
+        attr = [[[NSAttributedString alloc] initWithString:(message.content ?: @"")
+                                                attributes:@{NSFontAttributeName: base,
+                                                              NSForegroundColorAttributeName: [iOS6Theme textColor]}] autorelease];
+    }
+    if (attr) {
+        [gRenderedAttrCache setObject:attr forKey:cacheKey
+                              cost:(NSInteger)[message.content length]];
+    }
+    return attr;
 }
 
 + (void)_markThinkingExpanded:(NSString *)mid expanded:(BOOL)e
@@ -265,14 +306,20 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     BubbleRole role = message.isUser ? BubbleRoleUser : BubbleRoleAssistant;
     _bubble.role = role;
 
-    UIFont *base = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
-    CGFloat textWidth = self.bounds.size.width - 2 * 12 - 2 * 10 - 8;
+    // Compute text width. self.bounds may be 0 on first apply (cell
+    // created but not laid out yet) — fall back to screen width.
+    CGFloat boundsWidth = self.bounds.size.width;
+    if (boundsWidth < 100) {
+        boundsWidth = [UIScreen mainScreen].bounds.size.width;
+    }
+    CGFloat textWidth = boundsWidth - 2 * 12 - 2 * 10 - 8;
     if (textWidth < 100) textWidth = 200;
 
-    // Build the attributed string.
-    self.renderedAttr = [MarkdownParser attributedStringFromMarkdown:message.content
-                                                             baseFont:base
-                                                                width:textWidth];
+    // Build the attributed string. Use the shared cache so we don't
+    // run MarkdownParser twice per streaming chunk (cell render + height
+    // calc). This was the perf killer for long AI replies.
+    self.renderedAttr = [ChatMessageCell _renderedAttrForMessage:message
+                                                            width:textWidth];
 
     // === Deep thinking block ===
     // If the message has a non-empty `thinking` string, show a collapsible
@@ -476,10 +523,11 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     CGFloat availTextWidth = maxBubbleWidth - 2 * bubbleInnerHPad - 8;
     if (availTextWidth < 60) availTextWidth = 60;
 
-    UIFont *base = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
-    NSAttributedString *attr = [MarkdownParser attributedStringFromMarkdown:message.content
-                                                                    baseFont:base
-                                                                       width:availTextWidth];
+    // Use the SHARED rendered-attr cache — saves a MarkdownParser run
+    // per streaming chunk (which was the perf killer for long AI replies).
+    // The cache invalidates automatically when content.length changes.
+    NSAttributedString *attr = [ChatMessageCell _renderedAttrForMessage:message
+                                                                   width:availTextWidth];
     CGRect textRect = [attr boundingRectWithSize:CGSizeMake(availTextWidth, CGFLOAT_MAX)
                                          options:(NSStringDrawingUsesLineFragmentOrigin |
                                                   NSStringDrawingUsesFontLeading)

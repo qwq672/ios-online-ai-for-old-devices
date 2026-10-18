@@ -279,7 +279,7 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 {
     UIImage *image = [info objectForKey:UIImagePickerControllerOriginalImage];
     [picker dismissViewControllerAnimated:YES completion:nil];
-    if (!image) return;
+    if (!image || image.size.width <= 0 || image.size.height <= 0) return;
 
     // Compress: read max dimension from settings.
     // maxDim == 0 means "原图" (original) — skip compression entirely.
@@ -287,14 +287,25 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     if (maxDim > 0) {
         CGFloat w = image.size.width, h = image.size.height;
         if (w > maxDim || h > maxDim) {
-        CGFloat scale = (CGFloat)maxDim / MAX(w, h);
-        w = (NSInteger)(w * scale);
-        h = (NSInteger)(h * scale);
-        UIGraphicsBeginImageContextWithOptions(CGSizeMake(w, h), NO, 0.0);
-        [image drawInRect:CGRectMake(0, 0, w, h)];
-        image = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
-    }
+            CGFloat scale = (CGFloat)maxDim / MAX(w, h);
+            w = (NSInteger)(w * scale);
+            h = (NSInteger)(h * scale);
+            if (w < 1) w = 1;
+            if (h < 1) h = 1;
+            // UIGraphicsBeginImageContext must have positive dimensions.
+            // Guard against edge cases (extremely tiny source images) that
+            // could crash on iOS 6.
+            UIGraphicsBeginImageContextWithOptions(CGSizeMake(w, h), NO, 0.0);
+            @try {
+                [image drawInRect:CGRectMake(0, 0, w, h)];
+                UIImage *resized = UIGraphicsGetImageFromCurrentImageContext();
+                UIGraphicsEndImageContext();
+                if (resized) image = resized;
+            } @catch (NSException *e) {
+                UIGraphicsEndImageContext();
+                // Fall back to original image.
+            }
+        }
     }
     // Show a placeholder badge while encoding runs on bg queue.
     // For a 12MP iPhone photo, UIImageJPEGRepresentation + base64
@@ -305,26 +316,24 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     UIImage *capturedImage = [image retain];  // MRC: bg queue retains
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSData *jpegData = nil;
         @try {
-            NSData *jpegData = UIImageJPEGRepresentation(capturedImage, 0.7);
-            NSString *base64 = jpegData ? [jpegData base64String] : nil;
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [capturedImage release];
-                if (base64.length == 0) {
-                    // Encoding failed — show empty badge state.
-                    _imageBadge.hidden = YES;
-                    return;
-                }
-                NSString *dataUrl = [NSString stringWithFormat:@"data:image/jpeg;base64,%@", base64];
-                [_pendingImages addObject:dataUrl];
-                [self _refreshToggleVisuals];
-            });
+            jpegData = UIImageJPEGRepresentation(capturedImage, 0.7);
         } @catch (NSException *e) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [capturedImage release];
-                _imageBadge.hidden = YES;
-            });
+            jpegData = nil;
         }
+        NSString *base64 = jpegData ? [jpegData base64String] : nil;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [capturedImage release];
+            if (!base64 || base64.length == 0) {
+                // Encoding failed — show empty badge state.
+                _imageBadge.hidden = YES;
+                return;
+            }
+            NSString *dataUrl = [NSString stringWithFormat:@"data:image/jpeg;base64,%@", base64];
+            [_pendingImages addObject:dataUrl];
+            [self _refreshToggleVisuals];
+        });
     });
 }
 
