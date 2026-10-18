@@ -22,6 +22,7 @@
 @property (nonatomic, retain) NSURLConnection *connection;
 @property (nonatomic, retain) NSMutableData   *rawBuffer;
 @property (nonatomic, retain) NSMutableString *accumulated;
+@property (nonatomic, retain) NSMutableString *thinkingAccumulated;
 @property (nonatomic, copy)   NSString         *conversationID;
 @property (nonatomic, retain) NSError          *lastError;
 @end
@@ -30,13 +31,16 @@
 
 @synthesize connection=_connection, rawBuffer=_rawBuffer,
             accumulated=_accumulated, conversationID=_conversationID,
-            lastError=_lastError, delegate=_delegate;
+            lastError=_lastError, delegate=_delegate,
+            thinkingAccumulated=_thinkingAccumulated;
+@dynamic accumulatedThinking;
 
 - (id)init
 {
     if (self = [super init]) {
         _rawBuffer   = [[NSMutableData alloc] init];
         _accumulated = [[NSMutableString alloc] init];
+        _thinkingAccumulated = [[NSMutableString alloc] init];
     }
     return self;
 }
@@ -77,6 +81,7 @@
 
     self.conversationID = conversationID;
     [_accumulated setString:@""];
+    [_thinkingAccumulated setString:@""];
 
     // Build the messages payload in OpenAI format.
     NSMutableArray *msgs = [NSMutableArray arrayWithCapacity:[messages count]];
@@ -188,11 +193,19 @@
     [self _parseBufferedChunksForce:YES];
 
     if ([_delegate respondsToSelector:@selector(networkService:didFinishForConversationID:fullText:)]) {
+        // Also pass the accumulated thinking text via a side channel:
+        // we attach it to the message via the delegate method (delegate
+        // reads it back from the same NetworkService instance if needed).
+        // Easiest path: store it on a property the delegate can read.
         [_delegate networkService:self
              didFinishForConversationID:_conversationID
                              fullText:_accumulated];
     }
 }
+
+// Expose the accumulated thinking text so the delegate (ChatViewController)
+// can attach it to the message after the stream finishes.
+- (NSString *)accumulatedThinking { return [[_thinkingAccumulated copy] autorelease]; }
 
 - (void)connection:(NSURLConnection *)connection didFailWithError:(NSError *)error
 {
@@ -290,12 +303,41 @@
         NSDictionary *delta    = [choice0 objectForKey:@"delta"];
         if (![delta isKindOfClass:[NSDictionary class]]) continue;
 
+        // === Content (the actual answer) ===
         NSString *content = [delta objectForKey:@"content"];
-        if (![content isKindOfClass:[NSString class]] || content.length == 0) continue;
+        if ([content isKindOfClass:[NSString class]] && content.length > 0) {
+            [_accumulated appendString:content];
+        }
 
-        [_accumulated appendString:content];
+        // === Reasoning / thinking content (separate from answer) ===
+        // Different providers use different keys:
+        //   - Zhipu GLM-4 flash thinking: delta.reasoning_content
+        //   - DeepSeek: delta.reasoning_content
+        //   - OpenAI o1: delta.reasoning (non-streaming only — o1 doesn't stream reasoning)
+        //   - Anthropic-via-transit: delta.thinking
+        //   - Some custom transit: delta.thinking_content
+        NSString *reasoning = [delta objectForKey:@"reasoning_content"];
+        if (![reasoning isKindOfClass:[NSString class]] || reasoning.length == 0) {
+            reasoning = [delta objectForKey:@"reasoning"];
+        }
+        if (![reasoning isKindOfClass:[NSString class]] || reasoning.length == 0) {
+            reasoning = [delta objectForKey:@"thinking"];
+        }
+        if (![reasoning isKindOfClass:[NSString class]] || reasoning.length == 0) {
+            reasoning = [delta objectForKey:@"thinking_content"];
+        }
+        if ([reasoning isKindOfClass:[NSString class]] && reasoning.length > 0) {
+            [_thinkingAccumulated appendString:reasoning];
+            // Push incremental thinking to delegate if it implements it.
+            if ([_delegate respondsToSelector:@selector(networkService:didReceiveThinkingForConversationID:thinkingText:)]) {
+                NSString *thinkCopy = [NSString stringWithString:_thinkingAccumulated];
+                [_delegate networkService:self
+     didReceiveThinkingForConversationID:_conversationID
+                               thinkingText:thinkCopy];
+            }
+        }
 
-        // Push incremental update to delegate.
+        // Push incremental content update to delegate.
         if ([_delegate respondsToSelector:@selector(networkService:didReceiveChunkForConversationID:fullText:)]) {
             NSString *copy = [NSString stringWithString:_accumulated];
             [_delegate networkService:self
@@ -310,6 +352,7 @@
     [_connection release];
     [_rawBuffer release];
     [_accumulated release];
+    [_thinkingAccumulated release];
     [_conversationID release];
     [_lastError release];
     [super dealloc];

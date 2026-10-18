@@ -6,6 +6,10 @@
 //  Image button picks from photo library, compresses, base64 encodes.
 //  Badge shows pending image count.
 //
+//  Dark mode fix: All controls (text view, buttons) now use the theme's
+//  dark colors via [iOS6Theme inputFieldBackgroundColor] etc., instead
+//  of hardcoded UIColor whiteColor / lightGrayColor.
+//
 
 #import "ComposerView.h"
 #import "iOS6Theme.h"
@@ -47,29 +51,36 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         _textView = [[UITextView alloc] initWithFrame:CGRectZero];
         _textView.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
         _textView.delegate = self;
-        _textView.backgroundColor = [iOS6Theme isDarkMode] ? [UIColor colorWithRed:0.11f green:0.11f blue:0.12f alpha:1.0f] : [UIColor whiteColor];
+        _textView.backgroundColor = [iOS6Theme inputFieldBackgroundColor];
         _textView.editable = YES;
         _textView.userInteractionEnabled = YES;
         _textView.returnKeyType = UIReturnKeyDefault;
-        _textView.textColor = [iOS6Theme textColor];
+        _textView.textColor = [iOS6Theme inputFieldTextColor];
         _textView.layer.cornerRadius = 8.0f;
         _textView.layer.borderWidth = 1.0f;
-        _textView.layer.borderColor = [iOS6Theme isDarkMode] ? [[UIColor colorWithRed:0.3f green:0.3f blue:0.3f alpha:1.0f] CGColor] : [[UIColor lightGrayColor] CGColor];
+        _textView.layer.borderColor = [[iOS6Theme inputFieldBorderColor] CGColor];
         if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
             [_textView performSelector:@selector(setTextContainerInset:)
                              withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(6, 8, 6, 8)]];
         }
         // Done button on keyboard.
         UIToolbar *kbdToolbar = [[[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, 320, 44)] autorelease];
-        kbdToolbar.barStyle = UIBarStyleDefault;
+        kbdToolbar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
         UIBarButtonItem *flex = [[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil] autorelease];
         UIBarButtonItem *done = [[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(_keyboardDone)] autorelease];
         kbdToolbar.items = [NSArray arrayWithObjects:flex, done, nil];
         _textView.inputAccessoryView = kbdToolbar;
         [self addSubview:_textView];
 
-        // Image button.
-        _imageButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+        // Image button — use custom type so we can fully control background.
+        _imageButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _imageButton.backgroundColor = [iOS6Theme buttonBackgroundColor];
+        _imageButton.layer.cornerRadius = 6.0f;
+        _imageButton.layer.borderWidth = 1.0f;
+        _imageButton.layer.borderColor = [[iOS6Theme hairlineColor] CGColor];
+        _imageButton.layer.masksToBounds = YES;
+        [_imageButton setTitleColor:[iOS6Theme tintColor] forState:UIControlStateNormal];
+        [_imageButton setTitleColor:[iOS6Theme secondaryTextColor] forState:UIControlStateDisabled];
         [_imageButton addTarget:self action:@selector(_imageButtonTapped)
                 forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_imageButton];
@@ -86,19 +97,33 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         [self addSubview:_imageBadge];
 
         // DT button.
-        _deepThinkingButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+        _deepThinkingButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _deepThinkingButton.backgroundColor = [iOS6Theme buttonBackgroundColor];
+        _deepThinkingButton.layer.cornerRadius = 6.0f;
+        _deepThinkingButton.layer.borderWidth = 1.0f;
+        _deepThinkingButton.layer.borderColor = [[iOS6Theme hairlineColor] CGColor];
+        _deepThinkingButton.layer.masksToBounds = YES;
         [_deepThinkingButton addTarget:self action:@selector(_deepThinkingTapped)
                       forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_deepThinkingButton];
 
         // Web button.
-        _webSearchButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+        _webSearchButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _webSearchButton.backgroundColor = [iOS6Theme buttonBackgroundColor];
+        _webSearchButton.layer.cornerRadius = 6.0f;
+        _webSearchButton.layer.borderWidth = 1.0f;
+        _webSearchButton.layer.borderColor = [[iOS6Theme hairlineColor] CGColor];
+        _webSearchButton.layer.masksToBounds = YES;
         [_webSearchButton addTarget:self action:@selector(_webSearchTapped)
                     forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_webSearchButton];
 
         // Send button.
-        _sendButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+        _sendButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _sendButton.backgroundColor = [iOS6Theme tintColor];
+        _sendButton.layer.cornerRadius = 6.0f;
+        _sendButton.layer.masksToBounds = YES;
+        [_sendButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         [_sendButton addTarget:self action:@selector(_sendTapped)
               forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_sendButton];
@@ -107,13 +132,36 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 
         // Top hairline.
         UIView *hair = [[[UIView alloc] initWithFrame:CGRectMake(0, 0, self.bounds.size.width, 1)] autorelease];
-        hair.backgroundColor = [UIColor colorWithWhite:0.0f alpha:0.2f];
+        hair.backgroundColor = [iOS6Theme hairlineColor];
         hair.autoresizingMask = UIViewAutoresizingFlexibleWidth;
         [self addSubview:hair];
 
         [self _refreshToggleVisuals];
+
+        // Subscribe to theme changes so colors update live.
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(_themeChanged)
+                                                     name:@"iOS6ThemeDidChangeNotification"
+                                                   object:nil];
     }
     return self;
+}
+
+- (void)_themeChanged
+{
+    self.backgroundColor = [iOS6Theme pinstripeBackground];
+    _textView.backgroundColor = [iOS6Theme inputFieldBackgroundColor];
+    _textView.textColor = [iOS6Theme inputFieldTextColor];
+    _textView.layer.borderColor = [[iOS6Theme inputFieldBorderColor] CGColor];
+    _imageButton.backgroundColor = [iOS6Theme buttonBackgroundColor];
+    _imageButton.layer.borderColor = [[iOS6Theme hairlineColor] CGColor];
+    _deepThinkingButton.backgroundColor = [iOS6Theme buttonBackgroundColor];
+    _deepThinkingButton.layer.borderColor = [[iOS6Theme hairlineColor] CGColor];
+    _webSearchButton.backgroundColor = [iOS6Theme buttonBackgroundColor];
+    _webSearchButton.layer.borderColor = [[iOS6Theme hairlineColor] CGColor];
+    _sendButton.backgroundColor = [iOS6Theme tintColor];
+    [self _refreshToggleVisuals];
+    [self setNeedsLayout];
 }
 
 - (void)setIsStreaming:(BOOL)isStreaming
@@ -179,14 +227,23 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 {
     BOOL dt = [[self class] deepThinkingEnabled];
     BOOL ws = [[self class] webSearchEnabled];
-    UIImage *bulb = [IconDrawing imageForType:IconTypeLightbulb size:CGSizeMake(16, 16) color:dt ? [iOS6Theme tintColor] : [UIColor grayColor]];
-    UIImage *globe = [IconDrawing imageForType:IconTypeGlobe size:CGSizeMake(16, 16) color:ws ? [iOS6Theme tintColor] : [UIColor grayColor]];
-    UIImage *cam = [IconDrawing imageForType:IconTypeCamera size:CGSizeMake(16, 16) color:[UIColor grayColor]];
-    UIImage *arrow = [IconDrawing imageForType:IconTypeSendArrow size:CGSizeMake(18, 18) color:[iOS6Theme tintColor]];
+    // Active toggles get tinted background; inactive get default button bg.
+    _deepThinkingButton.backgroundColor = dt ? [iOS6Theme tintColor] : [iOS6Theme buttonBackgroundColor];
+    _webSearchButton.backgroundColor = ws ? [iOS6Theme tintColor] : [iOS6Theme buttonBackgroundColor];
+
+    UIImage *bulb = [IconDrawing imageForType:IconTypeLightbulb size:CGSizeMake(16, 16)
+                                        color:dt ? [UIColor whiteColor] : [iOS6Theme secondaryTextColor]];
+    UIImage *globe = [IconDrawing imageForType:IconTypeGlobe size:CGSizeMake(16, 16)
+                                          color:ws ? [UIColor whiteColor] : [iOS6Theme secondaryTextColor]];
+    UIImage *cam = [IconDrawing imageForType:IconTypeCamera size:CGSizeMake(16, 16)
+                                        color:[iOS6Theme secondaryTextColor]];
+    UIImage *arrow = [IconDrawing imageForType:IconTypeSendArrow size:CGSizeMake(18, 18)
+                                        color:[UIColor whiteColor]];
     [_deepThinkingButton setImage:bulb forState:UIControlStateNormal];
     [_webSearchButton setImage:globe forState:UIControlStateNormal];
     [_imageButton setImage:cam forState:UIControlStateNormal];
     [_sendButton setImage:arrow forState:UIControlStateNormal];
+
     // Check if model supports images — hide button if not.
     BOOL imgSupport = [[NSUserDefaults standardUserDefaults] boolForKey:@"modelSupportsImages"];
     _imageButton.hidden = !imgSupport;

@@ -56,6 +56,24 @@ typedef enum {
 + (UIColor *)codeBackgroundColor;
 + (UIColor *)codeBorderColor;
 
+// === Form / control colors (dark mode-aware) ===========================
+// These cover UISegmentedControl, UIStepper, UITextField, UIButton etc.
+// Without explicit colors, iOS 6 system controls fall back to light grey
+// even in dark mode — making them invisible against the dark background.
+
++ (UIColor *)inputFieldBackgroundColor;        // text field / text view fill
++ (UIColor *)inputFieldBorderColor;            // text field / text view border
++ (UIColor *)inputFieldTextColor;              // text in input fields
++ (UIColor *)inputFieldPlaceholderColor;       // placeholder grey
++ (UIColor *)controlBackgroundColor;           // segmented / stepper background
++ (UIColor *)controlSelectedBackgroundColor;   // selected segment fill
++ (UIColor *)controlNormalBackgroundColor;     // unselected segment fill
++ (UIColor *)hairlineColor;                    // thin separator line
++ (UIColor *)buttonBackgroundColor;            // custom rounded button bg
++ (UIColor *)buttonSelectedBackgroundColor;    // pressed/selected state
++ (UIColor *)thinkingBackgroundColor;          // reasoning block bg (subtle)
++ (UIColor *)thinkingBorderColor;              // reasoning block border
+
 // === Drawing helpers ===================================================
 
 + (void)drawLinearGradientInRect:(CGRect)rect

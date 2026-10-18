@@ -12,6 +12,17 @@
 //     - Manually animate the bottom inset to keep the composer above keyboard
 //     - Auto-scroll the table to the latest message
 //
+//  v261018 optimizations:
+//     - Performance: use reloadRowsAtIndexPaths on just the streaming row
+//       instead of reloadData during streaming. Throttle to 250ms.
+//     - Deep thinking: capture reasoning_content via the new delegate
+//       method and attach it to the assistant Message's `thinking` field.
+//     - Web search: don't show search results AS the assistant message —
+//       instead show a small status indicator above the input bar and
+//       inject results as a system message that the AI sees (user can't).
+//       This keeps the assistant placeholder clean ("…") and prevents
+//       the search-results dump from being saved as the AI's answer.
+//
 
 #import "ChatViewController.h"
 #import "iOS6Theme.h"
@@ -28,13 +39,16 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 @interface ChatViewController ()
 @property (nonatomic, retain) ComposerView *composer;
 @property (nonatomic, assign) CGFloat lastKeyboardHeight;
+@property (nonatomic, retain) UIView *searchStatusView;
+@property (nonatomic, retain) UILabel *searchStatusLabel;
 @end
 
 @implementation ChatViewController
 
 @synthesize tableView=_tableView, conversation=_conversation,
             networkService=_networkService, composer=_composer,
-            lastKeyboardHeight=_lastKeyboardHeight;
+            lastKeyboardHeight=_lastKeyboardHeight,
+            searchStatusView=_searchStatusView, searchStatusLabel=_searchStatusLabel;
 
 - (id)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil
 {
@@ -48,8 +62,6 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                                                  selector:@selector(_onLoadConversation:)
                                                      name:ChatViewControllerDidLoadConversationNotification
                                                    object:nil];
-        // NOTE: We use the delegate method only — the notification would cause
-        // duplicate sends (both delegate AND notification fire = message sent twice).
     }
     return self;
 }
@@ -61,6 +73,8 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     [_conversation release];
     [_networkService release];
     [_composer release];
+    [_searchStatusView release];
+    [_searchStatusLabel release];
     [super dealloc];
 }
 
@@ -85,6 +99,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     if ([_tableView respondsToSelector:@selector(setEstimatedRowHeight:)]) {
         [_tableView performSelector:@selector(setEstimatedRowHeight:) withObject:@(60)];
     }
+    // Set a sensible rowHeight hint for the table — reduces the number of
+    // height-for-row calls during fast scrolling.
+    _tableView.rowHeight = 80;
     [self.view addSubview:_tableView];
 
     // Composer initial height = row1 (34) + small gap + min row2 (44) + pad (6) ≈ 86.
@@ -97,6 +114,24 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     _composer.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
                                     UIViewAutoresizingFlexibleTopMargin);
     [self.view addSubview:_composer];
+
+    // Search status view — small banner above composer, hidden by default.
+    CGFloat statusH = 24.0f;
+    _searchStatusView = [[UIView alloc] initWithFrame:CGRectMake(0,
+                                                                  self.view.bounds.size.height - composerInitH - statusH,
+                                                                  self.view.bounds.size.width, statusH)];
+    _searchStatusView.backgroundColor = [iOS6Theme thinkingBackgroundColor];
+    _searchStatusView.hidden = YES;
+    _searchStatusView.autoresizingMask = (UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin);
+    [self.view addSubview:_searchStatusView];
+
+    _searchStatusLabel = [[UILabel alloc] initWithFrame:CGRectMake(8, 0,
+                                                                    self.view.bounds.size.width - 16, statusH)];
+    _searchStatusLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
+    _searchStatusLabel.textColor = [iOS6Theme secondaryTextColor];
+    _searchStatusLabel.backgroundColor = [UIColor clearColor];
+    _searchStatusLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [_searchStatusView addSubview:_searchStatusLabel];
 
     // New session if none set.
     if (!_conversation) {
@@ -119,30 +154,46 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
     // Keyboard observers.
     [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(_keyboardWillShow:)
+                                                 selector:@selector(_keyboardWillShow:)
                                                  name:UIKeyboardWillShowNotification
                                                object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(_keyboardWillHide:)
+                                                 selector:@selector(_keyboardWillHide:)
                                                  name:UIKeyboardWillHideNotification
                                                object:nil];
+
+    // Theme change observer.
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(_themeChanged)
+                                                 name:@"iOS6ThemeDidChangeNotification"
+                                                   object:nil];
 }
 
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
-    // Re-apply theme in case it changed in Settings.
-    self.view.backgroundColor = [iOS6Theme pinstripeBackground];
-    _tableView.backgroundColor = [UIColor clearColor];
-    _composer.backgroundColor = [iOS6Theme pinstripeBackground];
+    [self _applyTheme];
     // Refresh toggle button icons.
     if ([_composer respondsToSelector:@selector(_refreshToggleVisuals)]) {
         [_composer performSelector:@selector(_refreshToggleVisuals)];
     }
-    // Tab bar icons are set once at launch — do NOT re-style here
-    // (styleNavigationController resets tabBarItem to system icon)
+    [self _reload];
+}
+
+- (void)_applyTheme
+{
+    self.view.backgroundColor = [iOS6Theme pinstripeBackground];
+    _tableView.backgroundColor = [UIColor clearColor];
+    _composer.backgroundColor = [iOS6Theme pinstripeBackground];
+    _searchStatusView.backgroundColor = [iOS6Theme thinkingBackgroundColor];
+    _searchStatusLabel.textColor = [iOS6Theme secondaryTextColor];
+}
+
+- (void)_themeChanged
+{
+    [self _applyTheme];
+    // Clear the height cache so cells recompute with new font size.
     [_tableView reloadData];
-    [self _scrollToBottomAnimated:NO];
 }
 
 #pragma mark - Conversation management
@@ -182,9 +233,13 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     if ([_conversation.messages count] == 0) return;
     NSIndexPath *lastIdx = [NSIndexPath indexPathForRow:[_conversation.messages count] - 1
                                               inSection:0];
-    [_tableView scrollToRowAtIndexPath:lastIdx
-                      atScrollPosition:UITableViewScrollPositionBottom
-                              animated:animated];
+    @try {
+        [_tableView scrollToRowAtIndexPath:lastIdx
+                          atScrollPosition:UITableViewScrollPositionBottom
+                                  animated:animated];
+    } @catch (NSException *e) {
+        // Sometimes the row count is stale — silently ignore.
+    }
 }
 
 - (void)_dismissKeyboard
@@ -206,20 +261,22 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     [self _adjustForComposerHeight];
 }
 
-// _onComposerSend: removed — using delegate method only to avoid duplicate sends.
-
 - (void)_adjustForComposerHeight
 {
     CGFloat composerH = _composer.frame.size.height;
+    CGFloat statusH = _searchStatusView.hidden ? 0 : _searchStatusView.frame.size.height;
     CGRect tableFrame = _tableView.frame;
     tableFrame.origin.y = 0;
-    tableFrame.size.height = self.view.bounds.size.height - composerH;
-    [UIView animateWithDuration:0.25 animations:^{
+    tableFrame.size.height = self.view.bounds.size.height - composerH - statusH;
+    [UIView animateWithDuration:0.2 animations:^{
         _tableView.frame = tableFrame;
         _composer.frame = CGRectMake(0,
                                       self.view.bounds.size.height - composerH,
                                       self.view.bounds.size.width,
                                       composerH);
+        _searchStatusView.frame = CGRectMake(0,
+                                             self.view.bounds.size.height - composerH - statusH,
+                                             self.view.bounds.size.width, statusH);
     }];
     [self _scrollToBottomAnimated:YES];
 }
@@ -270,36 +327,30 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                               ?: @"You are a helpful assistant.";
 
     // If deep thinking is on, augment the system prompt with a chain-of-
-    // thought instruction.
+    // thought instruction. The model's native reasoning_content field is
+    // where thinking should go (we parse that separately).
     if (deepThinking) {
-        // Deep thinking: just ask the model to think step by step.
-    // Don't ask for "Reasoning:" / "Answer:" prefixes — those would appear
-    // in the content and confuse the parser. The model's native
-    // reasoning_content field is where thinking should go.
-    systemPrompt = [NSString stringWithFormat:
-            @"%@ Think step by step before answering the question.",
+        systemPrompt = [NSString stringWithFormat:
+            @"%@ Think step by step before answering. Reasoning goes in reasoning_content, not in the answer.",
             systemPrompt];
     }
 
-    // If web search is on, do a Tavily /search first (sync, on background
-    // queue) and inject the results as an additional system message.
-    __block NSArray *searchResults = nil;
+    // If web search is on, fire Tavily search in the background and
+    // inject results as a one-shot system message visible ONLY to the
+    // AI — the user just sees a small "Searching..." status banner
+    // above the composer. This avoids polluting the assistant message
+    // bubble with raw search result dumps.
     if (webSearch) {
         NSString *tavilyKey = [settings objectForKey:SettingsKeyTavilyAPIKey];
         NSInteger maxResults = [[settings objectForKey:SettingsKeyTavilyMaxResults] integerValue];
         if (maxResults < 1) maxResults = 1;
         if (maxResults > 8) maxResults = 8;
         if (tavilyKey.length > 0) {
-            // Show a visible search card and run Tavily search.
-            // If search fails, we still proceed to AI — search is optional.
-            assistantMsg.content = [NSString stringWithFormat:@"🔍 正在搜索: \"%@\"\n\n请稍候…", text];
-            [self _refreshLastRow];
+            // Show the search status banner.
+            [self _showSearchStatus:[NSString stringWithFormat:@"🔍 搜索: \"%@\"…", text]];
 
-            // Run Tavily search on background queue, then dispatch back to
-            // main to update the search card and launch the AI stream.
-            // Use a background queue with a 15-second timeout.
-            // If search fails or times out, proceed without search results.
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                __block NSArray *searchResults = nil;
                 @try {
                     NetworkService *svc = [[[NetworkService alloc] init] autorelease];
                     NSError *err = nil;
@@ -313,98 +364,76 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                 } @catch (NSException *e) {
                     searchResults = nil;
                 }
-                    // Safety: if search returned nil or empty, proceed without it.
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    // Update the search card with results.
-                    NSMutableString *cardContent = [NSMutableString string];
-                    [cardContent appendFormat:@"✓ 已搜索: \"%@\" (%d 条结果)\n\n", text, (int)[results count]];
-                    NSInteger ri = 1;
-                    for (NSDictionary *r in results) {
-                        [cardContent appendFormat:@"%d. %@\n   URL: %@\n   %@\n\n",
-                            (int)ri++,
-                            [r objectForKey:@"title"],
-                            [r objectForKey:@"url"],
-                            [r objectForKey:@"content"]];
-                    }
-                    assistantMsg.content = cardContent;
-                    [self _refreshLastRow];
-                    // Append a NEW assistant placeholder for the AI response.
-                    Message *aiMsg = [Message messageWithRole:MessageRoleAssistant content:@"…"];
-                    [_conversation appendMessage:aiMsg];
-                    [[ConversationStore sharedStore] saveConversation:_conversation];
-                    [_tableView reloadData];
-                    [self _scrollToBottomAnimated:YES];
-
-                    // Inject search results into the conversation as a system
-                    // message just before the AI call. We do NOT persist
-                    // this synthesized system message — it's only for the
-                    // API request.
-                    NSMutableArray *msgsForAPI = [NSMutableArray array];
-                    if (systemPrompt.length > 0) {
-                        [msgsForAPI addObject:[Message messageWithRole:MessageRoleSystem
-                                                                content:systemPrompt]];
-                    }
+                    [self _hideSearchStatus];
                     if (searchResults && [searchResults count] > 0) {
-                        NSMutableString *ctx = [NSMutableString string];
-                        [ctx appendString:@"Web search results for: "];
-                        [ctx appendString:text];
-                        [ctx appendString:@"\n\n"];
-                        NSInteger i = 1;
-                        for (NSDictionary *r in searchResults) {
-                            [ctx appendFormat:@"%d. %@\n   URL: %@\n   %@\n\n",
-                                (int)i++,
-                                [r objectForKey:@"title"],
-                                [r objectForKey:@"url"],
-                                [r objectForKey:@"content"]];
-                        }
-                        [ctx appendString:@"Use these results as context when answering the user's question."];
-                        [msgsForAPI addObject:[Message messageWithRole:MessageRoleSystem content:ctx]];
+                        [self _launchAIStreamWithMessages:nil
+                                              systemPrompt:systemPrompt
+                                            useTransit:useTransit
+                                            transitURL:transitURL
+                                              baseURL:baseURL
+                                              provider:provider
+                                               apiKey:apiKey
+                                                model:model
+                                          temperature:temperature
+                                      conversationID:_conversation.conversationID
+                                        assistantMsg:assistantMsg
+                                        searchResults:searchResults];
+                        [searchResults release];
+                    } else {
+                        // No results or failed — proceed without search.
+                        [self _launchAIStreamWithMessages:nil
+                                              systemPrompt:systemPrompt
+                                            useTransit:useTransit
+                                            transitURL:transitURL
+                                              baseURL:baseURL
+                                              provider:provider
+                                               apiKey:apiKey
+                                                model:model
+                                          temperature:temperature
+                                      conversationID:_conversation.conversationID
+                                        assistantMsg:assistantMsg
+                                        searchResults:nil];
                     }
-                    // Now add the actual conversation messages, EXCLUDING the placeholder.
-                    for (Message *m in _conversation.messages) {
-                        if (m == assistantMsg) continue;
-                        [msgsForAPI addObject:m];
-                    }
-                    [self _launchAPIStreamWithMessages:msgsForAPI
-                                              useTransit:useTransit
-                                              transitURL:transitURL
-                                                baseURL:baseURL
-                                                provider:provider
-                                                 apiKey:apiKey
-                                                  model:model
-                                            temperature:temperature
-                                          conversationID:_conversation.conversationID
-                                       assistantMsg:assistantMsg];
-                    [searchResults release];
                 });
             });
-            return; // Wait for the async call to complete.
+            return;
         }
     }
 
     // No web search — proceed directly.
-    NSMutableArray *msgsForAPI = [NSMutableArray array];
-    if (systemPrompt.length > 0) {
-        [msgsForAPI addObject:[Message messageWithRole:MessageRoleSystem content:systemPrompt]];
-    }
-    for (Message *m in _conversation.messages) {
-        if (m == assistantMsg) continue;
-        [msgsForAPI addObject:m];
-    }
-    [self _launchAPIStreamWithMessages:msgsForAPI
-                              useTransit:useTransit
-                              transitURL:transitURL
-                                baseURL:baseURL
-                                provider:provider
-                                 apiKey:apiKey
-                                  model:model
-                            temperature:temperature
-                          conversationID:_conversation.conversationID
-                            assistantMsg:assistantMsg];
+    [self _launchAIStreamWithMessages:nil
+                          systemPrompt:systemPrompt
+                            useTransit:useTransit
+                            transitURL:transitURL
+                              baseURL:baseURL
+                              provider:provider
+                               apiKey:apiKey
+                                model:model
+                          temperature:temperature
+                      conversationID:_conversation.conversationID
+                        assistantMsg:assistantMsg
+                        searchResults:nil];
+}
+
+- (void)_showSearchStatus:(NSString *)msg
+{
+    _searchStatusLabel.text = msg;
+    _searchStatusView.hidden = NO;
+    [self _adjustForComposerHeight];
+}
+
+- (void)_hideSearchStatus
+{
+    _searchStatusView.hidden = YES;
+    [self _adjustForComposerHeight];
 }
 
 // Refactored helper — kicks off the streaming API call.
-- (void)_launchAPIStreamWithMessages:(NSArray *)msgsForAPI
+// If searchResults is non-nil, inject them as a one-shot system message
+// visible only to the AI (not persisted to the conversation).
+- (void)_launchAIStreamWithMessages:(NSArray *)msgsForAPI
+                        systemPrompt:(NSString *)systemPrompt
                           useTransit:(BOOL)useTransit
                           transitURL:(NSString *)transitURL
                             baseURL:(NSString *)baseURL
@@ -414,7 +443,31 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                         temperature:(CGFloat)temperature
                       conversationID:(NSString *)conversationID
                         assistantMsg:(Message *)assistantMsg
+                        searchResults:(NSArray *)searchResults
 {
+    // Build the messages array fresh.
+    NSMutableArray *messages = [NSMutableArray array];
+    if (systemPrompt.length > 0) {
+        [messages addObject:[Message messageWithRole:MessageRoleSystem content:systemPrompt]];
+    }
+    if (searchResults && [searchResults count] > 0) {
+        NSMutableString *ctx = [NSMutableString string];
+        [ctx appendString:@"The following are recent web search results. Use them as authoritative context when answering the user's question. Always cite the source URL inline.\n\n"];
+        NSInteger i = 1;
+        for (NSDictionary *r in searchResults) {
+            [ctx appendFormat:@"%d. %@\n   URL: %@\n   %@\n\n",
+                (int)i++,
+                [r objectForKey:@"title"],
+                [r objectForKey:@"url"],
+                [r objectForKey:@"content"]];
+        }
+        [messages addObject:[Message messageWithRole:MessageRoleSystem content:ctx]];
+    }
+    for (Message *m in _conversation.messages) {
+        if (m == assistantMsg) continue;
+        [messages addObject:m];
+    }
+    _networkService.thinkingEnabled = YES; // always parse reasoning if present
     [_networkService streamChatWithUseTransit:useTransit
                                     transitURL:transitURL
                                       baseURL:baseURL
@@ -422,7 +475,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                                        apiKey:apiKey
                                         model:model
                                   temperature:temperature
-                                     messages:msgsForAPI
+                                     messages:messages
                                conversationID:conversationID];
 }
 
@@ -439,13 +492,35 @@ didReceiveChunkForConversationID:(NSString *)conversationID
 }
 
 - (void)networkService:(NetworkService *)svc
+didReceiveThinkingForConversationID:(NSString *)conversationID
+                  thinkingText:(NSString *)thinkingText
+{
+    if (![conversationID isEqualToString:_conversation.conversationID]) return;
+    if ([_conversation.messages count] == 0) return;
+    Message *lastMsg = [_conversation.messages objectAtIndex:[_conversation.messages count] - 1];
+    if ([lastMsg isAssistant]) {
+        lastMsg.thinking = thinkingText;
+        // Don't save to disk on every chunk — only on finish.
+        [self _refreshLastRow];
+    }
+}
+
+- (void)networkService:(NetworkService *)svc
 didFinishForConversationID:(NSString *)conversationID
                 fullText:(NSString *)fullText
 {
     if (![conversationID isEqualToString:_conversation.conversationID]) return;
     [_conversation updateLastAssistantMessageContent:fullText ?: @""];
+    // Attach accumulated thinking text to the message — preserves it
+    // across launches / conversation switches.
+    if ([_conversation.messages count] > 0) {
+        Message *last = [_conversation.messages objectAtIndex:[_conversation.messages count] - 1];
+        if ([last isAssistant]) {
+            last.thinking = [svc accumulatedThinking];
+        }
+    }
     [[ConversationStore sharedStore] saveConversation:_conversation];
-    [self _refreshLastRow];
+    [self _refreshLastRowForce:YES];
     _composer.isStreaming = NO;
 }
 
@@ -458,22 +533,38 @@ didFailForConversationID:(NSString *)conversationID
                          error.localizedDescription ?: @"网络错误"];
     [_conversation updateLastAssistantMessageContent:errText];
     [[ConversationStore sharedStore] saveConversation:_conversation];
-    [self _refreshLastRow];
+    [self _refreshLastRowForce:YES];
     _composer.isStreaming = NO;
+    [self _hideSearchStatus];
 }
 
 - (void)_refreshLastRow
 {
+    [self _refreshLastRowForce:NO];
+}
+
+- (void)_refreshLastRowForce:(BOOL)force
+{
     if ([_conversation.messages count] == 0) return;
-    // Throttle: only reload every 0.3s to reduce CPU usage during streaming.
+    // Throttle: only reload every 0.25s to reduce CPU usage during streaming.
     static NSTimeInterval lastReload = 0;
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-    if (now - lastReload < 0.3) return; // skip if less than 300ms since last reload
+    if (!force && now - lastReload < 0.25) return; // skip if less than 250ms since last reload
     lastReload = now;
 
     NSIndexPath *lastIdx = [NSIndexPath indexPathForRow:[_conversation.messages count] - 1
                                               inSection:0];
-    [_tableView reloadData];
+    // Use reloadRowsAtIndexPaths instead of reloadData — much cheaper.
+    // Only the streaming row needs a height + content refresh.
+    @try {
+        [_tableView beginUpdates];
+        [_tableView reloadRowsAtIndexPaths:[NSArray arrayWithObject:lastIdx]
+                        withRowAnimation:UITableViewRowAnimationNone];
+        [_tableView endUpdates];
+    } @catch (NSException *e) {
+        // Fall back to full reload if batch update fails.
+        [_tableView reloadData];
+    }
     [self _scrollToBottomAnimated:YES];
 }
 

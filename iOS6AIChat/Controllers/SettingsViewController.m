@@ -295,6 +295,11 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath
 {
+    NSInteger logical = [self _logicalSectionForDisplayed:indexPath.section];
+    if (logical == kSectionAbout && indexPath.row == 2) {
+        // Version row — taller because the string is longer.
+        return kRowH + 10;
+    }
     return kRowH;
 }
 
@@ -431,8 +436,16 @@ titleForFooterInSection:(NSInteger)section
     f.keyboardType = kbdType;
     f.secureTextEntry = secure;
     f.delegate = self;
-    f.backgroundColor = [iOS6Theme isDarkMode] ? [UIColor colorWithRed:0.11f green:0.11f blue:0.12f alpha:1.0f] : [UIColor whiteColor];
-    f.textColor = [iOS6Theme textColor];
+    // Use theme colors so dark mode actually shows the input text.
+    f.backgroundColor = [iOS6Theme inputFieldBackgroundColor];
+    f.textColor = [iOS6Theme inputFieldTextColor];
+    // iOS 6 doesn't expose a public placeholder color property on
+    // UITextField. We can't fix the placeholder being grey-on-grey, but
+    // we can set keyboardAppearance to dark so the keyboard itself
+    // matches.
+    if ([iOS6Theme isDarkMode] && [f respondsToSelector:@selector(setKeyboardAppearance:)]) {
+        [f setKeyboardAppearance:UIKeyboardAppearanceAlert];
+    }
     f.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleLeftMargin;
     // Store the NSUserDefaults key on the field itself so _persistField
     // can look it up. iOS 6+ has restorationIdentifier (a string property
@@ -444,6 +457,31 @@ titleForFooterInSection:(NSInteger)section
     forControlEvents:UIControlEventEditingChanged];
     [self _registerField:f forKey:key];
     return [f autorelease];
+}
+
+// Helper: build a UISegmentedControl styled for dark mode.
+// On iOS 6, UISegmentedControl doesn't auto-darken. We use tintColor
+// (iOS 6+) to set the background, but selected segment text is still
+// dark. We also override segment text colors per-state.
+- (UISegmentedControl *)_themedSegmentedControlWithItems:(NSArray *)items
+{
+    UISegmentedControl *seg = [[[UISegmentedControl alloc] initWithItems:items] autorelease];
+    // tintColor on iOS 6 fills the unselected background. Choose a
+    // visible color in dark mode.
+    seg.tintColor = [iOS6Theme controlBackgroundColor];
+    // Set text color per state — selected = white on tint, normal = textColor.
+    UIColor *normalColor = [iOS6Theme textColor];
+    UIColor *selectedColor = [UIColor whiteColor];
+    for (NSUInteger i = 0; i < [items count]; i++) {
+        [seg setTitleTextAttributes:@{NSForegroundColorAttributeName: normalColor,
+                                       NSFontAttributeName: [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]]}
+                            forState:UIControlStateNormal
+                        forSegmentAtIndex:i];
+        [seg setTitleTextAttributes:@{NSForegroundColorAttributeName: selectedColor}
+                            forState:UIControlStateSelected
+                        forSegmentAtIndex:i];
+    }
+    return seg;
 }
 
 - (void)_registerField:(UITextField *)f forKey:(NSString *)key
@@ -475,7 +513,7 @@ titleForFooterInSection:(NSInteger)section
         // Font size segmented control.
     [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"字号", nil)]];
     NSArray *items = @[@"S", @"M", @"L", @"XL", @"XXL"];
-    UISegmentedControl *seg = [[[UISegmentedControl alloc] initWithItems:items] autorelease];
+    UISegmentedControl *seg = [self _themedSegmentedControlWithItems:items];
     seg.selectedSegmentIndex = (NSInteger)[iOS6Theme fontSize];
     [seg addTarget:self action:@selector(_fontSizeChanged:)
      forControlEvents:UIControlEventValueChanged];
@@ -489,7 +527,7 @@ titleForFooterInSection:(NSInteger)section
         // Image compression setting.
         [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"图片压缩", nil)]];
         NSArray *imgItems = @[@"原图", @"1024", @"2048"];
-        UISegmentedControl *imgSeg = [[[UISegmentedControl alloc] initWithItems:imgItems] autorelease];
+        UISegmentedControl *imgSeg = [self _themedSegmentedControlWithItems:imgItems];
         NSInteger maxDim = [[NSUserDefaults standardUserDefaults] integerForKey:@"imageMaxDim"];
         if (maxDim == 0) imgSeg.selectedSegmentIndex = 0;
         else if (maxDim <= 1024) imgSeg.selectedSegmentIndex = 1;
@@ -537,7 +575,7 @@ titleForFooterInSection:(NSInteger)section
     }
     // row 2: Provider segmented control.
     [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"Provider", nil)]];
-    UISegmentedControl *seg = [[[UISegmentedControl alloc] initWithItems:@[@"OpenAI", @"智谱", @"Ollama"]] autorelease];
+    UISegmentedControl *seg = [self _themedSegmentedControlWithItems:@[@"OpenAI", @"智谱", @"Ollama"]];
     NSInteger provIdx = 0;
     if ([_provider isEqualToString:ProviderIDZhipu]) provIdx = 1;
     else if ([_provider isEqualToString:ProviderIDOllama]) provIdx = 2;
@@ -591,9 +629,13 @@ titleForFooterInSection:(NSInteger)section
         tf.text = [settings objectForKey:SettingsKeyModel];
         [cell.contentView addSubview:tf];
 
-        UIButton *btn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+        UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
         [btn setTitle:NSLocalizedString(@"搜索", nil) forState:UIControlStateNormal];
+        [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         btn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
+        btn.backgroundColor = [iOS6Theme tintColor];
+        btn.layer.cornerRadius = 6.0f;
+        btn.layer.masksToBounds = YES;
         btn.frame = CGRectMake(f.size.width - searchBtnW - kPad, (kRowH - 28) / 2, searchBtnW, 28);
         btn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
         [btn addTarget:self action:@selector(_searchAvailableModels)
@@ -669,6 +711,9 @@ titleForFooterInSection:(NSInteger)section
     sp.minimumValue = 1;
     sp.maximumValue = 8;
     sp.value = max;
+    // Dark mode tint — on iOS 6 the stepper background is hard to recolor
+    // but tintColor at least affects the +/- chevron color.
+    sp.tintColor = [iOS6Theme tintColor];
     [sp addTarget:self action:@selector(_tavilyMaxChanged:)
      forControlEvents:UIControlEventValueChanged];
     sp.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
@@ -708,10 +753,13 @@ titleForFooterInSection:(NSInteger)section
         NSLocalizedString(@"GitHub", nil),
         NSLocalizedString(@"License", nil)
     ];
+    NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"261018";
+    NSString *build   = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"4"];
+    NSString *versionString = [NSString stringWithFormat:@"v%@ (build %@, beta)", version, build];
     NSArray *values = @[
         @"qwq672",
         @"b167963232@163.com",
-        [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"261013",
+        versionString,
         @"qwq672/ios-online-ai-for-old-devices",
         @"MIT"
     ];
@@ -724,9 +772,10 @@ titleForFooterInSection:(NSInteger)section
     val.backgroundColor = [UIColor clearColor];
     val.textAlignment = NSTextAlignmentRight;
     val.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    val.numberOfLines = 2;  // version string is longer now
     CGRect f = cell.contentView.bounds;
-    val.frame = CGRectMake(kPad + kLabelWidth + 8, (kRowH - 20) / 2,
-                            f.size.width - kPad - kLabelWidth - 8 - kPad - 8, 20);
+    val.frame = CGRectMake(kPad + kLabelWidth + 8, (kRowH - 30) / 2,
+                            f.size.width - kPad - kLabelWidth - 8 - kPad - 8, 30);
     [cell.contentView addSubview:val];
     [val release];
     return cell;

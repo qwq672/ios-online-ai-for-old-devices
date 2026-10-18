@@ -61,6 +61,35 @@ static NSString * const kHexDarkTextSecondary   = @"#8E8E93";  // iOS grey
 static NSString * const kHexDarkCodeBG          = @"#2C2C2E";  // dark grey
 static NSString * const kHexDarkCodeBorder      = @"#48484A";
 
+// Additional dark/light form-control colors for dark mode UI fix.
+// Light: standard iOS form controls (white bg / light grey)
+// Dark:  visible dark fill so text and controls aren't washed out.
+static NSString * const kHexLightInputBG         = @"#FFFFFF";
+static NSString * const kHexLightInputBorder     = @"#C8C8C8";
+static NSString * const kHexLightInputText       = @"#000000";
+static NSString * const kHexLightPlaceholder      = @"#999999";
+static NSString * const kHexLightControlBG       = @"#EFEFEF";
+static NSString * const kHexLightControlSel      = @"#FFFFFF";
+static NSString * const kHexLightControlNorm     = @"#E0E0E0";
+static NSString * const kHexLightHairline        = @"#D0D0D0";
+static NSString * const kHexLightButtonBG        = @"#FFFFFF";
+static NSString * const kHexLightButtonSel       = @"#D0D0D0";
+static NSString * const kHexLightThinkingBG      = @"#F7F7F7";
+static NSString * const kHexLightThinkingBorder  = @"#C8C8C8";
+
+static NSString * const kHexDarkInputBG          = @"#2C2C2E";   // mid-dark fill — visible against #1C1C1E bg
+static NSString * const kHexDarkInputBorder      = @"#48484A";
+static NSString * const kHexDarkInputText        = @"#FFFFFF";
+static NSString * const kHexDarkPlaceholder       = @"#8E8E93";
+static NSString * const kHexDarkControlBG        = @"#1C1C1E";
+static NSString * const kHexDarkControlSel        = @"#48484A";
+static NSString * const kHexDarkControlNorm      = @"#2C2C2E";
+static NSString * const kHexDarkHairline         = @"#48484A";
+static NSString * const kHexDarkButtonBG         = @"#2C2C2E";
+static NSString * const kHexDarkButtonSel        = @"#48484A";
+static NSString * const kHexDarkThinkingBG       = @"#2C2C2E";
+static NSString * const kHexDarkThinkingBorder   = @"#48484A";
+
 @implementation iOS6Theme
 
 #pragma mark - Mode toggles
@@ -136,6 +165,21 @@ static NSString * const kHexDarkCodeBorder      = @"#48484A";
 + (UIColor *)secondaryTextColor    { return [self _colorLight:kHexLightTextSecondary   dark:kHexDarkTextSecondary]; }
 + (UIColor *)codeBackgroundColor   { return [self _colorLight:kHexLightCodeBG          dark:kHexDarkCodeBG]; }
 + (UIColor *)codeBorderColor       { return [self _colorLight:kHexLightCodeBorder     dark:kHexDarkCodeBorder]; }
+
+#pragma mark - Form control colors
+
++ (UIColor *)inputFieldBackgroundColor  { return [self _colorLight:kHexLightInputBG       dark:kHexDarkInputBG]; }
++ (UIColor *)inputFieldBorderColor      { return [self _colorLight:kHexLightInputBorder  dark:kHexDarkInputBorder]; }
++ (UIColor *)inputFieldTextColor        { return [self _colorLight:kHexLightInputText    dark:kHexDarkInputText]; }
++ (UIColor *)inputFieldPlaceholderColor { return [self _colorLight:kHexLightPlaceholder   dark:kHexDarkPlaceholder]; }
++ (UIColor *)controlBackgroundColor      { return [self _colorLight:kHexLightControlBG   dark:kHexDarkControlBG]; }
++ (UIColor *)controlSelectedBackgroundColor { return [self _colorLight:kHexLightControlSel dark:kHexDarkControlSel]; }
++ (UIColor *)controlNormalBackgroundColor  { return [self _colorLight:kHexLightControlNorm dark:kHexDarkControlNorm]; }
++ (UIColor *)hairlineColor              { return [self _colorLight:kHexLightHairline     dark:kHexDarkHairline]; }
++ (UIColor *)buttonBackgroundColor      { return [self _colorLight:kHexLightButtonBG     dark:kHexDarkButtonBG]; }
++ (UIColor *)buttonSelectedBackgroundColor { return [self _colorLight:kHexLightButtonSel dark:kHexDarkButtonSel]; }
++ (UIColor *)thinkingBackgroundColor    { return [self _colorLight:kHexLightThinkingBG   dark:kHexDarkThinkingBG]; }
++ (UIColor *)thinkingBorderColor        { return [self _colorLight:kHexLightThinkingBorder dark:kHexDarkThinkingBorder]; }
 
 #pragma mark - Hex / colour helpers
 

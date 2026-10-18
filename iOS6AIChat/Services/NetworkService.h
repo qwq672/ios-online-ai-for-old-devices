@@ -43,6 +43,11 @@
 // Cancel an in-flight stream.
 - (void)cancel;
 
+// Read the accumulated reasoning/thinking text after the stream finishes
+// (or any time during the stream). The delegate can call this to attach
+// thinking to a Message object.
+@property (nonatomic, readonly) NSString *accumulatedThinking;
+
 // ============================================================
 // Tavily web search (sync — fires before sending to AI model)
 // ============================================================

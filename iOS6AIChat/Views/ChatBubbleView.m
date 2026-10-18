@@ -38,6 +38,12 @@
 
 - (void)_applyRoleColors
 {
+    // Release the old colors before retaining the new ones — otherwise
+    // every setRole: call leaks a UIColor pair. This was a long-standing
+    // leak when scrolling through many messages.
+    [_fillColor release];
+    [_borderColor release];
+    [_shadowColor release];
     if (_role == BubbleRoleUser) {
         _fillColor = [[iOS6Theme bubbleUserColor] retain];
         _borderColor = [[iOS6Theme bubbleUserBorderColor] retain];
