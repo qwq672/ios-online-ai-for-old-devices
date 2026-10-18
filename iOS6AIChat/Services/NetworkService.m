@@ -184,23 +184,35 @@
     }
 
     // Build the messages payload in OpenAI format.
+    // messages array may contain Message objects (user/system/assistant)
+    // OR NSDictionary objects (raw tool_calls assistant message and
+    // tool role results from multi-turn tool use). We must handle both
+    // — blindly calling isUser on an NSDictionary crashes (unrecognized
+    // selector). This was bug1: search crashed during "正在执行搜索".
     NSMutableArray *msgs = [NSMutableArray arrayWithCapacity:[messages count]];
-    for (Message *m in messages) {
-        NSString *role = m.isUser      ? @"user" :
-                         m.isAssistant ? @"assistant" :
-                                         @"system";
-        // Multi-modal: if message has images, send array content format.
-        if (m.images && [m.images count] > 0) {
-            NSMutableArray *content = [NSMutableArray array];
-            if (m.content && m.content.length > 0) {
-                [content addObject:@{@"type": @"text", @"text": m.content}];
+    for (id obj in messages) {
+        if ([obj isKindOfClass:[Message class]]) {
+            Message *m = (Message *)obj;
+            NSString *role = m.isUser      ? @"user" :
+                             m.isAssistant ? @"assistant" :
+                                             @"system";
+            // Multi-modal: if message has images, send array content format.
+            if (m.images && [m.images count] > 0) {
+                NSMutableArray *content = [NSMutableArray array];
+                if (m.content && m.content.length > 0) {
+                    [content addObject:@{@"type": @"text", @"text": m.content}];
+                }
+                for (NSString *dataUrl in m.images) {
+                    [content addObject:@{@"type": @"image_url", @"image_url": @{@"url": dataUrl}}];
+                }
+                [msgs addObject:@{@"role": role, @"content": content}];
+            } else {
+                [msgs addObject:@{@"role": role, @"content": m.content ?: @""}];
             }
-            for (NSString *dataUrl in m.images) {
-                [content addObject:@{@"type": @"image_url", @"image_url": @{@"url": dataUrl}}];
-            }
-            [msgs addObject:@{@"role": role, @"content": content}];
-        } else {
-            [msgs addObject:@{@"role": role, @"content": m.content ?: @""}];
+        } else if ([obj isKindOfClass:[NSDictionary class]]) {
+            // Raw JSON message (assistant tool_calls or tool role).
+            // Pass through unchanged.
+            [msgs addObject:obj];
         }
     }
 
