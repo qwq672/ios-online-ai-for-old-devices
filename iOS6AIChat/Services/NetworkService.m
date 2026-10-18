@@ -723,17 +723,18 @@
 {
     if (!query || query.length == 0) return nil;
     NSString *endpoint;
-    // Check the "transit web search" toggle. When ON, route Tavily
-    // through the transit server (recommended — api.tavily.com uses
-    // modern TLS iOS 6 can't negotiate). When OFF, try direct
-    // (will likely fail on iOS 6 with -1012, but it's the user's
-    // choice if they don't have a transit server).
+    // Independent control: Tavily routing is determined SOLELY by the
+    // 'transitWebSearch' toggle, NOT by 'useTransit'.
+    // This matches the user's spec:
+    //   - useTransit=NO, transitWebSearch=YES → only Tavily goes through transit
+    //   - useTransit=YES, transitWebSearch=YES → both AI + Tavily go through transit
+    //   - useTransit=YES, transitWebSearch=NO → only AI goes through transit
+    //   - useTransit=NO, transitWebSearch=NO → both direct
     BOOL transitWebSearch = YES;  // default ON
     if ([[NSUserDefaults standardUserDefaults] objectForKey:@"transitWebSearch"]) {
         transitWebSearch = [[NSUserDefaults standardUserDefaults] boolForKey:@"transitWebSearch"];
     }
-    BOOL actuallyUseTransit = useTransit && transitWebSearch;
-    if (actuallyUseTransit) {
+    if (transitWebSearch) {
         NSString *base = transitURL;
         if (!base || base.length == 0) {
             base = @"https://ai-transit.awa.lat";
@@ -763,7 +764,7 @@
                                                       timeoutInterval:30.0];
     [req setHTTPMethod:@"POST"];
     [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-    if (actuallyUseTransit) [req setValue:@"tavily" forHTTPHeaderField:@"X-Provider"];
+    if (transitWebSearch) [req setValue:@"tavily" forHTTPHeaderField:@"X-Provider"];
     [req setHTTPBody:bodyData];
 
     NSURLResponse *resp = nil;

@@ -280,7 +280,10 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
 {
-    return _useTransit ? (kSectionCount - 1) : kSectionCount;
+    // Always show ALL sections. The Transit section is now independent
+    // of the useTransit toggle — user can configure 中转搜索 even when
+    // 中转总开关 is OFF.
+    return kSectionCount;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
@@ -353,15 +356,15 @@ titleForFooterInSection:(NSInteger)section
     NSInteger logical = [self _logicalSectionForDisplayed:section];
     switch (logical) {
         case kSectionTransit:
-            return NSLocalizedString(@"中转是预制可关闭的开关。开则所有 AI/搜索请求经中转服务器路由，iOS 6 上规避 TLS 兼容问题。关则直连。默认 api-ai.awa.lat，可自建：github.com/qwq672/online-ai-transit-server", nil);
+            return NSLocalizedString(@"中转是预制可关闭的开关。开则所有 AI 请求经中转服务器路由，iOS 6 上规避 TLS 兼容问题。关则直连。中转搜索独立控制 Tavily 走不走中转。默认 api-ai.awa.lat，可自建：github.com/qwq672/online-ai-transit-server", nil);
         case kSectionDirect:
-            return NSLocalizedString(@"关闭中转时使用。BaseURL 必须 OpenAI 兼容格式。API Key 作 Authorization: Bearer 发出。", nil);
+            return NSLocalizedString(@"直连后端配置。BaseURL 必须 OpenAI 兼容格式。API Key 作 Authorization: Bearer 发出。即使开启中转也可保留此处配置作为回退。", nil);
         case kSectionModel:
             return NSLocalizedString(@"点「搜索」从 /v1/models 拉取可选列表；也可手动输入模型名。", nil);
         case kSectionWebSearch:
-            return NSLocalizedString(@"开关后 AI 自主决定是否调用 Tavily 搜索（tool_calls 模式）。结果数 1-8。也支持中转（中转是主开关）。", nil);
+            return NSLocalizedString(@"开关后 AI 自主决定是否调用 Tavily 搜索（tool_calls 模式）。结果数 1-8。", nil);
         case kSectionAdvanced:
-            return NSLocalizedString(@"流式输出关闭后等 AI 全部回复完才显示。「使用中转服务器模型」开启后请求不带 model 字段，由中转服务器按 provider 默认填入。「支持思考」决定是否给模型发 thinking 参数（深度思考按钮也需开启）。", nil);
+            return NSLocalizedString(@"流式输出关闭后等 AI 全部回复完才显示。", nil);
         default: return @"";
     }
 }
@@ -1121,43 +1124,16 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 
 #pragma mark - Section mapping
 
+// All sections are always visible now (was: skip Direct when transit ON,
+// skip Transit when transit OFF — that prevented independent control).
+// The displayed index == logical index.
 - (NSInteger)_logicalSectionForDisplayed:(NSInteger)displayed
 {
-    if (_useTransit) {
-        // When transit ON, kSectionDirect is hidden — sections after it
-        // shift down by 1.
-        // displayed order: 0=Theme, 1=Transit, 2=Model, 3=WebSearch,
-        // 4=Prompt, 5=Advanced, 6=About, 7=Reset
-        switch (displayed) {
-            case 0: return kSectionTheme;
-            case 1: return kSectionTransit;
-            case 2: return kSectionModel;
-            case 3: return kSectionWebSearch;
-            case 4: return kSectionPrompt;
-            case 5: return kSectionAdvanced;
-            case 6: return kSectionAbout;
-            case 7: return kSectionReset;
-            default: return kSectionReset;
-        }
-    }
     return displayed;
 }
 
 - (NSInteger)_displayedSectionForLogical:(NSInteger)logical
 {
-    if (_useTransit) {
-        switch (logical) {
-            case kSectionTheme:     return 0;
-            case kSectionTransit:    return 1;
-            case kSectionModel:      return 2;
-            case kSectionWebSearch:  return 3;
-            case kSectionPrompt:     return 4;
-            case kSectionAdvanced:   return 5;
-            case kSectionAbout:      return 6;
-            case kSectionReset:      return 7;
-            default:                 return 0;
-        }
-    }
     return logical;
 }
 
