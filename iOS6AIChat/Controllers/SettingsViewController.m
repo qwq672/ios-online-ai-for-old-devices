@@ -24,6 +24,7 @@
 #import "SettingsViewController.h"
 #import "iOS6Theme.h"
 #import "NetworkService.h"
+#import <QuartzCore/QuartzCore.h>
 
 NSString *const SettingsKeyDarkMode           = @"darkMode";
 NSString *const SettingsKeyFontSize           = @"fontSize";
@@ -465,26 +466,23 @@ titleForFooterInSection:(NSInteger)section
 
 // Helper: build a UISegmentedControl styled for dark mode.
 // On iOS 6, UISegmentedControl doesn't auto-darken. We use tintColor
-// (iOS 6+) to set the background, but selected segment text is still
-// dark. We also override segment text colors per-state.
+// (iOS 6+) to set the background. We use setTitleTextAttributes:forState:
+// to set per-state text colors — this iOS 5+ method applies to ALL
+// segments but the state determines which color is used (so selected
+// segments show white, unselected show textColor).
 - (UISegmentedControl *)_themedSegmentedControlWithItems:(NSArray *)items
 {
     UISegmentedControl *seg = [[[UISegmentedControl alloc] initWithItems:items] autorelease];
-    // tintColor on iOS 6 fills the unselected background. Choose a
-    // visible color in dark mode.
     seg.tintColor = [iOS6Theme controlBackgroundColor];
-    // Set text color per state — selected = white on tint, normal = textColor.
     UIColor *normalColor = [iOS6Theme textColor];
     UIColor *selectedColor = [UIColor whiteColor];
-    for (NSUInteger i = 0; i < [items count]; i++) {
-        [seg setTitleTextAttributes:@{NSForegroundColorAttributeName: normalColor,
-                                       NSFontAttributeName: [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]]}
-                            forState:UIControlStateNormal
-                        forSegmentAtIndex:i];
-        [seg setTitleTextAttributes:@{NSForegroundColorAttributeName: selectedColor}
-                            forState:UIControlStateSelected
-                        forSegmentAtIndex:i];
-    }
+    // setTitleTextAttributes:forState: applies to ALL segments but only
+    // for the given state. We set Normal to textColor and Selected to white.
+    [seg setTitleTextAttributes:@{NSForegroundColorAttributeName: normalColor,
+                                    NSFontAttributeName: [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]]}
+                      forState:UIControlStateNormal];
+    [seg setTitleTextAttributes:@{NSForegroundColorAttributeName: selectedColor}
+                      forState:UIControlStateSelected];
     return seg;
 }
 
@@ -779,7 +777,7 @@ titleForFooterInSection:(NSInteger)section
         NSLocalizedString(@"License", nil)
     ];
     NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"261018";
-    NSString *build   = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"4"];
+    NSString *build   = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"5";
     NSString *versionString = [NSString stringWithFormat:@"v%@ (build %@, beta)", version, build];
     NSArray *values = @[
         @"qwq672",

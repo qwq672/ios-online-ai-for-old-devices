@@ -27,6 +27,25 @@ static NSCache *gImageCache = nil;
 static NSCache *gHeightCache = nil;   // messageID@width -> NSNumber height
 static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 
+@interface ChatMessageCell () {
+    BOOL _thinkingCollapsed;
+    NSMutableArray *_imageViews;       // weak refs to image subviews (autoreleased on assign to subview, but we keep for layout)
+    NSString *_currentMessageKey;      // for cache key generation
+}
+@property (nonatomic, retain) UIView *thinkingBlock;
+@property (nonatomic, retain) UIButton *thinkingToggle;
+@property (nonatomic, retain) UILabel *thinkingLabel;
+@property (nonatomic, retain) UIView *thinkingSep;
+@end
+
+@implementation ChatMessageCell
+
+@synthesize textView=_textView, bubble=_bubble, message=_message, renderedAttr=_renderedAttr;
+@synthesize thinkingBlock=_thinkingBlock, thinkingToggle=_thinkingToggle,
+            thinkingLabel=_thinkingLabel, thinkingSep=_thinkingSep;
+
+#pragma mark - Cache management (class methods)
+
 + (void)_initializeCaches
 {
     static dispatch_once_t onceToken;
@@ -105,22 +124,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     });
 }
 
-@interface ChatMessageCell () {
-    BOOL _thinkingCollapsed;
-    NSMutableArray *_imageViews;       // weak refs to image subviews (autoreleased on assign to subview, but we keep for layout)
-    NSString *_currentMessageKey;      // for cache key generation
-}
-@property (nonatomic, retain) UIView *thinkingBlock;
-@property (nonatomic, retain) UIButton *thinkingToggle;
-@property (nonatomic, retain) UILabel *thinkingLabel;
-@property (nonatomic, retain) UIView *thinkingSep;
-@end
-
-@implementation ChatMessageCell
-
-@synthesize textView=_textView, bubble=_bubble, message=_message, renderedAttr=_renderedAttr;
-@synthesize thinkingBlock=_thinkingBlock, thinkingToggle=_thinkingToggle,
-            thinkingLabel=_thinkingLabel, thinkingSep=_thinkingSep;
+#pragma mark - Init / lifecycle
 
 - (id)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier
 {
