@@ -86,7 +86,11 @@
     for (NSUInteger i = 0; i < [navs count]; i++) {
         UINavigationController *nav = [navs objectAtIndex:i];
         nav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-        nav.navigationBar.tintColor = [iOS6Theme tintColor];
+        // Use buttonContentColor (the inverse of tint) for navbar tint —
+        // tint is now white/black, which would be invisible on the
+        // navbar's light-grey/dark background. buttonContentColor is the
+        // visible-on-navbar color (black on light, white on dark).
+        nav.navigationBar.tintColor = [iOS6Theme buttonContentColor];
         nav.navigationBar.translucent = NO;
     }
 }

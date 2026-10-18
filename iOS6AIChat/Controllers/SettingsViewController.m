@@ -288,12 +288,12 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     NSInteger logical = [self _logicalSectionForDisplayed:section];
     switch (logical) {
         case kSectionTheme:     return 3;  // dark mode, font size, image compression
-        case kSectionTransit:    return 3;
+        case kSectionTransit:    return 5;  // 使用中转 / Transit URL / Provider / 中转网络搜索 / 中转默认模型
         case kSectionDirect:     return 2;
-        case kSectionModel:      return 3;
+        case kSectionModel:      return 4;  // Model + 搜索 / hint / 支持图片识别 / 支持思考
         case kSectionWebSearch:  return 3;
         case kSectionPrompt:     return 1;
-        case kSectionAdvanced:   return 3;  // 流式输出 + 使用中转服务器模型 + 支持思考
+        case kSectionAdvanced:   return 1;  // 流式输出
         case kSectionAbout:      return 5;  // author / email / version / github / license
         case kSectionReset:      return 1;
         default: return 0;
@@ -594,6 +594,7 @@ titleForFooterInSection:(NSInteger)section
         return cell;
     }
     // row 2: Provider segmented control.
+    if (row == 2) {
     [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"Provider", nil)]];
     UISegmentedControl *seg = [self _themedSegmentedControlWithItems:@[@"OpenAI", @"智谱", @"Ollama"]];
     NSInteger provIdx = 0;
@@ -606,6 +607,36 @@ titleForFooterInSection:(NSInteger)section
     CGRect f = cell.contentView.bounds;
     seg.frame = CGRectMake(f.size.width - 165 - kPad, (kRowH - 30) / 2, 165, 30);
     [cell.contentView addSubview:seg];
+    return cell;
+    }
+    if (row == 3) {
+        // 中转网络搜索服务 toggle (default ON).
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"中转搜索", nil)]];
+        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+        BOOL transitWebSearch = YES;
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"transitWebSearch"]) {
+            transitWebSearch = [[NSUserDefaults standardUserDefaults] boolForKey:@"transitWebSearch"];
+        }
+        [sw setOn:transitWebSearch animated:NO];
+        [sw addTarget:self action:@selector(_transitWebSearchToggle:)
+         forControlEvents:UIControlEventValueChanged];
+        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f3 = cell.contentView.bounds;
+        sw.frame = CGRectMake(f3.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+        [cell.contentView addSubview:sw];
+        return cell;
+    }
+    // row 4: 中转默认模型 toggle (default OFF).
+    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"中转默认模型", nil)]];
+    UISwitch *sw2 = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+    BOOL useServerModel = [[NSUserDefaults standardUserDefaults] boolForKey:@"useServerModel"];
+    [sw2 setOn:useServerModel animated:NO];
+    [sw2 addTarget:self action:@selector(_useServerModelToggle:)
+     forControlEvents:UIControlEventValueChanged];
+    sw2.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    CGRect f4 = cell.contentView.bounds;
+    sw2.frame = CGRectMake(f4.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+    [cell.contentView addSubview:sw2];
     return cell;
 }
 
@@ -651,7 +682,7 @@ titleForFooterInSection:(NSInteger)section
 
         UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
         [btn setTitle:NSLocalizedString(@"搜索", nil) forState:UIControlStateNormal];
-        [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        [btn setTitleColor:[iOS6Theme buttonContentColor] forState:UIControlStateNormal];
         btn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
         btn.backgroundColor = [iOS6Theme tintColor];
         btn.layer.cornerRadius = 6.0f;
@@ -673,16 +704,30 @@ titleForFooterInSection:(NSInteger)section
         return cell;
     }
     // row 2: "model supports images" toggle.
-    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"支持图片识别", nil)]];
-    UISwitch *imgSw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-    BOOL imgSupport = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelSupportsImages];
-    [imgSw setOn:imgSupport animated:NO];
-    [imgSw addTarget:self action:@selector(_imageSupportToggle:)
+    if (row == 2) {
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"支持图片识别", nil)]];
+        UISwitch *imgSw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+        BOOL imgSupport = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelSupportsImages];
+        [imgSw setOn:imgSupport animated:NO];
+        [imgSw addTarget:self action:@selector(_imageSupportToggle:)
+         forControlEvents:UIControlEventValueChanged];
+        imgSw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect imgSwF = cell.contentView.bounds;
+        imgSw.frame = CGRectMake(imgSwF.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+        [cell.contentView addSubview:imgSw];
+        return cell;
+    }
+    // row 3: "model supports thinking" toggle (moved from Advanced section).
+    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"支持思考", nil)]];
+    UISwitch *thinkSw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+    BOOL thinkSupport = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelSupportsThinking];
+    [thinkSw setOn:thinkSupport animated:NO];
+    [thinkSw addTarget:self action:@selector(_thinkingSupportToggle:)
      forControlEvents:UIControlEventValueChanged];
-    imgSw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    CGRect imgSwF = cell.contentView.bounds;
-    imgSw.frame = CGRectMake(imgSwF.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
-    [cell.contentView addSubview:imgSw];
+    thinkSw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    CGRect thinkSwF = cell.contentView.bounds;
+    thinkSw.frame = CGRectMake(thinkSwF.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+    [cell.contentView addSubview:thinkSw];
     return cell;
 }
 
@@ -776,47 +821,21 @@ titleForFooterInSection:(NSInteger)section
 
 - (UITableViewCell *)_advancedCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
 {
-    if (row == 0) {
-        // 流式输出 toggle (default ON).
-        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"流式输出", nil)]];
-        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-        BOOL streamingOn = YES;
-        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingOutput"]) {
-            streamingOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"streamingOutput"];
-        }
-        [sw setOn:streamingOn animated:NO];
-        [sw addTarget:self action:@selector(_streamingOutputToggle:)
-         forControlEvents:UIControlEventValueChanged];
-        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-        CGRect f = cell.contentView.bounds;
-        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
-        [cell.contentView addSubview:sw];
-        return cell;
-    }
-    if (row == 1) {
-        // 使用中转服务器的模型 toggle (default OFF).
-        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"中转默认模型", nil)]];
-        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-        BOOL useServerModel = [[NSUserDefaults standardUserDefaults] boolForKey:@"useServerModel"];
-        [sw setOn:useServerModel animated:NO];
-        [sw addTarget:self action:@selector(_useServerModelToggle:)
-         forControlEvents:UIControlEventValueChanged];
-        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-        CGRect f = cell.contentView.bounds;
-        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
-        [cell.contentView addSubview:sw];
-        return cell;
-    }
-    // row 2: 支持思考 toggle.
-    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"支持思考", nil)]];
+    // Only one row left in Advanced: 流式输出
+    // (useServerModel moved to Transit section, thinkingSupport moved
+    // to Model section)
+    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"流式输出", nil)]];
     UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-    BOOL thinkSupport = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelSupportsThinking];
-    [sw setOn:thinkSupport animated:NO];
-    [sw addTarget:self action:@selector(_thinkingSupportToggle:)
+    BOOL streamingOn = YES;
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingOutput"]) {
+        streamingOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"streamingOutput"];
+    }
+    [sw setOn:streamingOn animated:NO];
+    [sw addTarget:self action:@selector(_streamingOutputToggle:)
      forControlEvents:UIControlEventValueChanged];
     sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    CGRect imgSwF = cell.contentView.bounds;
-    sw.frame = CGRectMake(imgSwF.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+    CGRect f = cell.contentView.bounds;
+    sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
     [cell.contentView addSubview:sw];
     return cell;
 }
@@ -983,6 +1002,12 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 - (IBAction)_useServerModelToggle:(UISwitch *)sw
 {
     [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"useServerModel"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+- (IBAction)_transitWebSearchToggle:(UISwitch *)sw
+{
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"transitWebSearch"];
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 

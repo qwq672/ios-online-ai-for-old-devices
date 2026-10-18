@@ -127,7 +127,7 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         _sendButton.backgroundColor = [iOS6Theme tintColor];
         _sendButton.layer.cornerRadius = 6.0f;
         _sendButton.layer.masksToBounds = YES;
-        [_sendButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        [_sendButton setTitleColor:[iOS6Theme buttonContentColor] forState:UIControlStateNormal];
         [_sendButton addTarget:self action:@selector(_sendTapped)
               forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_sendButton];
@@ -241,14 +241,15 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     _deepThinkingButton.backgroundColor = dt ? [iOS6Theme tintColor] : [iOS6Theme buttonBackgroundColor];
     _webSearchButton.backgroundColor = ws ? [iOS6Theme tintColor] : [iOS6Theme buttonBackgroundColor];
 
+    // Icons: white when active (on tint bg), secondaryTextColor when inactive.
     UIImage *bulb = [IconDrawing imageForType:IconTypeLightbulb size:CGSizeMake(16, 16)
-                                        color:dt ? [UIColor whiteColor] : [iOS6Theme secondaryTextColor]];
+                                        color:dt ? [iOS6Theme buttonContentColor] : [iOS6Theme secondaryTextColor]];
     UIImage *globe = [IconDrawing imageForType:IconTypeGlobe size:CGSizeMake(16, 16)
-                                          color:ws ? [UIColor whiteColor] : [iOS6Theme secondaryTextColor]];
+                                          color:ws ? [iOS6Theme buttonContentColor] : [iOS6Theme secondaryTextColor]];
     UIImage *cam = [IconDrawing imageForType:IconTypeCamera size:CGSizeMake(16, 16)
                                         color:[iOS6Theme secondaryTextColor]];
     UIImage *arrow = [IconDrawing imageForType:IconTypeSendArrow size:CGSizeMake(18, 18)
-                                        color:[UIColor whiteColor]];
+                                        color:[iOS6Theme buttonContentColor]];
     [_deepThinkingButton setImage:bulb forState:UIControlStateNormal];
     [_webSearchButton setImage:globe forState:UIControlStateNormal];
     [_imageButton setImage:cam forState:UIControlStateNormal];

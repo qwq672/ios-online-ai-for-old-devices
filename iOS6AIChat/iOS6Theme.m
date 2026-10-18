@@ -22,12 +22,12 @@ static NSString * const kUDKeyFontSize = @"theme.fontSize";
 // Font size multipliers.
 static CGFloat const kFontScale[] = { 0.85f, 1.0f, 1.15f, 1.3f, 1.5f };
 
-// Light palette — cool off-white + deep emerald accent.
-// Deliberately NOT all-warm per user feedback ("不是只要是暖色就高级").
-// The deep emerald accent on a cool grey background gives a more
-// sophisticated "professional journal" look — distinct from the
-// bronze-on-cream warmth of the previous iteration.
-static NSString * const kHexLightTint           = @"#007AFF";  // iOS standard blue   // deep emerald (sophisticated, not bright)
+// Light palette — cool off-white + DEEP neutral accent.
+// v261018-10: tint changed from #007AFF (iOS blue) to #FFFFFF (white).
+// Combined with buttonContentColor=#000000 (black) for text on tint bg,
+// this gives a monochrome "newspaper" look.
+static NSString * const kHexLightTint           = @"#FFFFFF";  // white tint (was iOS blue #007AFF)
+static NSString * const kHexLightButtonContent   = @"#000000";  // black text/icons on white tint bg
 static NSString * const kHexLightNavbarTop      = @"#FFFFFF";  // white panel   // emerald (slightly brighter on top)
 static NSString * const kHexLightNavbarBottom   = @"#E8E8E8";  // light grey bottom   // dark emerald
 static NSString * const kHexLightTabbarTop      = @"#FFFFFF";  // white   // cool cream
@@ -43,12 +43,12 @@ static NSString * const kHexLightTextSecondary  = @"#666666";  // grey  // darke
 static NSString * const kHexLightCodeBG         = @"#F5F5F5";  // light grey   // pale cool grey
 static NSString * const kHexLightCodeBorder     = @"#D0D0D0";
 
-// Dark palette — deep navy-charcoal + DEEP navy blue accent.
-// v261018-6: tint changed from #0A84FF (bright iOS blue) to #1E3A8A
-// (Tailwind blue-900, deep navy). The bright iOS blue was reported as
-// "easy to blind eyes" in dark mode. Deep navy is much more readable
-// on a dark background.
-static NSString * const kHexDarkTint            = @"#1E3A8A";  // DEEP navy blue (was #0A84FF — too bright)
+// Dark palette — deep navy-charcoal + BLACK accent (was deep navy).
+// v261018-10: tint changed from #1E3A8A (deep navy) to #000000 (black).
+// Combined with buttonContentColor=#FFFFFF (white) for text on tint bg,
+// this gives a monochrome look matching the light mode's white accent.
+static NSString * const kHexDarkTint            = @"#000000";  // BLACK tint (was #1E3A8A deep navy)
+static NSString * const kHexDarkButtonContent   = @"#FFFFFF";  // white text/icons on black tint bg
 static NSString * const kHexDarkNavbarTop       = @"#0F1A2E";  // deep navy-black top
 static NSString * const kHexDarkNavbarBottom    = @"#000000";  // black
 static NSString * const kHexDarkTabbarTop        = @"#0F1A2E";  // deep navy-black
@@ -154,6 +154,7 @@ static NSString * const kHexDarkThinkingBorder   = @"#2E4A7F";
 }
 
 + (UIColor *)tintColor             { return [self _colorLight:kHexLightTint           dark:kHexDarkTint]; }
++ (UIColor *)buttonContentColor     { return [self _colorLight:kHexLightButtonContent   dark:kHexDarkButtonContent]; }
 + (UIColor *)navbarTopColor        { return [self _colorLight:kHexLightNavbarTop      dark:kHexDarkNavbarTop]; }
 + (UIColor *)navbarBottomColor     { return [self _colorLight:kHexLightNavbarBottom   dark:kHexDarkNavbarBottom]; }
 + (UIColor *)tabbarTopColor        { return [self _colorLight:kHexLightTabbarTop      dark:kHexDarkTabbarTop]; }
@@ -356,9 +357,9 @@ static NSString * const kHexDarkThinkingBorder   = @"#2E4A7F";
         [tbc.tabBar performSelector:@selector(setBarStyle:)
                          withObject:@(style)];
     }
-    tbc.tabBar.tintColor = [self tintColor];
-    // On iOS 6, force a re-layout so the barStyle/tintColor changes
-    // become visible immediately.
+    // Use buttonContentColor (inverse of tint) — tint is now white/black
+    // which would be invisible on the tabbar's gradient background.
+    tbc.tabBar.tintColor = [self buttonContentColor];
     [tbc.tabBar setNeedsDisplay];
     [tbc.tabBar setNeedsLayout];
 }

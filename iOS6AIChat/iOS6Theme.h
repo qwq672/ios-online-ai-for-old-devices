@@ -41,6 +41,7 @@ typedef enum {
 // === Colours (auto-switches with dark mode) =============================
 
 + (UIColor *)tintColor;              // accent / buttons / links
++ (UIColor *)buttonContentColor;      // text/icon on tint-button bg (inverse of tint)
 + (UIColor *)navbarTopColor;
 + (UIColor *)navbarBottomColor;
 + (UIColor *)tabbarTopColor;

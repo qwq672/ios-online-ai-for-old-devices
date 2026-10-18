@@ -723,26 +723,27 @@
 {
     if (!query || query.length == 0) return nil;
     NSString *endpoint;
-    // Force transit for Tavily regardless of the useTransit flag.
-    // Why: api.tavily.com uses modern TLS (Let's Encrypt ECDSA / TLS 1.3)
-    // that iOS 6's NSURLConnection cannot negotiate — direct calls fail
-    // with NSURLErrorDomain -1012 (NSURLErrorUserAuthenticationRequired,
-    // which on iOS 6 is also returned for cert trust failures when the
-    // user cancels the trust dialog). Routing through the transit server
-    // avoids this entirely because the transit server uses Python's
-    // modern `requests` library.
-    //
-    // If transitURL is explicitly empty, fall back to a hardcoded default
-    // transit URL so the feature still works for users who skipped the
-    // transit step.
-    NSString *base = transitURL;
-    if (!base || base.length == 0) {
-        base = @"https://ai-transit.awa.lat";
+    // Check the "transit web search" toggle. When ON, route Tavily
+    // through the transit server (recommended — api.tavily.com uses
+    // modern TLS iOS 6 can't negotiate). When OFF, try direct
+    // (will likely fail on iOS 6 with -1012, but it's the user's
+    // choice if they don't have a transit server).
+    BOOL transitWebSearch = YES;  // default ON
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"transitWebSearch"]) {
+        transitWebSearch = [[NSUserDefaults standardUserDefaults] boolForKey:@"transitWebSearch"];
     }
-    base = [base stringByTrimmingCharactersInSet:
-            [NSCharacterSet characterSetWithCharactersInString:@"/"]];
-    endpoint = [base stringByAppendingPathComponent:@"v1/tavily/search"];
-    BOOL actuallyUseTransit = YES;  // forced — see comment above
+    BOOL actuallyUseTransit = useTransit && transitWebSearch;
+    if (actuallyUseTransit) {
+        NSString *base = transitURL;
+        if (!base || base.length == 0) {
+            base = @"https://ai-transit.awa.lat";
+        }
+        base = [base stringByTrimmingCharactersInSet:
+                [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+        endpoint = [base stringByAppendingPathComponent:@"v1/tavily/search"];
+    } else {
+        endpoint = @"https://api.tavily.com/search";
+    }
 
     if (maxResults < 1) maxResults = 1;
     if (maxResults > 8) maxResults = 8;
