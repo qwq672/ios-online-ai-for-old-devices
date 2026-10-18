@@ -334,10 +334,8 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
                        systemIcon:(UITabBarSystemItem)systemIcon
 {
     if (!nav) return;
-    // barStyle drives the navbar background colour:
-    //   UIBarStyleDefault = light (iOS 6 stock)
-    //   UIBarStyleBlack   = dark (matches our dark palette)
-    nav.navigationBar.barStyle = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
+    // Per user request: navbar always BLACK regardless of dark/light mode.
+    nav.navigationBar.barStyle = UIBarStyleBlack;
     nav.navigationBar.tintColor = [self tintColor];
     nav.tabBarItem = [[[UITabBarItem alloc] initWithTabBarSystemItem:systemIcon tag:0] autorelease];
     nav.tabBarItem.title = title;
@@ -348,12 +346,11 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
 + (void)styleTabBarController:(UITabBarController *)tbc
 {
     if (!tbc) return;
+    // Per user request: tabbar always BLACK regardless of dark/light mode.
     if ([tbc.tabBar respondsToSelector:@selector(setBarStyle:)]) {
-        UIBarStyle style = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
         [tbc.tabBar performSelector:@selector(setBarStyle:)
-                         withObject:@(style)];
+                         withObject:@(UIBarStyleBlack)];
     }
-    // Use tintColor (blue) — reverted from buttonContentColor in v261018-10.
     tbc.tabBar.tintColor = [self tintColor];
     [tbc.tabBar setNeedsDisplay];
     [tbc.tabBar setNeedsLayout];

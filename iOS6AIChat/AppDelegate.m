@@ -58,16 +58,8 @@
     [iOS6Theme styleTabBarController:tbc];
     self.tabBarController = tbc;
 
-    // Status bar — match dark/light theme. iOS 6 only has Default
-    // (black text) and LightContent (white text, iOS 7+).
-    // On iOS 6, the status bar is always dark text on light bg unless
-    // we use UIStatusBarStyleBlackOpaque. For dark mode, that's the
-    // closest we can get — combined with a dark navbar it looks OK.
-    if ([iOS6Theme isDarkMode]) {
-        application.statusBarStyle = UIStatusBarStyleBlackOpaque;
-    } else {
-        application.statusBarStyle = UIStatusBarStyleDefault;
-    }
+    // Status bar — always BlackOpaque since bars are always black.
+    application.statusBarStyle = UIStatusBarStyleBlackOpaque;
 
     self.window.rootViewController = tbc;
     [self.window makeKeyAndVisible];
@@ -85,8 +77,9 @@
 {
     for (NSUInteger i = 0; i < [navs count]; i++) {
         UINavigationController *nav = [navs objectAtIndex:i];
-        nav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-        // Use tintColor (blue) — reverted from buttonContentColor in v261018-10.
+        // Per user request: navbar always BLACK regardless of dark/light mode.
+        // Was: barStyle = isDarkMode ? Black : Default.
+        nav.navigationBar.barStyle = UIBarStyleBlack;
         nav.navigationBar.tintColor = [iOS6Theme tintColor];
         nav.navigationBar.translucent = NO;
     }
@@ -97,14 +90,8 @@
     UITabBarController *tbc = self.tabBarController;
     [self _applyThemeToNavs:tbc.viewControllers];
     [iOS6Theme styleTabBarController:tbc];
-    // Status bar follow theme.
-    UIApplication *app = [UIApplication sharedApplication];
-    if ([iOS6Theme isDarkMode]) {
-        app.statusBarStyle = UIStatusBarStyleBlackOpaque;
-    } else {
-        app.statusBarStyle = UIStatusBarStyleDefault;
-    }
-    // Force a redraw.
+    // Status bar always BlackOpaque (bars are always black).
+    [UIApplication sharedApplication].statusBarStyle = UIStatusBarStyleBlackOpaque;
     [tbc.view setNeedsDisplay];
 }
 
