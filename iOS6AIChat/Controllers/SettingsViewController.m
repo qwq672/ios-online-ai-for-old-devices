@@ -685,7 +685,7 @@ titleForFooterInSection:(NSInteger)section
 
         UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
         [btn setTitle:NSLocalizedString(@"搜索", nil) forState:UIControlStateNormal];
-        [btn setTitleColor:[iOS6Theme buttonContentColor] forState:UIControlStateNormal];
+        [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         btn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
         btn.backgroundColor = [iOS6Theme tintColor];
         btn.layer.cornerRadius = 6.0f;

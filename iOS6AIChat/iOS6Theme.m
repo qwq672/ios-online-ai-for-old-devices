@@ -22,16 +22,14 @@ static NSString * const kUDKeyFontSize = @"theme.fontSize";
 // Font size multipliers.
 static CGFloat const kFontScale[] = { 0.85f, 1.0f, 1.15f, 1.3f, 1.5f };
 
-// Light palette — cool off-white + DEEP neutral accent.
-// v261018-10: tint changed from #007AFF (iOS blue) to #FFFFFF (white).
-// Combined with buttonContentColor=#000000 (black) for text on tint bg,
-// this gives a monochrome "newspaper" look.
-static NSString * const kHexLightTint           = @"#FFFFFF";  // white tint (was iOS blue #007AFF)
-static NSString * const kHexLightButtonContent   = @"#000000";  // black text/icons on white tint bg
-static NSString * const kHexLightNavbarTop      = @"#FFFFFF";  // white panel   // emerald (slightly brighter on top)
-static NSString * const kHexLightNavbarBottom   = @"#E8E8E8";  // light grey bottom   // dark emerald
-static NSString * const kHexLightTabbarTop      = @"#FFFFFF";  // white   // cool cream
-static NSString * const kHexLightTabbarBottom   = @"#D0D0D0";  // light grey   // cool grey
+// Light palette — iOS standard blue accent on cool off-white.
+// Reverted from v261018-10's monochrome (white tint) — user said
+// "浅色配色仍用之前的蓝色" (light color scheme still uses previous blue).
+static NSString * const kHexLightTint           = @"#007AFF";  // iOS standard blue (reverted from #FFFFFF)
+static NSString * const kHexLightNavbarTop      = @"#FFFFFF";
+static NSString * const kHexLightNavbarBottom   = @"#E8E8E8";
+static NSString * const kHexLightTabbarTop      = @"#FFFFFF";
+static NSString * const kHexLightTabbarBottom   = @"#D0D0D0";
 static NSString * const kHexLightPinstripe      = @"#F7F7F7";  // near-white  // muted   // very pale cool
 static NSString * const kHexLightPinstripeBG    = @"#EFEFEF";  // light grey bg  // muted cool grey   // soft cool grey
 static NSString * const kHexLightBubbleUser     = @"#DCF8C6";  // iMessage green   // pale emerald-tinted
@@ -43,26 +41,27 @@ static NSString * const kHexLightTextSecondary  = @"#666666";  // grey  // darke
 static NSString * const kHexLightCodeBG         = @"#F5F5F5";  // light grey   // pale cool grey
 static NSString * const kHexLightCodeBorder     = @"#D0D0D0";
 
-// Dark palette — deep navy-charcoal + BLACK accent (was deep navy).
-// v261018-10: tint changed from #1E3A8A (deep navy) to #000000 (black).
-// Combined with buttonContentColor=#FFFFFF (white) for text on tint bg,
-// this gives a monochrome look matching the light mode's white accent.
-static NSString * const kHexDarkTint            = @"#000000";  // BLACK tint (was #1E3A8A deep navy)
-static NSString * const kHexDarkButtonContent   = @"#FFFFFF";  // white text/icons on black tint bg
-static NSString * const kHexDarkNavbarTop       = @"#0F1A2E";  // deep navy-black top
-static NSString * const kHexDarkNavbarBottom    = @"#000000";  // black
-static NSString * const kHexDarkTabbarTop        = @"#0F1A2E";  // deep navy-black
-static NSString * const kHexDarkTabbarBottom     = @"#000000";  // black
-static NSString * const kHexDarkPinstripe        = @"#1A2540";  // deep navy grey (was #2C2C2E)
-static NSString * const kHexDarkPinstripeBG     = @"#0F1A2E";  // deep navy-black bg (was #1C1C1E)
-static NSString * const kHexDarkBubbleUser      = @"#1E3A5F";  // deep navy-tinted bubble (was #2C2C2E plain grey)
-static NSString * const kHexDarkBubbleUserB     = @"#2E4A7F";  // brighter navy border
-static NSString * const kHexDarkBubbleAI        = @"#0F1A2E";  // near-black navy (was #1C1C1E)
-static NSString * const kHexDarkBubbleAIB       = @"#2E4A7F";  // brighter navy border
-static NSString * const kHexDarkText            = @"#E8E8F0";  // off-white with slight cool tint (was pure #FFFFFF — too harsh)
-static NSString * const kHexDarkTextSecondary   = @"#8B95B0";  // muted blue-grey (was #8E8E93 plain grey)
-static NSString * const kHexDarkCodeBG          = @"#1A2540";  // navy code background
-static NSString * const kHexDarkCodeBorder      = @"#2E4A7F";
+// Dark palette — DEEP navy blue tint on near-BLACK grey background.
+// v261018-12: reverted from #000000 (black) tint back to deep navy
+// #1E3A8A (user said "醒目色仍为蓝色"). BUT the BACKGROUND is now
+// much darker — near-black grey (#0A0A0A) instead of navy-black
+// (#0F1A2E). This gives a true "dark mode" feel rather than the
+// previous navy-tinted dark mode.
+static NSString * const kHexDarkTint            = @"#1E3A8A";  // deep navy (reverted from #000000)
+static NSString * const kHexDarkNavbarTop       = @"#0A0A0A";  // near-black grey (was #0F1A2E navy-black)
+static NSString * const kHexDarkNavbarBottom    = @"#000000";  // pure black
+static NSString * const kHexDarkTabbarTop        = @"#0A0A0A";  // near-black grey
+static NSString * const kHexDarkTabbarBottom     = @"#000000";  // pure black
+static NSString * const kHexDarkPinstripe        = @"#1A1A1A";  // dark grey (was #1A2540 navy-grey)
+static NSString * const kHexDarkPinstripeBG     = @"#0A0A0A";  // near-black bg (was #0F1A2E navy-black)
+static NSString * const kHexDarkBubbleUser      = @"#1A1A1A";  // dark grey (was #1E3A5F navy-tinted)
+static NSString * const kHexDarkBubbleUserB     = @"#2A2A2A";  // grey border (was #2E4A7F navy)
+static NSString * const kHexDarkBubbleAI        = @"#0F0F0F";  // near-black (was #0F1A2E navy-black)
+static NSString * const kHexDarkBubbleAIB       = @"#2A2A2A";  // grey border (was #2E4A7F)
+static NSString * const kHexDarkText            = @"#E8E8F0";  // off-white with slight cool tint
+static NSString * const kHexDarkTextSecondary   = @"#8B95B0";  // muted blue-grey
+static NSString * const kHexDarkCodeBG          = @"#1A1A1A";  // dark grey code bg
+static NSString * const kHexDarkCodeBorder      = @"#2A2A2A";
 
 // Additional dark/light form-control colors for dark mode UI fix.
 // Light: standard iOS form controls (white bg / light grey)
@@ -80,18 +79,18 @@ static NSString * const kHexLightButtonSel       = @"#D0D0D0";
 static NSString * const kHexLightThinkingBG      = @"#F7F7F7";
 static NSString * const kHexLightThinkingBorder  = @"#C8C8C8";
 
-static NSString * const kHexDarkInputBG          = @"#1A2540";   // deep navy fill (matches new pinstripe tone)
-static NSString * const kHexDarkInputBorder      = @"#2E4A7F";
+static NSString * const kHexDarkInputBG          = @"#1A1A1A";   // dark grey fill (was navy)
+static NSString * const kHexDarkInputBorder      = @"#2A2A2A";
 static NSString * const kHexDarkInputText        = @"#E8E8F0";
 static NSString * const kHexDarkPlaceholder       = @"#8B95B0";
-static NSString * const kHexDarkControlBG        = @"#0F1A2E";
+static NSString * const kHexDarkControlBG        = @"#0A0A0A";
 static NSString * const kHexDarkControlSel        = @"#1E3A8A";   // selected = deep navy tint
-static NSString * const kHexDarkControlNorm      = @"#1A2540";
-static NSString * const kHexDarkHairline         = @"#2E4A7F";
-static NSString * const kHexDarkButtonBG         = @"#1A2540";
+static NSString * const kHexDarkControlNorm      = @"#1A1A1A";
+static NSString * const kHexDarkHairline         = @"#2A2A2A";
+static NSString * const kHexDarkButtonBG         = @"#1A1A1A";
 static NSString * const kHexDarkButtonSel        = @"#1E3A8A";   // active button = deep navy tint
-static NSString * const kHexDarkThinkingBG       = @"#1A2540";
-static NSString * const kHexDarkThinkingBorder   = @"#2E4A7F";
+static NSString * const kHexDarkThinkingBG       = @"#1A1A1A";
+static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
 
 @implementation iOS6Theme
 
@@ -154,7 +153,6 @@ static NSString * const kHexDarkThinkingBorder   = @"#2E4A7F";
 }
 
 + (UIColor *)tintColor             { return [self _colorLight:kHexLightTint           dark:kHexDarkTint]; }
-+ (UIColor *)buttonContentColor     { return [self _colorLight:kHexLightButtonContent   dark:kHexDarkButtonContent]; }
 + (UIColor *)navbarTopColor        { return [self _colorLight:kHexLightNavbarTop      dark:kHexDarkNavbarTop]; }
 + (UIColor *)navbarBottomColor     { return [self _colorLight:kHexLightNavbarBottom   dark:kHexDarkNavbarBottom]; }
 + (UIColor *)tabbarTopColor        { return [self _colorLight:kHexLightTabbarTop      dark:kHexDarkTabbarTop]; }
@@ -350,16 +348,13 @@ static NSString * const kHexDarkThinkingBorder   = @"#2E4A7F";
 + (void)styleTabBarController:(UITabBarController *)tbc
 {
     if (!tbc) return;
-    // tabbar.barStyle is iOS 7+, but tintColor (which controls the selected
-    // item colour) is iOS 4+ and works on iOS 6.
     if ([tbc.tabBar respondsToSelector:@selector(setBarStyle:)]) {
         UIBarStyle style = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
         [tbc.tabBar performSelector:@selector(setBarStyle:)
                          withObject:@(style)];
     }
-    // Use buttonContentColor (inverse of tint) — tint is now white/black
-    // which would be invisible on the tabbar's gradient background.
-    tbc.tabBar.tintColor = [self buttonContentColor];
+    // Use tintColor (blue) — reverted from buttonContentColor in v261018-10.
+    tbc.tabBar.tintColor = [self tintColor];
     [tbc.tabBar setNeedsDisplay];
     [tbc.tabBar setNeedsLayout];
 }

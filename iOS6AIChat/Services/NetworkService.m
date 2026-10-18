@@ -428,6 +428,11 @@
 
     // Run Tavily searches on a background queue (avoid blocking main).
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        // Wrap the whole bg flow in @try — a crash anywhere here would
+        // leave the chat stuck (status banner shown, composer disabled).
+        // The user reported crashes during "中转搜索". This catch-all
+        // ensures we always fire didFinish/didFail to release the UI.
+        @try {
         NSMutableArray *toolResults = [NSMutableArray array];
         for (NSDictionary *tc in toolCallAcc) {
             NSString *callId = [tc objectForKey:@"id"];
@@ -512,11 +517,38 @@
 
         // Reset accumulators and re-launch stream on main.
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self->_accumulated setString:@""];
-            [self->_toolCallAccumulators removeAllObjects];
-            self.toolCallPending = NO;
-            [self _launchStreamWithMessages:self.baseMessages];
+            @try {
+                [self->_accumulated setString:@""];
+                [self->_toolCallAccumulators removeAllObjects];
+                self.toolCallPending = NO;
+                [self _launchStreamWithMessages:self.baseMessages];
+            } @catch (NSException *e) {
+                // Re-launch failed — fire didFail so the UI releases.
+                NSLog(@"[NetworkService] tool call re-launch failed: %@", e);
+                if ([self->_delegate respondsToSelector:@selector(networkService:didFailForConversationID:error:)]) {
+                    NSError *err = [NSError errorWithDomain:@"iOS6AIChat"
+                                                       code:500
+                                                   userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"工具调用重试失败: %@", e.reason ?: @"unknown"]}];
+                    [self->_delegate networkService:self
+                          didFailForConversationID:self->_conversationID
+                                          error:err];
+                }
+            }
         });
+        } @catch (NSException *e) {
+            // Whole bg flow crashed — fire didFail on main so UI releases.
+            NSLog(@"[NetworkService] tool call bg execution crashed: %@", e);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if ([self->_delegate respondsToSelector:@selector(networkService:didFailForConversationID:error:)]) {
+                    NSError *err = [NSError errorWithDomain:@"iOS6AIChat"
+                                                       code:500
+                                                   userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"工具调用执行崩溃: %@", e.reason ?: @"unknown"]}];
+                    [self->_delegate networkService:self
+                          didFailForConversationID:self->_conversationID
+                                          error:err];
+                }
+            });
+        }
     });
 }
 
