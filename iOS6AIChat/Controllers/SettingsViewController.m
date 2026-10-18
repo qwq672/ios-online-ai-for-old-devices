@@ -64,6 +64,7 @@ enum {
     kSectionModel,
     kSectionWebSearch,
     kSectionPrompt,
+    kSectionAdvanced,   // 流式输出 + 使用中转服务器模型 + 支持思考
     kSectionAbout,
     kSectionReset,
     kSectionCount
@@ -292,6 +293,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         case kSectionModel:      return 3;
         case kSectionWebSearch:  return 3;
         case kSectionPrompt:     return 1;
+        case kSectionAdvanced:   return 3;  // 流式输出 + 使用中转服务器模型 + 支持思考
         case kSectionAbout:      return 5;  // author / email / version / github / license
         case kSectionReset:      return 1;
         default: return 0;
@@ -339,6 +341,7 @@ titleForHeaderInSection:(NSInteger)section
         case kSectionModel:      return NSLocalizedString(@"模型", nil);
         case kSectionWebSearch:  return NSLocalizedString(@"联网搜索 (Tavily)", nil);
         case kSectionPrompt:     return NSLocalizedString(@"系统提示词", nil);
+        case kSectionAdvanced:   return NSLocalizedString(@"高级", nil);
         case kSectionAbout:      return NSLocalizedString(@"关于", nil);
         default: return @"";
     }
@@ -356,7 +359,9 @@ titleForFooterInSection:(NSInteger)section
         case kSectionModel:
             return NSLocalizedString(@"点「搜索」从 /v1/models 拉取可选列表；也可手动输入模型名。", nil);
         case kSectionWebSearch:
-            return NSLocalizedString(@"开关后每次提问先调 Tavily 搜索，结果作为上下文注入给 AI。结果数 1-8。也支持中转（中转是主开关）。", nil);
+            return NSLocalizedString(@"开关后 AI 自主决定是否调用 Tavily 搜索（tool_calls 模式）。结果数 1-8。也支持中转（中转是主开关）。", nil);
+        case kSectionAdvanced:
+            return NSLocalizedString(@"流式输出关闭后等 AI 全部回复完才显示。「使用中转服务器模型」开启后请求不带 model 字段，由中转服务器按 provider 默认填入。「支持思考」决定是否给模型发 thinking 参数（深度思考按钮也需开启）。", nil);
         default: return @"";
     }
 }
@@ -400,6 +405,8 @@ titleForFooterInSection:(NSInteger)section
             return [self _webSearchCellForRow:indexPath.row cell:cell settings:settings];
         case kSectionPrompt:
             return [self _promptCell:cell settings:settings];
+        case kSectionAdvanced:
+            return [self _advancedCellForRow:indexPath.row cell:cell settings:settings];
         case kSectionAbout:
             return [self _aboutCellForRow:indexPath.row cell:cell];
         case kSectionReset:
@@ -767,6 +774,53 @@ titleForFooterInSection:(NSInteger)section
     return cell;
 }
 
+- (UITableViewCell *)_advancedCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
+{
+    if (row == 0) {
+        // 流式输出 toggle (default ON).
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"流式输出", nil)]];
+        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+        BOOL streamingOn = YES;
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingOutput"]) {
+            streamingOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"streamingOutput"];
+        }
+        [sw setOn:streamingOn animated:NO];
+        [sw addTarget:self action:@selector(_streamingOutputToggle:)
+         forControlEvents:UIControlEventValueChanged];
+        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f = cell.contentView.bounds;
+        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+        [cell.contentView addSubview:sw];
+        return cell;
+    }
+    if (row == 1) {
+        // 使用中转服务器的模型 toggle (default OFF).
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"中转默认模型", nil)]];
+        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+        BOOL useServerModel = [[NSUserDefaults standardUserDefaults] boolForKey:@"useServerModel"];
+        [sw setOn:useServerModel animated:NO];
+        [sw addTarget:self action:@selector(_useServerModelToggle:)
+         forControlEvents:UIControlEventValueChanged];
+        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f = cell.contentView.bounds;
+        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+        [cell.contentView addSubview:sw];
+        return cell;
+    }
+    // row 2: 支持思考 toggle.
+    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"支持思考", nil)]];
+    UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+    BOOL thinkSupport = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelSupportsThinking];
+    [sw setOn:thinkSupport animated:NO];
+    [sw addTarget:self action:@selector(_thinkingSupportToggle:)
+     forControlEvents:UIControlEventValueChanged];
+    sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    CGRect imgSwF = cell.contentView.bounds;
+    sw.frame = CGRectMake(imgSwF.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+    [cell.contentView addSubview:sw];
+    return cell;
+}
+
 - (UITableViewCell *)_aboutCellForRow:(NSInteger)row cell:(UITableViewCell *)cell
 {
     NSArray *labels = @[
@@ -914,6 +968,24 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     [[NSNotificationCenter defaultCenter] postNotificationName:@"iOS6ThemeDidChangeNotification" object:nil];
 }
 
+- (IBAction)_thinkingSupportToggle:(UISwitch *)sw
+{
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyModelSupportsThinking];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+- (IBAction)_streamingOutputToggle:(UISwitch *)sw
+{
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"streamingOutput"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+- (IBAction)_useServerModelToggle:(UISwitch *)sw
+{
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"useServerModel"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
 - (IBAction)_imageCompressionChanged:(UISegmentedControl *)seg
 {
     NSInteger maxDim = 0;
@@ -1027,14 +1099,19 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 - (NSInteger)_logicalSectionForDisplayed:(NSInteger)displayed
 {
     if (_useTransit) {
+        // When transit ON, kSectionDirect is hidden — sections after it
+        // shift down by 1.
+        // displayed order: 0=Theme, 1=Transit, 2=Model, 3=WebSearch,
+        // 4=Prompt, 5=Advanced, 6=About, 7=Reset
         switch (displayed) {
             case 0: return kSectionTheme;
             case 1: return kSectionTransit;
             case 2: return kSectionModel;
             case 3: return kSectionWebSearch;
             case 4: return kSectionPrompt;
-            case 5: return kSectionAbout;
-            case 6: return kSectionReset;
+            case 5: return kSectionAdvanced;
+            case 6: return kSectionAbout;
+            case 7: return kSectionReset;
             default: return kSectionReset;
         }
     }
@@ -1047,11 +1124,12 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         switch (logical) {
             case kSectionTheme:     return 0;
             case kSectionTransit:    return 1;
-            case kSectionModel:      return 3;
+            case kSectionModel:      return 2;
             case kSectionWebSearch:  return 3;
             case kSectionPrompt:     return 4;
-            case kSectionAbout:      return 5;
-            case kSectionReset:      return 6;
+            case kSectionAdvanced:   return 5;
+            case kSectionAbout:      return 6;
+            case kSectionReset:      return 7;
             default:                 return 0;
         }
     }

@@ -231,12 +231,25 @@
         }
     }
 
+    // "Use transit server's model" feature: when ON, omit the `model`
+    // field from the request body — the transit server substitutes its
+    // own configured default. When OFF (default), send the user-selected
+    // model field. Only meaningful when useTransit=YES.
+    BOOL useServerModel = NO;
+    if (self.useTransit && [[NSUserDefaults standardUserDefaults] objectForKey:@"useServerModel"]) {
+        useServerModel = [[NSUserDefaults standardUserDefaults] boolForKey:@"useServerModel"];
+    }
+
     NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:@{
-        @"model":       self.model ?: @"gpt-3.5-turbo",
         @"messages":    msgs,
         @"stream":      @(doStream),
         @"temperature": [NSNumber numberWithFloat:(float)self.temperature]
     }];
+    if (!useServerModel) {
+        // Send the user-selected model.
+        [body setObject:self.model ?: @"gpt-3.5-turbo" forKey:@"model"];
+    }
+    // useServerModel=YES → omit `model`; transit server will fill it in.
     if (doThink) {
         [body setObject:@{@"type": @"enabled"} forKey:@"thinking"];
     }
@@ -384,11 +397,20 @@
             }
         }];
     }
+    // Bug fix: COPY _accumulated into the dict. The original code put
+    // a reference to the NSMutableString directly into the dict — later,
+    // when we do `[_accumulated setString:@""]` in the bg-queue's main
+    // dispatch (before re-launching the stream), the dict's content would
+    // silently become empty. This caused the assistant's pre-tool-call
+    // text to be lost AND could lead to confusing state when the API
+    // received an assistant message with empty content but tool_calls.
+    NSString *contentForDict = [_accumulated copy];
     NSDictionary *assistantToolMsg = @{
         @"role": @"assistant",
-        @"content": _accumulated.length > 0 ? _accumulated : [NSNull null],
+        @"content": contentForDict.length > 0 ? contentForDict : [NSNull null],
         @"tool_calls": toolCallsArray
     };
+    [contentForDict release];
     [newMessages addObject:assistantToolMsg];
 
     // Save context for the bg-queue closure.

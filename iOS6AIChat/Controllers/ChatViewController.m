@@ -413,7 +413,14 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
         if (m == assistantMsg) continue;
         [messages addObject:m];
     }
-    _networkService.thinkingEnabled = YES;
+    // Tie the `thinking` parameter to BOTH:
+    // 1. Deep thinking button ON (user wants reasoning)
+    // 2. AND modelSupportsThinking ON (model supports it)
+    // Either OFF → don't send `thinking` parameter.
+    // This was bug: deep thinking button had no effect because
+    // thinkingEnabled was always YES — models that support thinking
+    // couldn't be turned off.
+    _networkService.thinkingEnabled = deepThinking;
     if (webSearch) {
         [self _showSearchStatus:@"🔍 AI 可调用搜索工具"];
         // New tool_calls entry point.
