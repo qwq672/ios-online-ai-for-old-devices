@@ -335,73 +335,18 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
             systemPrompt];
     }
 
-    // If web search is on, fire Tavily search in the background and
-    // inject results as a one-shot system message visible ONLY to the
-    // AI — the user just sees a small "Searching..." status banner
-    // above the composer. This avoids polluting the assistant message
-    // bubble with raw search result dumps.
+    // If web search is on, enable tool_calls mode — the AI decides
+    // whether to call tavily_search and may call it multiple times.
+    // We no longer pre-search; instead the service attaches the tools
+    // array to the request and runs any tool_calls the AI emits.
+    NSString *tavilyKey = webSearch ? ([settings objectForKey:SettingsKeyTavilyAPIKey] ?: @"") : @"";
+    NSInteger maxResults = 0;
     if (webSearch) {
-        NSString *tavilyKey = [settings objectForKey:SettingsKeyTavilyAPIKey];
-        NSInteger maxResults = [[settings objectForKey:SettingsKeyTavilyMaxResults] integerValue];
+        maxResults = [[settings objectForKey:SettingsKeyTavilyMaxResults] integerValue];
         if (maxResults < 1) maxResults = 1;
         if (maxResults > 8) maxResults = 8;
-        if (tavilyKey.length > 0) {
-            // Show the search status banner.
-            [self _showSearchStatus:[NSString stringWithFormat:@"🔍 搜索: \"%@\"…", text]];
-
-            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                __block NSArray *searchResults = nil;
-                @try {
-                    NetworkService *svc = [[[NetworkService alloc] init] autorelease];
-                    NSError *err = nil;
-                    NSArray *results = [svc tavilySearchWithQuery:text
-                                                             apiKey:tavilyKey
-                                                        maxResults:maxResults
-                                                        useTransit:useTransit
-                                                         transitURL:transitURL
-                                                             error:&err];
-                    searchResults = [results retain];
-                } @catch (NSException *e) {
-                    searchResults = nil;
-                }
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    [self _hideSearchStatus];
-                    if (searchResults && [searchResults count] > 0) {
-                        [self _launchAIStreamWithMessages:nil
-                                              systemPrompt:systemPrompt
-                                            useTransit:useTransit
-                                            transitURL:transitURL
-                                              baseURL:baseURL
-                                              provider:provider
-                                               apiKey:apiKey
-                                                model:model
-                                          temperature:temperature
-                                      conversationID:_conversation.conversationID
-                                        assistantMsg:assistantMsg
-                                        searchResults:searchResults];
-                        [searchResults release];
-                    } else {
-                        // No results or failed — proceed without search.
-                        [self _launchAIStreamWithMessages:nil
-                                              systemPrompt:systemPrompt
-                                            useTransit:useTransit
-                                            transitURL:transitURL
-                                              baseURL:baseURL
-                                              provider:provider
-                                               apiKey:apiKey
-                                                model:model
-                                          temperature:temperature
-                                      conversationID:_conversation.conversationID
-                                        assistantMsg:assistantMsg
-                                        searchResults:nil];
-                    }
-                });
-            });
-            return;
-        }
     }
 
-    // No web search — proceed directly.
     [self _launchAIStreamWithMessages:nil
                           systemPrompt:systemPrompt
                             useTransit:useTransit
@@ -413,7 +358,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                           temperature:temperature
                       conversationID:_conversation.conversationID
                         assistantMsg:assistantMsg
-                        searchResults:nil];
+                          webSearch:webSearch
+                          tavilyKey:tavilyKey
+                          tavilyMaxResults:maxResults];
 }
 
 - (void)_showSearchStatus:(NSString *)msg
@@ -430,8 +377,10 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 }
 
 // Refactored helper — kicks off the streaming API call.
-// If searchResults is non-nil, inject them as a one-shot system message
-// visible only to the AI (not persisted to the conversation).
+// When `webSearch=YES`, the service attaches the `tools` array to the
+// request body so the AI can autonomously call tavily_search any number
+// of times. The service handles multi-turn internally — this method
+// is called once per user message.
 - (void)_launchAIStreamWithMessages:(NSArray *)msgsForAPI
                         systemPrompt:(NSString *)systemPrompt
                           useTransit:(BOOL)useTransit
@@ -443,40 +392,46 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                         temperature:(CGFloat)temperature
                       conversationID:(NSString *)conversationID
                         assistantMsg:(Message *)assistantMsg
-                        searchResults:(NSArray *)searchResults
+                            webSearch:(BOOL)webSearch
+                            tavilyKey:(NSString *)tavilyKey
+                        tavilyMaxResults:(NSInteger)tavilyMaxResults
 {
-    // Build the messages array fresh.
+    // Build the messages array.
     NSMutableArray *messages = [NSMutableArray array];
     if (systemPrompt.length > 0) {
         [messages addObject:[Message messageWithRole:MessageRoleSystem content:systemPrompt]];
-    }
-    if (searchResults && [searchResults count] > 0) {
-        NSMutableString *ctx = [NSMutableString string];
-        [ctx appendString:@"The following are recent web search results. Use them as authoritative context when answering the user's question. Always cite the source URL inline.\n\n"];
-        NSInteger i = 1;
-        for (NSDictionary *r in searchResults) {
-            [ctx appendFormat:@"%d. %@\n   URL: %@\n   %@\n\n",
-                (int)i++,
-                [r objectForKey:@"title"],
-                [r objectForKey:@"url"],
-                [r objectForKey:@"content"]];
-        }
-        [messages addObject:[Message messageWithRole:MessageRoleSystem content:ctx]];
     }
     for (Message *m in _conversation.messages) {
         if (m == assistantMsg) continue;
         [messages addObject:m];
     }
-    _networkService.thinkingEnabled = YES; // always parse reasoning if present
-    [_networkService streamChatWithUseTransit:useTransit
-                                    transitURL:transitURL
-                                      baseURL:baseURL
-                                      provider:provider
-                                       apiKey:apiKey
-                                        model:model
-                                  temperature:temperature
-                                     messages:messages
-                               conversationID:conversationID];
+    _networkService.thinkingEnabled = YES;
+    if (webSearch) {
+        [self _showSearchStatus:@"🔍 AI 可调用搜索工具"];
+        // New tool_calls entry point.
+        [_networkService streamChatWithUseTransit:useTransit
+                                        transitURL:transitURL
+                                          baseURL:baseURL
+                                          provider:provider
+                                           apiKey:apiKey
+                                            model:model
+                                      temperature:temperature
+                                         messages:messages
+                                   conversationID:conversationID
+                             enableWebSearchTools:YES
+                                       tavilyKey:tavilyKey
+                                 tavilyMaxResults:tavilyMaxResults];
+    } else {
+        [_networkService streamChatWithUseTransit:useTransit
+                                        transitURL:transitURL
+                                          baseURL:baseURL
+                                          provider:provider
+                                           apiKey:apiKey
+                                            model:model
+                                      temperature:temperature
+                                         messages:messages
+                                   conversationID:conversationID];
+    }
 }
 
 #pragma mark - NetworkServiceDelegate
@@ -487,7 +442,11 @@ didReceiveChunkForConversationID:(NSString *)conversationID
 {
     if (![conversationID isEqualToString:_conversation.conversationID]) return;
     [_conversation updateLastAssistantMessageContent:fullText];
-    [[ConversationStore sharedStore] saveConversation:_conversation];
+    // Don't save to disk on every chunk — only on finish/thinking-change.
+    // The throttle on _refreshLastRow already limits UI updates to 250ms,
+    // but writing the whole conversation to disk every 250ms during a
+    // long answer is a major perf killer (NSKeyedArchiver serializes
+    // the entire message array each call).
     [self _refreshLastRow];
 }
 
@@ -503,6 +462,23 @@ didReceiveThinkingForConversationID:(NSString *)conversationID
         // Don't save to disk on every chunk — only on finish.
         [self _refreshLastRow];
     }
+}
+
+- (void)networkService:(NetworkService *)svc
+didReceiveToolCallForConversationID:(NSString *)conversationID
+                          toolName:(NSString *)toolName
+{
+    if (![conversationID isEqualToString:_conversation.conversationID]) return;
+    // Show status banner indicating the AI is calling a search tool.
+    NSString *status = [NSString stringWithFormat:@"🔧 AI 调用工具: %@", toolName ?: @"unknown"];
+    [self _showSearchStatus:status];
+}
+
+- (void)networkService:(NetworkService *)svc
+didReceiveToolCallStartedForConversationID:(NSString *)conversationID
+{
+    if (![conversationID isEqualToString:_conversation.conversationID]) return;
+    [self _showSearchStatus:@"🔧 正在执行搜索…"];
 }
 
 - (void)networkService:(NetworkService *)svc
@@ -522,6 +498,7 @@ didFinishForConversationID:(NSString *)conversationID
     [[ConversationStore sharedStore] saveConversation:_conversation];
     [self _refreshLastRowForce:YES];
     _composer.isStreaming = NO;
+    [self _hideSearchStatus];
 }
 
 - (void)networkService:(NetworkService *)svc

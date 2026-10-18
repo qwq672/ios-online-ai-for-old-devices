@@ -60,9 +60,43 @@ static NSString *const kCellReuseID = @"HistoryCell";
     UISearchBar *searchBar = [[[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 44)] autorelease];
     searchBar.placeholder = NSLocalizedString(@"搜索对话", nil);
     searchBar.delegate = self;
+    // Dark mode search bar styling: on iOS 6 UISearchBar has limited
+    // customization. We set barStyle to UIBarStyleBlack which makes the
+    // search field background dark, and tintColor to the theme accent.
+    if ([iOS6Theme isDarkMode]) {
+        searchBar.barStyle = UIBarStyleBlack;
+        searchBar.tintColor = [iOS6Theme tintColor];
+    } else {
+        searchBar.barStyle = UIBarStyleDefault;
+        searchBar.tintColor = [iOS6Theme tintColor];
+    }
     _tableView.tableHeaderView = searchBar;
 
     self.navigationItem.rightBarButtonItem = self.editButtonItem;
+
+    // Listen for theme changes.
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(_themeChanged)
+                                                 name:@"iOS6ThemeDidChangeNotification"
+                                                   object:nil];
+}
+
+- (void)_themeChanged
+{
+    self.view.backgroundColor = [iOS6Theme pinstripeBackground];
+    _tableView.backgroundColor = [UIColor clearColor];
+    _tableView.backgroundView = nil;
+    [_tableView reloadData];
+    // Re-style search bar.
+    UISearchBar *sb = (UISearchBar *)_tableView.tableHeaderView;
+    if ([sb isKindOfClass:[UISearchBar class]]) {
+        if ([iOS6Theme isDarkMode]) {
+            sb.barStyle = UIBarStyleBlack;
+        } else {
+            sb.barStyle = UIBarStyleDefault;
+        }
+        sb.tintColor = [iOS6Theme tintColor];
+    }
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -205,8 +239,10 @@ forRowAtIndexPath:(NSIndexPath *)indexPath
 
 - (void)dealloc
 {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_tableView release];
     [_editButton release];
+    [_searchText release];
     [super dealloc];
 }
 

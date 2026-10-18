@@ -235,6 +235,10 @@ enum {
                              delegate:self
                     cancelButtonTitle:NSLocalizedString(@"取消", nil)
                     otherButtonTitles:NSLocalizedString(@"确定", nil), nil] autorelease];
+    // Dark mode alert style — UIActionSheetStyle and UIAlertView don't
+    // have a "dark" mode on iOS 6, but using the alertSheet style
+    // (available via the private delegate) is risky. Best we can do
+    // is leave the system default which still contrasts OK on dark.
     [av setTag:100];
     [av show];
 }
@@ -524,14 +528,25 @@ titleForFooterInSection:(NSInteger)section
     return cell;
     }
     if (row == 2) {
-        // Image compression setting.
+        // Image compression setting. Default = 1024 (was 0 = "原图"
+        // before, which made users send multi-MB iPhone photos and
+        // blow up the API request. Now defaults to 1024 — user can
+        // still pick "原图" if they really want full-resolution.)
         [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"图片压缩", nil)]];
         NSArray *imgItems = @[@"原图", @"1024", @"2048"];
         UISegmentedControl *imgSeg = [self _themedSegmentedControlWithItems:imgItems];
-        NSInteger maxDim = [[NSUserDefaults standardUserDefaults] integerForKey:@"imageMaxDim"];
-        if (maxDim == 0) imgSeg.selectedSegmentIndex = 0;
-        else if (maxDim <= 1024) imgSeg.selectedSegmentIndex = 1;
-        else imgSeg.selectedSegmentIndex = 2;
+        // If the key was never set, default to index 1 (1024).
+        NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+        if (![d objectForKey:@"imageMaxDim"]) {
+            imgSeg.selectedSegmentIndex = 1;
+            [d setInteger:1024 forKey:@"imageMaxDim"];
+            [d synchronize];
+        } else {
+            NSInteger maxDim = [d integerForKey:@"imageMaxDim"];
+            if (maxDim == 0) imgSeg.selectedSegmentIndex = 0;
+            else if (maxDim <= 1024) imgSeg.selectedSegmentIndex = 1;
+            else imgSeg.selectedSegmentIndex = 2;
+        }
         [imgSeg addTarget:self action:@selector(_imageCompressionChanged:)
          forControlEvents:UIControlEventValueChanged];
         imgSeg.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
@@ -711,20 +726,30 @@ titleForFooterInSection:(NSInteger)section
     sp.minimumValue = 1;
     sp.maximumValue = 8;
     sp.value = max;
-    // Dark mode tint — on iOS 6 the stepper background is hard to recolor
-    // but tintColor at least affects the +/- chevron color.
+    // Dark mode tint — on iOS 6 the stepper background is white by default
+    // which looks washed out in dark mode. Wrap it in a container view
+    // with a dark background so it's at least visible.
     sp.tintColor = [iOS6Theme tintColor];
     [sp addTarget:self action:@selector(_tavilyMaxChanged:)
      forControlEvents:UIControlEventValueChanged];
     sp.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     CGRect f = cell.contentView.bounds;
-    sp.frame = CGRectMake(f.size.width - 94 - kPad, (kRowH - 29) / 2, 94, 29);
-    [cell.contentView addSubview:sp];
+    // Container with rounded corners + dark bg.
+    UIView *stepperContainer = [[[UIView alloc] initWithFrame:CGRectMake(f.size.width - 102 - kPad, (kRowH - 31) / 2, 102, 31)] autorelease];
+    stepperContainer.backgroundColor = [iOS6Theme controlBackgroundColor];
+    stepperContainer.layer.cornerRadius = 6.0f;
+    stepperContainer.layer.borderWidth = 1.0f;
+    stepperContainer.layer.borderColor = [[iOS6Theme hairlineColor] CGColor];
+    stepperContainer.layer.masksToBounds = YES;
+    stepperContainer.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    sp.frame = CGRectMake(4, 1, 94, 29);
+    [stepperContainer addSubview:sp];
+    [cell.contentView addSubview:stepperContainer];
 
     // Place numLabel between stepper and label.
     [numLabel sizeToFit];
     CGRect nlF = numLabel.frame;
-    nlF.origin.x = f.size.width - 94 - kPad - nlF.size.width - 8;
+    nlF.origin.x = f.size.width - 102 - kPad - nlF.size.width - 8;
     nlF.origin.y = (kRowH - nlF.size.height) / 2;
     nlF.size.height = kRowH;
     numLabel.frame = nlF;
@@ -841,12 +866,18 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
                 return;
             }
             // Use UIActionSheet (slides up from bottom, like WiFi picker).
+            // actionSheetStyle — BlackOpaque is the dark style on iOS 6.
             UIActionSheet *sheet = [[UIActionSheet alloc]
                 initWithTitle:NSLocalizedString(@"选择模型", nil)
                      delegate:self
             cancelButtonTitle:NSLocalizedString(@"取消", nil)
        destructiveButtonTitle:nil
             otherButtonTitles:nil];
+            if ([iOS6Theme isDarkMode]) {
+                sheet.actionSheetStyle = UIActionSheetStyleBlackOpaque;
+            } else {
+                sheet.actionSheetStyle = UIActionSheetStyleAutomatic;
+            }
             NSInteger limit = MIN([models count], (NSUInteger)8);
             for (NSInteger i = 0; i < limit; i++) {
                 NSString *mid = [models objectAtIndex:i];

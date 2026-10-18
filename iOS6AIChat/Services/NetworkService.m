@@ -15,6 +15,18 @@
 //  Headers (direct mode):
 //     Authorization: Bearer {apiKey}
 //
+//  v261018 tool_calls support:
+//    When `enableWebSearchTools:YES`, the request body includes a `tools`
+//    array defining a `tavily_search` function. The AI can choose to
+//    call it (or not), possibly multiple times. When the AI emits
+//    `tool_calls`, this class:
+//      1) Suspends the current connection.
+//      2) Calls Tavily with the AI's specified args (sync, on bg queue).
+//      3) Appends the tool result as a `tool` role message.
+//      4) Re-triggers the stream with the augmented messages.
+//    Multi-turn is supported: the AI can call the tool again in the
+//    next turn. The loop ends when the AI emits no more tool_calls.
+//
 
 #import "NetworkService.h"
 
@@ -25,6 +37,26 @@
 @property (nonatomic, retain) NSMutableString *thinkingAccumulated;
 @property (nonatomic, copy)   NSString         *conversationID;
 @property (nonatomic, retain) NSError          *lastError;
+
+// Tool-call state (for multi-turn web search).
+@property (nonatomic, retain) NSMutableArray *toolCallAccumulators;  // array of NSMutableDictionary
+@property (nonatomic, retain) NSMutableArray *pendingToolMessages;  // array of NSDictionary (tool role)
+@property (nonatomic, assign) BOOL toolCallPending;  // YES = we need to run a tool call
+
+// Request context (saved so we can re-trigger stream for multi-turn).
+@property (nonatomic, assign) BOOL useTransit;
+@property (nonatomic, copy)   NSString *transitURL;
+@property (nonatomic, copy)   NSString *baseURL;
+@property (nonatomic, copy)   NSString *provider;
+@property (nonatomic, copy)   NSString *apiKey;
+@property (nonatomic, copy)   NSString *model;
+@property (nonatomic, assign) CGFloat temperature;
+@property (nonatomic, retain) NSMutableArray *baseMessages;  // immutable base (system + user + assistant)
+@property (nonatomic, assign) BOOL enableWebSearchTools;
+@property (nonatomic, copy)   NSString *tavilyKey;
+@property (nonatomic, assign) NSInteger tavilyMaxResults;
+@property (nonatomic, assign) NSInteger toolCallTurn;  // counts how many tool turns we've done
+@property (nonatomic, assign) NSInteger maxToolTurns;  // hard cap (avoid infinite loops)
 @end
 
 @implementation NetworkService
@@ -32,7 +64,16 @@
 @synthesize connection=_connection, rawBuffer=_rawBuffer,
             accumulated=_accumulated, conversationID=_conversationID,
             lastError=_lastError, delegate=_delegate,
-            thinkingAccumulated=_thinkingAccumulated;
+            thinkingAccumulated=_thinkingAccumulated,
+            toolCallAccumulators=_toolCallAccumulators,
+            pendingToolMessages=_pendingToolMessages,
+            toolCallPending=_toolCallPending,
+            useTransit=_useTransit, transitURL=_transitURL,
+            baseURL=_baseURL, provider=_provider, apiKey=_apiKey,
+            model=_model, temperature=_temperature,
+            baseMessages=_baseMessages, enableWebSearchTools=_enableWebSearchTools,
+            tavilyKey=_tavilyKey, tavilyMaxResults=_tavilyMaxResults,
+            toolCallTurn=_toolCallTurn, maxToolTurns=_maxToolTurns;
 @dynamic accumulatedThinking;
 
 - (id)init
@@ -41,6 +82,9 @@
         _rawBuffer   = [[NSMutableData alloc] init];
         _accumulated = [[NSMutableString alloc] init];
         _thinkingAccumulated = [[NSMutableString alloc] init];
+        _toolCallAccumulators = [[NSMutableArray alloc] init];
+        _pendingToolMessages = [[NSMutableArray alloc] init];
+        _maxToolTurns = 5;  // hard cap — don't let AI loop forever
     }
     return self;
 }
@@ -55,13 +99,73 @@
                         messages:(NSArray *)messages
                   conversationID:(NSString *)conversationID
 {
-    NSString *base = useTransit ? transitURL : baseURL;
+    // Backwards-compatible entry point. Web-search tools disabled
+    // (legacy callers don't expect tool_calls).
+    return [self streamChatWithUseTransit:useTransit
+                               transitURL:transitURL
+                                 baseURL:baseURL
+                                 provider:provider
+                                  apiKey:apiKey
+                                   model:model
+                             temperature:temperature
+                                messages:messages
+                          conversationID:conversationID
+                            enableWebSearchTools:NO
+                                  tavilyKey:@""
+                            tavilyMaxResults:0];
+}
+
+// New entry point — when enableWebSearchTools=YES, the request body
+// includes the `tools` array and tool_choice="auto". AI can decide
+// to call tavily_search any number of times.
+- (BOOL)streamChatWithUseTransit:(BOOL)useTransit
+                       transitURL:(NSString *)transitURL
+                         baseURL:(NSString *)baseURL
+                         provider:(NSString *)provider
+                          apiKey:(NSString *)apiKey
+                           model:(NSString *)model
+                     temperature:(CGFloat)temperature
+                        messages:(NSArray *)messages
+                  conversationID:(NSString *)conversationID
+            enableWebSearchTools:(BOOL)enableTools
+                      tavilyKey:(NSString *)tavilyKey
+                tavilyMaxResults:(NSInteger)tavilyMaxResults
+{
+    // Save context for multi-turn tool use.
+    self.useTransit = useTransit;
+    self.transitURL = transitURL;
+    self.baseURL = baseURL;
+    self.provider = provider;
+    self.apiKey = apiKey;
+    self.model = model;
+    self.temperature = temperature;
+    self.enableWebSearchTools = enableTools;
+    self.tavilyKey = tavilyKey;
+    self.tavilyMaxResults = tavilyMaxResults;
+    // baseMessages is the immutable starting point — we'll append tool
+    // role messages as we go.
+    self.baseMessages = [NSMutableArray arrayWithArray:messages];
+
+    // Reset per-stream state.
+    self.conversationID = conversationID;
+    [_accumulated setString:@""];
+    [_thinkingAccumulated setString:@""];
+    [_toolCallAccumulators removeAllObjects];
+    [_pendingToolMessages removeAllObjects];
+    self.toolCallPending = NO;
+    self.toolCallTurn = 0;
+
+    return [self _launchStreamWithMessages:self.baseMessages];
+}
+
+- (BOOL)_launchStreamWithMessages:(NSArray *)messages
+{
+    NSString *base = self.useTransit ? self.transitURL : self.baseURL;
     if (!base || base.length == 0) {
-        base = useTransit ? @"https://ai-transit.awa.lat" : @"https://api.openai.com";
+        base = self.useTransit ? @"https://ai-transit.awa.lat" : @"https://api.openai.com";
     }
     NSString *endpoint = [base stringByTrimmingCharactersInSet:
                           [NSCharacterSet characterSetWithCharactersInString:@"/"]];
-    // Handle BaseURL that already ends with /v1 (don't double up).
     if ([endpoint hasSuffix:@"/v1"] || [endpoint hasSuffix:@"/v1/"]) {
         endpoint = [endpoint stringByAppendingPathComponent:@"chat/completions"];
     } else {
@@ -74,14 +178,10 @@
             NSError *err = [NSError errorWithDomain:@"iOS6AIChat"
                                               code:400
                                           userInfo:@{NSLocalizedDescriptionKey: @"无效的 BaseURL"}];
-            [_delegate networkService:self didFailForConversationID:conversationID error:err];
+            [_delegate networkService:self didFailForConversationID:_conversationID error:err];
         }
         return NO;
     }
-
-    self.conversationID = conversationID;
-    [_accumulated setString:@""];
-    [_thinkingAccumulated setString:@""];
 
     // Build the messages payload in OpenAI format.
     NSMutableArray *msgs = [NSMutableArray arrayWithCapacity:[messages count]];
@@ -120,14 +220,37 @@
     }
 
     NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:@{
-        @"model":       model ?: @"gpt-3.5-turbo",
+        @"model":       self.model ?: @"gpt-3.5-turbo",
         @"messages":    msgs,
         @"stream":      @(doStream),
-        @"temperature": [NSNumber numberWithFloat:(float)temperature]
+        @"temperature": [NSNumber numberWithFloat:(float)self.temperature]
     }];
     if (doThink) {
         [body setObject:@{@"type": @"enabled"} forKey:@"thinking"];
     }
+    // If web search tools enabled, add tools + tool_choice.
+    if (self.enableWebSearchTools && self.tavilyKey.length > 0) {
+        NSDictionary *tavilyTool = @{
+            @"type": @"function",
+            @"function": @{
+                @"name": @"tavily_search",
+                @"description": @"Search the web for current information. Use this when the user asks about recent events, current prices, latest news, or anything you don't already know. Each call returns up to N results with title, URL, and a content snippet. Cite URLs in your answer.",
+                @"parameters": @{
+                    @"type": @"object",
+                    @"properties": @{
+                        @"query": @{
+                            @"type": @"string",
+                            @"description": @"The search query (in English or Chinese as appropriate)."
+                        }
+                    },
+                    @"required": @[@"query"]
+                }
+            }
+        };
+        [body setObject:[NSArray arrayWithObject:tavilyTool] forKey:@"tools"];
+        [body setObject:@"auto" forKey:@"tool_choice"];
+    }
+
     NSError *jsonErr = nil;
     NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body
                                                        options:0
@@ -137,7 +260,7 @@
             NSError *err = [NSError errorWithDomain:@"iOS6AIChat"
                                               code:500
                                           userInfo:@{NSLocalizedDescriptionKey: @"请求体序列化失败"}];
-            [_delegate networkService:self didFailForConversationID:conversationID error:err];
+            [_delegate networkService:self didFailForConversationID:_conversationID error:err];
         }
         return NO;
     }
@@ -148,19 +271,22 @@
     [req setHTTPMethod:@"POST"];
     [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
     [req setValue:@"text/event-stream" forHTTPHeaderField:@"Accept"];
-    if (apiKey.length > 0) {
-        [req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey]
+    if (self.apiKey.length > 0) {
+        [req setValue:[NSString stringWithFormat:@"Bearer %@", self.apiKey]
         forHTTPHeaderField:@"Authorization"];
     }
-    if (useTransit && provider.length > 0) {
-        // X-Provider header — the transit server uses this to pick the backend.
-        [req setValue:provider forHTTPHeaderField:@"X-Provider"];
+    if (self.useTransit && self.provider.length > 0) {
+        [req setValue:self.provider forHTTPHeaderField:@"X-Provider"];
     }
-    if (useTransit && model.length > 0) {
-        // Informational — let the transit server log/model-select.
-        [req setValue:model forHTTPHeaderField:@"X-Model"];
+    if (self.useTransit && self.model.length > 0) {
+        [req setValue:self.model forHTTPHeaderField:@"X-Model"];
     }
     [req setHTTPBody:bodyData];
+
+    // Reset accumulators for this turn.
+    [_accumulated setString:@""];
+    [_toolCallAccumulators removeAllObjects];
+    self.toolCallPending = NO;
 
     self.connection = [[[NSURLConnection alloc] initWithRequest:req delegate:self
                                              startImmediately:YES] autorelease];
@@ -176,7 +302,6 @@
 
 - (void)connection:(NSURLConnection *)connection didReceiveResponse:(NSURLResponse *)response
 {
-    // Reset buffers; we will accumulate SSE chunks.
     [_rawBuffer setData:nil];
 }
 
@@ -189,23 +314,22 @@
 
 - (void)connectionDidFinishLoading:(NSURLConnection *)connection
 {
-    // Flush any remaining partial event.
     [self _parseBufferedChunksForce:YES];
 
+    // Check if AI emitted tool_calls → multi-turn tool use flow.
+    if ([_toolCallAccumulators count] > 0 && _toolCallTurn < _maxToolTurns) {
+        _toolCallTurn++;
+        [self _runPendingToolCalls];
+        return;
+    }
+
+    // Normal completion.
     if ([_delegate respondsToSelector:@selector(networkService:didFinishForConversationID:fullText:)]) {
-        // Also pass the accumulated thinking text via a side channel:
-        // we attach it to the message via the delegate method (delegate
-        // reads it back from the same NetworkService instance if needed).
-        // Easiest path: store it on a property the delegate can read.
         [_delegate networkService:self
              didFinishForConversationID:_conversationID
                              fullText:_accumulated];
     }
 }
-
-// Expose the accumulated thinking text so the delegate (ChatViewController)
-// can attach it to the message after the stream finishes.
-- (NSString *)accumulatedThinking { return [[_thinkingAccumulated copy] autorelease]; }
 
 - (void)connection:(NSURLConnection *)connection didFailWithError:(NSError *)error
 {
@@ -216,6 +340,147 @@
     }
 }
 
+#pragma mark - Tool call execution
+
+- (void)_runPendingToolCalls
+{
+    // Build the assistant tool_calls message and append it to messages,
+    // then for each tool call, run Tavily and append a tool role message.
+    NSMutableArray *newMessages = [NSMutableArray arrayWithArray:self.baseMessages];
+
+    // Append the assistant message that contains the tool_calls.
+    // This is required so the API knows the assistant already emitted these calls.
+    NSMutableArray *toolCallsArray = [NSMutableArray array];
+    for (NSMutableDictionary *tc in _toolCallAccumulators) {
+        NSString *callId = [tc objectForKey:@"id"] ?: @"";
+        NSString *fnName = [tc objectForKey:@"name"] ?: @"tavily_search";
+        NSString *args   = [tc objectForKey:@"arguments"] ?: @"{}";
+        [toolCallsArray addObject:@{
+            @"id": callId,
+            @"type": @"function",
+            @"function": @{
+                @"name": fnName,
+                @"arguments": args
+            }
+        }];
+    }
+    NSDictionary *assistantToolMsg = @{
+        @"role": @"assistant",
+        @"content": _accumulated.length > 0 ? _accumulated : [NSNull null],
+        @"tool_calls": toolCallsArray
+    };
+    [newMessages addObject:assistantToolMsg];
+
+    // Save context for the bg-queue closure.
+    NSMutableArray *toolCallAcc = [NSMutableArray arrayWithArray:_toolCallAccumulators];
+    NSString *tavilyKey = [_tavilyKey copy];
+    NSInteger tavilyMax = _tavilyMaxResults;
+    BOOL useTransit = _useTransit;
+    NSString *transitURL = [_transitURL copy];
+
+    // Notify delegate that we're executing the tool call.
+    if ([_delegate respondsToSelector:@selector(networkService:didReceiveToolCallStartedForConversationID:)]) {
+        [_delegate networkService:self
+     didReceiveToolCallStartedForConversationID:_conversationID];
+    }
+
+    // Run Tavily searches on a background queue (avoid blocking main).
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSMutableArray *toolResults = [NSMutableArray array];
+        for (NSDictionary *tc in toolCallAcc) {
+            NSString *callId = [tc objectForKey:@"id"];
+            NSString *args   = [tc objectForKey:@"arguments"];
+            NSString *fnName = [tc objectForKey:@"name"];
+            if (![fnName isEqualToString:@"tavily_search"]) {
+                @synchronized(toolResults) {
+                    [toolResults addObject:@{
+                        @"role": @"tool",
+                        @"tool_call_id": callId ?: @"",
+                        @"content": [NSString stringWithFormat:@"Error: unknown tool %@", fnName]
+                    }];
+                }
+                continue;
+            }
+            NSData *argsData = [args dataUsingEncoding:NSUTF8StringEncoding];
+            NSDictionary *argsDict = [NSJSONSerialization JSONObjectWithData:argsData
+                                                                      options:0
+                                                                        error:NULL];
+            NSString *query = [argsDict objectForKey:@"query"];
+            if (!query || query.length == 0) {
+                @synchronized(toolResults) {
+                    [toolResults addObject:@{
+                        @"role": @"tool",
+                        @"tool_call_id": callId ?: @"",
+                        @"content": @"Error: missing 'query' argument"
+                    }];
+                }
+                continue;
+            }
+            @try {
+                NetworkService *svc = [[[NetworkService alloc] init] autorelease];
+                NSError *err = nil;
+                NSArray *searchResults = [svc tavilySearchWithQuery:query
+                                                              apiKey:tavilyKey
+                                                         maxResults:tavilyMax
+                                                         useTransit:useTransit
+                                                          transitURL:transitURL
+                                                              error:&err];
+                if (err || !searchResults || [searchResults count] == 0) {
+                    @synchronized(toolResults) {
+                        [toolResults addObject:@{
+                            @"role": @"tool",
+                            @"tool_call_id": callId ?: @"",
+                            @"content": [NSString stringWithFormat:@"Search returned no results: %@", err.localizedDescription ?: @"empty"]
+                        }];
+                    }
+                } else {
+                    NSMutableString *contentStr = [NSMutableString string];
+                    [contentStr appendFormat:@"Search results for \"%@\" (%d):\n", query, (int)[searchResults count]];
+                    NSInteger i = 1;
+                    for (NSDictionary *r in searchResults) {
+                        [contentStr appendFormat:@"%d. %@\n   URL: %@\n   %@\n\n",
+                            (int)i++,
+                            [r objectForKey:@"title"],
+                            [r objectForKey:@"url"],
+                            [r objectForKey:@"content"]];
+                    }
+                    @synchronized(toolResults) {
+                        [toolResults addObject:@{
+                            @"role": @"tool",
+                            @"tool_call_id": callId ?: @"",
+                            @"content": contentStr
+                        }];
+                    }
+                }
+            } @catch (NSException *e) {
+                @synchronized(toolResults) {
+                    [toolResults addObject:@{
+                        @"role": @"tool",
+                        @"tool_call_id": callId ?: @"",
+                        @"content": [NSString stringWithFormat:@"Exception: %@", e.reason]
+                    }];
+                }
+            }
+        }
+        // Append tool results to messages.
+        for (NSDictionary *tr in toolResults) {
+            [newMessages addObject:tr];
+        }
+        self.baseMessages = newMessages;
+
+        // Reset accumulators and re-launch stream on main.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self->_accumulated setString:@""];
+            [self->_toolCallAccumulators removeAllObjects];
+            self.toolCallPending = NO;
+            [self _launchStreamWithMessages:self.baseMessages];
+        });
+    });
+}
+
+// Expose the accumulated thinking text.
+- (NSString *)accumulatedThinking { return [[_thinkingAccumulated copy] autorelease]; }
+
 #pragma mark - SSE chunk parsing
 
 - (void)_parseBufferedChunks
@@ -225,16 +490,12 @@
 
 - (void)_parseBufferedChunksForce:(BOOL)force
 {
-    // SSE framing: an event block ends with a blank line (\n\n or \r\n\r\n).
-    // Within the block, lines starting with "data:" carry JSON payloads.
-    // The literal "data: [DONE]" marker terminates the stream.
     if ([_rawBuffer length] == 0) return;
 
     NSData *data = _rawBuffer;
     NSString *text = [[[NSString alloc] initWithData:data
                                              encoding:NSUTF8StringEncoding] autorelease];
     if (!text) {
-        // Maybe non-UTF8 chunk; ignore until we have a full frame.
         if (!force) return;
         text = @"";
     }
@@ -242,7 +503,6 @@
     NSArray *components = [text componentsSeparatedByString:@"\n\n"];
     NSUInteger count   = [components count];
 
-    // If we don't have a trailing \n\n, the last chunk is partial — keep it.
     NSUInteger lastCompleteIdx = (force ? count - 1 : count - 2);
 
     for (NSUInteger i = 0; i <= lastCompleteIdx; i++) {
@@ -250,14 +510,12 @@
         [self _processEventBlock:eventBlock];
     }
 
-    // Re-retain the remaining partial chunk (if any).
     NSUInteger remainingStart = lastCompleteIdx + 1;
     if (remainingStart < count) {
-        // Find byte offset of the remaining chunk to slice the buffer properly.
         NSUInteger consumedBytes = 0;
         for (NSUInteger i = 0; i < remainingStart; i++) {
             consumedBytes += [[components objectAtIndex:i] lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
-            consumedBytes += 2; // the "\n\n" separator
+            consumedBytes += 2;
         }
         if (consumedBytes < [_rawBuffer length]) {
             NSData *leftover = [_rawBuffer subdataWithRange:NSMakeRange(consumedBytes,
@@ -284,8 +542,6 @@
         payload = [payload stringByTrimmingCharactersInSet:
                    [NSCharacterSet whitespaceCharacterSet]];
         if ([payload isEqualToString:@"[DONE]"]) {
-            // Stream end. We'll just stop appending; the finish callback
-            // is fired from connectionDidFinishLoading:.
             return;
         }
         if (payload.length == 0) continue;
@@ -309,13 +565,7 @@
             [_accumulated appendString:content];
         }
 
-        // === Reasoning / thinking content (separate from answer) ===
-        // Different providers use different keys:
-        //   - Zhipu GLM-4 flash thinking: delta.reasoning_content
-        //   - DeepSeek: delta.reasoning_content
-        //   - OpenAI o1: delta.reasoning (non-streaming only — o1 doesn't stream reasoning)
-        //   - Anthropic-via-transit: delta.thinking
-        //   - Some custom transit: delta.thinking_content
+        // === Reasoning / thinking ===
         NSString *reasoning = [delta objectForKey:@"reasoning_content"];
         if (![reasoning isKindOfClass:[NSString class]] || reasoning.length == 0) {
             reasoning = [delta objectForKey:@"reasoning"];
@@ -328,12 +578,58 @@
         }
         if ([reasoning isKindOfClass:[NSString class]] && reasoning.length > 0) {
             [_thinkingAccumulated appendString:reasoning];
-            // Push incremental thinking to delegate if it implements it.
             if ([_delegate respondsToSelector:@selector(networkService:didReceiveThinkingForConversationID:thinkingText:)]) {
                 NSString *thinkCopy = [NSString stringWithString:_thinkingAccumulated];
                 [_delegate networkService:self
      didReceiveThinkingForConversationID:_conversationID
                                thinkingText:thinkCopy];
+            }
+        }
+
+        // === Tool calls (function calls emitted by AI) ===
+        NSArray *deltaToolCalls = [delta objectForKey:@"tool_calls"];
+        if ([deltaToolCalls isKindOfClass:[NSArray class]]) {
+            for (NSUInteger i = 0; i < [deltaToolCalls count]; i++) {
+                NSDictionary *tc = [deltaToolCalls objectAtIndex:i];
+                if (![tc isKindOfClass:[NSDictionary class]]) continue;
+                NSNumber *idxNum = [tc objectForKey:@"index"];
+                NSInteger idx = idxNum ? [idxNum integerValue] : (NSInteger)i;
+                // Get or create accumulator for this index.
+                NSMutableDictionary *acc = nil;
+                for (NSMutableDictionary *d in _toolCallAccumulators) {
+                    if ([[d objectForKey:@"__index"] integerValue] == idx) {
+                        acc = d;
+                        break;
+                    }
+                }
+                if (!acc) {
+                    acc = [NSMutableDictionary dictionary];
+                    [acc setObject:[NSNumber numberWithInteger:idx] forKey:@"__index"];
+                    [acc setObject:[NSMutableString string] forKey:@"arguments"];
+                    [_toolCallAccumulators addObject:acc];
+                }
+                // Update id / function name (only present on first chunk for the call).
+                NSString *tcId = [tc objectForKey:@"id"];
+                if (tcId) [acc setObject:tcId forKey:@"id"];
+                NSDictionary *fn = [tc objectForKey:@"function"];
+                if ([fn isKindOfClass:[NSDictionary class]]) {
+                    NSString *name = [fn objectForKey:@"name"];
+                    if (name) [acc setObject:name forKey:@"name"];
+                    NSString *argsDelta = [fn objectForKey:@"arguments"];
+                    if ([argsDelta isKindOfClass:[NSString class]]) {
+                        [[acc objectForKey:@"arguments"] appendString:argsDelta];
+                    }
+                }
+            }
+            // Notify the delegate that a tool call has been received.
+            if ([_delegate respondsToSelector:@selector(networkService:didReceiveToolCallForConversationID:toolName:)]) {
+                NSString *toolName = nil;
+                if ([_toolCallAccumulators count] > 0) {
+                    toolName = [[_toolCallAccumulators lastObject] objectForKey:@"name"];
+                }
+                [_delegate networkService:self
+       didReceiveToolCallForConversationID:_conversationID
+                                toolName:toolName ?: @"tavily_search"];
             }
         }
 
@@ -355,6 +651,15 @@
     [_thinkingAccumulated release];
     [_conversationID release];
     [_lastError release];
+    [_toolCallAccumulators release];
+    [_pendingToolMessages release];
+    [_transitURL release];
+    [_baseURL release];
+    [_provider release];
+    [_apiKey release];
+    [_model release];
+    [_baseMessages release];
+    [_tavilyKey release];
     [super dealloc];
 }
 

@@ -40,6 +40,28 @@
                         messages:(NSArray *)messages
                   conversationID:(NSString *)conversationID;
 
+// v261018: streaming chat with web-search tools enabled.
+// When enableWebSearchTools=YES, the request body includes a `tools`
+// array defining a `tavily_search` function. The AI can autonomously
+// decide whether to call it (and may call it multiple times). When the
+// AI emits tool_calls, this service suspends the stream, runs the
+// Tavily search, appends the result as a `tool` role message, and
+// re-launches the stream with the augmented message history.
+//
+// `tavilyKey` and `tavilyMaxResults` are required when enableTools=YES.
+- (BOOL)streamChatWithUseTransit:(BOOL)useTransit
+                       transitURL:(NSString *)transitURL
+                         baseURL:(NSString *)baseURL
+                         provider:(NSString *)provider
+                          apiKey:(NSString *)apiKey
+                           model:(NSString *)model
+                     temperature:(CGFloat)temperature
+                        messages:(NSArray *)messages
+                  conversationID:(NSString *)conversationID
+            enableWebSearchTools:(BOOL)enableTools
+                      tavilyKey:(NSString *)tavilyKey
+                tavilyMaxResults:(NSInteger)tavilyMaxResults;
+
 // Cancel an in-flight stream.
 - (void)cancel;
 
@@ -95,6 +117,16 @@
 - (void)networkService:(NetworkService *)svc
 didReceiveThinkingForConversationID:(NSString *)conversationID
                           thinkingText:(NSString *)thinkingText;
+// Fired when the AI emits a tool_call (function call). The delegate can
+// update the UI to show "AI is calling tavily_search...".
+- (void)networkService:(NetworkService *)svc
+didReceiveToolCallForConversationID:(NSString *)conversationID
+                          toolName:(NSString *)toolName;
+// Fired when the service has finished collecting tool_calls and is
+// about to execute them and re-launch the stream. Useful for showing
+// "Running tool..." status.
+- (void)networkService:(NetworkService *)svc
+didReceiveToolCallStartedForConversationID:(NSString *)conversationID;
 - (void)networkService:(NetworkService *)svc
  didFinishForConversationID:(NSString *)conversationID
                        fullText:(NSString *)fullText;

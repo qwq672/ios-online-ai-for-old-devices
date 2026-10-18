@@ -70,6 +70,10 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         UIBarButtonItem *done = [[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(_keyboardDone)] autorelease];
         kbdToolbar.items = [NSArray arrayWithObjects:flex, done, nil];
         _textView.inputAccessoryView = kbdToolbar;
+        // Dark-mode keyboard appearance.
+        if ([iOS6Theme isDarkMode] && [_textView respondsToSelector:@selector(setKeyboardAppearance:)]) {
+            [_textView setKeyboardAppearance:UIKeyboardAppearanceAlert];
+        }
         [self addSubview:_textView];
 
         // Image button — use custom type so we can fully control background.
@@ -160,6 +164,12 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     _webSearchButton.backgroundColor = [iOS6Theme buttonBackgroundColor];
     _webSearchButton.layer.borderColor = [[iOS6Theme hairlineColor] CGColor];
     _sendButton.backgroundColor = [iOS6Theme tintColor];
+    // Set keyboard appearance based on theme — alert style = dark keyboard.
+    if ([iOS6Theme isDarkMode] && [_textView respondsToSelector:@selector(setKeyboardAppearance:)]) {
+        [_textView setKeyboardAppearance:UIKeyboardAppearanceAlert];
+    } else if ([_textView respondsToSelector:@selector(setKeyboardAppearance:)]) {
+        [_textView setKeyboardAppearance:UIKeyboardAppearanceDefault];
+    }
     [self _refreshToggleVisuals];
     [self setNeedsLayout];
 }

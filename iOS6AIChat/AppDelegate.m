@@ -39,33 +39,35 @@
     UINavigationController *historyNav= [[[UINavigationController alloc] initWithRootViewController:historyVC] autorelease];
     UINavigationController *settingsNav= [[[UINavigationController alloc] initWithRootViewController:settingsVC] autorelease];
 
-    // Style chat + history with system icons; settings uses a custom-drawn
-    // gear icon (UITabBarSystemItemMore is too generic, UITabBarSystemItemContacts
-    // is misleading).
-    // Create tab bar items with custom images at init time (avoids double-tap bug).
+    // Apply current theme to navbars + tabbar.
+    [self _applyThemeToNavs:@[chatNav, historyNav, settingsNav]];
+
+    // Custom-drawn tab icons (system items are too generic for settings).
     UIImage *chatIcon = [IconDrawing imageForType:IconTypeChatBubble size:CGSizeMake(30, 30) color:[UIColor blackColor]];
     chatNav.tabBarItem = [[[UITabBarItem alloc] initWithTitle:NSLocalizedString(@"聊天", nil) image:chatIcon tag:0] autorelease];
-    chatNav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-    chatNav.navigationBar.tintColor = [iOS6Theme tintColor];
-    chatNav.navigationBar.translucent = NO;
-    chatNav.topViewController.title = NSLocalizedString(@"聊天", nil);
     UIImage *historyIcon = [IconDrawing imageForType:IconTypeClock size:CGSizeMake(30, 30) color:[UIColor blackColor]];
     historyNav.tabBarItem = [[[UITabBarItem alloc] initWithTitle:NSLocalizedString(@"历史", nil) image:historyIcon tag:0] autorelease];
-    historyNav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-    historyNav.navigationBar.tintColor = [iOS6Theme tintColor];
-    historyNav.navigationBar.translucent = NO;
-    historyNav.topViewController.title = NSLocalizedString(@"历史", nil);
     UIImage *gearIcon = [IconDrawing imageForType:IconTypeGear size:CGSizeMake(30, 30) color:[UIColor blackColor]];
     settingsNav.tabBarItem = [[[UITabBarItem alloc] initWithTitle:NSLocalizedString(@"设置", nil) image:gearIcon tag:0] autorelease];
-    settingsNav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-    settingsNav.navigationBar.tintColor = [iOS6Theme tintColor];
-    settingsNav.navigationBar.translucent = NO;
+    chatNav.topViewController.title = NSLocalizedString(@"聊天", nil);
+    historyNav.topViewController.title = NSLocalizedString(@"历史", nil);
     settingsNav.topViewController.title = NSLocalizedString(@"设置", nil);
 
     UITabBarController *tbc = [[[UITabBarController alloc] init] autorelease];
     tbc.viewControllers = [NSArray arrayWithObjects:chatNav, historyNav, settingsNav, nil];
     [iOS6Theme styleTabBarController:tbc];
     self.tabBarController = tbc;
+
+    // Status bar — match dark/light theme. iOS 6 only has Default
+    // (black text) and LightContent (white text, iOS 7+).
+    // On iOS 6, the status bar is always dark text on light bg unless
+    // we use UIStatusBarStyleBlackOpaque. For dark mode, that's the
+    // closest we can get — combined with a dark navbar it looks OK.
+    if ([iOS6Theme isDarkMode]) {
+        application.statusBarStyle = UIStatusBarStyleBlackOpaque;
+    } else {
+        application.statusBarStyle = UIStatusBarStyleDefault;
+    }
 
     self.window.rootViewController = tbc;
     [self.window makeKeyAndVisible];
@@ -79,19 +81,30 @@
     return YES;
 }
 
-- (void)_themeChanged
+- (void)_applyThemeToNavs:(NSArray *)navs
 {
-    // Re-style all three navigation controllers + the tab bar controller
-    // with the current theme palette.
-    UITabBarController *tbc = self.tabBarController;
-    NSArray *navs = tbc.viewControllers;
     for (NSUInteger i = 0; i < [navs count]; i++) {
         UINavigationController *nav = [navs objectAtIndex:i];
         nav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
         nav.navigationBar.tintColor = [iOS6Theme tintColor];
+        nav.navigationBar.translucent = NO;
     }
+}
 
+- (void)_themeChanged
+{
+    UITabBarController *tbc = self.tabBarController;
+    [self _applyThemeToNavs:tbc.viewControllers];
     [iOS6Theme styleTabBarController:tbc];
+    // Status bar follow theme.
+    UIApplication *app = [UIApplication sharedApplication];
+    if ([iOS6Theme isDarkMode]) {
+        app.statusBarStyle = UIStatusBarStyleBlackOpaque;
+    } else {
+        app.statusBarStyle = UIStatusBarStyleDefault;
+    }
+    // Force a redraw.
+    [tbc.view setNeedsDisplay];
 }
 
 - (void)applicationWillResignActive:(UIApplication *)application {}
