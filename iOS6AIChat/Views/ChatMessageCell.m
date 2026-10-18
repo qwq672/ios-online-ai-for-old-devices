@@ -65,11 +65,13 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     @synchronized(gExpandedThinking) {
         if (e) [gExpandedThinking setObject:@"1" forKey:mid];
         else [gExpandedThinking removeObjectForKey:mid];
-        // Invalidate the height cache for this message — the row height
-        // changed since the expand/collapse state affects it.
-        for (NSString *key in [gHeightCache allKeys]) {
-            if ([key hasPrefix:mid]) [gHeightCache removeObjectForKey:key];
-        }
+        // NSCache on iOS 6 doesn't expose `allKeys`, so we can't
+        // selectively invalidate entries by message ID prefix.
+        // Just flush the whole height cache — it'll be re-populated
+        // lazily as the table view queries heightForRow again.
+        // The cost is one extra Markdown re-render pass per visible
+        // message, which is acceptable for a tap-driven action.
+        [gHeightCache removeAllObjects];
     }
 }
 
