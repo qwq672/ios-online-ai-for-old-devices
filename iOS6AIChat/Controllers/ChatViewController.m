@@ -68,6 +68,14 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
 - (void)dealloc
 {
+    // Cancel any in-flight stream + nil the NetworkService's delegate
+    // before release. Otherwise the NSURLConnection inside NetworkService
+    // retains NetworkService across its lifetime, and its `_delegate`
+    // assign-ivar would dangle after this VC is freed — leading to
+    // EXC_BAD_ACCESS when the next SSE chunk arrives. (Audit #2, #3.)
+    [_networkService cancel];
+    _networkService.delegate = nil;
+
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_tableView release];
     [_conversation release];

@@ -296,13 +296,36 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         UIGraphicsEndImageContext();
     }
     }
-    // maxDim == 0: send original image (no resize).
-    NSData *jpegData = UIImageJPEGRepresentation(image, 0.7);
-    if (!jpegData) return;
-    NSString *base64 = [jpegData base64String]; // uses our NSDataBase64 category
-    NSString *dataUrl = [NSString stringWithFormat:@"data:image/jpeg;base64,%@", base64];
-    [_pendingImages addObject:dataUrl];
-    [self _refreshToggleVisuals];
+    // Show a placeholder badge while encoding runs on bg queue.
+    // For a 12MP iPhone photo, UIImageJPEGRepresentation + base64
+    // can take 1-3s on an iOS 6 device's A4/A5 CPU — that would
+    // freeze the UI if run on main. (Audit finding #4.)
+    _imageBadge.hidden = NO;
+    _imageBadge.text = @"…";
+    UIImage *capturedImage = [image retain];  // MRC: bg queue retains
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        @try {
+            NSData *jpegData = UIImageJPEGRepresentation(capturedImage, 0.7);
+            NSString *base64 = jpegData ? [jpegData base64String] : nil;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [capturedImage release];
+                if (base64.length == 0) {
+                    // Encoding failed — show empty badge state.
+                    _imageBadge.hidden = YES;
+                    return;
+                }
+                NSString *dataUrl = [NSString stringWithFormat:@"data:image/jpeg;base64,%@", base64];
+                [_pendingImages addObject:dataUrl];
+                [self _refreshToggleVisuals];
+            });
+        } @catch (NSException *e) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [capturedImage release];
+                _imageBadge.hidden = YES;
+            });
+        }
+    });
 }
 
 - (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker

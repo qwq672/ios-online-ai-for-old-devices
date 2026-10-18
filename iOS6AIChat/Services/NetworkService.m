@@ -300,6 +300,11 @@
     [_toolCallAccumulators removeAllObjects];
     self.toolCallPending = NO;
 
+    // Cancel any in-flight connection before starting a new one — otherwise
+    // both connections will dispatch into the same accumulators / delegate,
+    // corrupting state. This was audit finding #8.
+    [_connection cancel];
+
     self.connection = [[[NSURLConnection alloc] initWithRequest:req delegate:self
                                              startImmediately:YES] autorelease];
     return (self.connection != nil);
@@ -307,6 +312,9 @@
 
 - (void)cancel
 {
+    // Nil-out the delegate first so any in-flight callbacks from the
+    // dying connection don't dispatch into a freed VC (audit #2, #3).
+    _delegate = nil;
     [_connection cancel];
 }
 
@@ -514,6 +522,12 @@
 
     NSArray *components = [text componentsSeparatedByString:@"\n\n"];
     NSUInteger count   = [components count];
+
+    // Bug fix: when count == 1 (no complete event block yet), the
+    // original `count - 2` would underflow NSUIntegerMax — crashing
+    // later in the loop. Guard: skip processing entirely until we have
+    // at least one complete block.
+    if (count < 2 && !force) return;
 
     NSUInteger lastCompleteIdx = (force ? count - 1 : count - 2);
 
