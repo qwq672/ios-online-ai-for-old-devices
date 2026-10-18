@@ -368,7 +368,8 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                         assistantMsg:assistantMsg
                           webSearch:webSearch
                           tavilyKey:tavilyKey
-                          tavilyMaxResults:maxResults];
+                          tavilyMaxResults:maxResults
+                        deepThinking:deepThinking];
 }
 
 - (void)_showSearchStatus:(NSString *)msg
@@ -403,6 +404,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                             webSearch:(BOOL)webSearch
                             tavilyKey:(NSString *)tavilyKey
                         tavilyMaxResults:(NSInteger)tavilyMaxResults
+                          deepThinking:(BOOL)deepThinking
 {
     // Build the messages array.
     NSMutableArray *messages = [NSMutableArray array];
