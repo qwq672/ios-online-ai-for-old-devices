@@ -514,6 +514,13 @@
             NSString *callId = [tc objectForKey:@"id"];
             NSString *args   = [tc objectForKey:@"arguments"];
             NSString *fnName = [tc objectForKey:@"name"];
+            // Defensive: JSON null becomes NSNull singleton, which doesn't
+            // respond to NSString methods. Coerce NSNull → nil/empty so
+            // isEqualToString: doesn't crash. (User-reported crash:
+            // -[NSNull isEqualToString:]: unrecognized selector)
+            if (![callId isKindOfClass:[NSString class]]) callId = nil;
+            if (![args isKindOfClass:[NSString class]])   args = @"{}";
+            if (![fnName isKindOfClass:[NSString class]]) fnName = @"";
 
             // === get_current_time =========================================
             // Returns: {iso8601, timezone, day_of_week}
@@ -618,8 +625,11 @@
                 NSDictionary *argsDict = [NSJSONSerialization JSONObjectWithData:argsData
                                                                           options:0
                                                                             error:NULL];
-                NSString *prompt = [argsDict objectForKey:@"prompt"];
-                NSString *size = [argsDict objectForKey:@"size"];
+                // Defensive: prompt/size might be NSNull.
+                id promptRaw = [argsDict objectForKey:@"prompt"];
+                NSString *prompt = [promptRaw isKindOfClass:[NSString class]] ? promptRaw : nil;
+                id sizeRaw = [argsDict objectForKey:@"size"];
+                NSString *size = [sizeRaw isKindOfClass:[NSString class]] ? sizeRaw : nil;
                 if (!prompt || prompt.length == 0) {
                     @synchronized(toolResults) {
                         [toolResults addObject:@{
@@ -703,7 +713,9 @@
             NSDictionary *argsDict = [NSJSONSerialization JSONObjectWithData:argsData
                                                                       options:0
                                                                         error:NULL];
-            NSString *query = [argsDict objectForKey:@"query"];
+            // Defensive: query might be NSNull if AI emits "query": null.
+            id queryRaw = [argsDict objectForKey:@"query"];
+            NSString *query = [queryRaw isKindOfClass:[NSString class]] ? queryRaw : nil;
             if (!query || query.length == 0) {
                 @synchronized(toolResults) {
                     [toolResults addObject:@{
@@ -954,12 +966,19 @@
                     [_toolCallAccumulators addObject:acc];
                 }
                 // Update id / function name (only present on first chunk for the call).
+                // Defensive: JSON null becomes NSNull singleton — guard
+                // against storing NSNull (which would later crash
+                // isEqualToString: in the tool dispatch).
                 NSString *tcId = [tc objectForKey:@"id"];
-                if (tcId) [acc setObject:tcId forKey:@"id"];
+                if ([tcId isKindOfClass:[NSString class]]) {
+                    [acc setObject:tcId forKey:@"id"];
+                }
                 NSDictionary *fn = [tc objectForKey:@"function"];
                 if ([fn isKindOfClass:[NSDictionary class]]) {
                     NSString *name = [fn objectForKey:@"name"];
-                    if (name) [acc setObject:name forKey:@"name"];
+                    if ([name isKindOfClass:[NSString class]]) {
+                        [acc setObject:name forKey:@"name"];
+                    }
                     NSString *argsDelta = [fn objectForKey:@"arguments"];
                     if ([argsDelta isKindOfClass:[NSString class]]) {
                         [[acc objectForKey:@"arguments"] appendString:argsDelta];

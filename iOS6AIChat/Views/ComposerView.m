@@ -228,8 +228,24 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 + (BOOL)webSearchEnabled { NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyWebSearch]; return n ? [n boolValue] : NO; }
 + (void)setWebSearchEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyWebSearch]; [[NSUserDefaults standardUserDefaults] synchronize]; }
 
-- (void)_deepThinkingTapped { BOOL v = ![[self class] deepThinkingEnabled]; [[self class] setDeepThinkingEnabled:v]; [self _refreshToggleVisuals]; }
-- (void)_webSearchTapped { BOOL v = ![[self class] webSearchEnabled]; [[self class] setWebSearchEnabled:v]; [self _refreshToggleVisuals]; }
+- (void)_deepThinkingTapped {
+    @try {
+        BOOL v = ![[self class] deepThinkingEnabled];
+        [[self class] setDeepThinkingEnabled:v];
+        [self _refreshToggleVisuals];
+    } @catch (NSException *e) {
+        NSLog(@"[ComposerView] _deepThinkingTapped crashed: %@", e);
+    }
+}
+- (void)_webSearchTapped {
+    @try {
+        BOOL v = ![[self class] webSearchEnabled];
+        [[self class] setWebSearchEnabled:v];
+        [self _refreshToggleVisuals];
+    } @catch (NSException *e) {
+        NSLog(@"[ComposerView] _webSearchTapped crashed: %@", e);
+    }
+}
 
 - (void)_keyboardDone { [_textView resignFirstResponder]; }
 

@@ -79,19 +79,25 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     NSAttributedString *cached = [gRenderedAttrCache objectForKey:cacheKey];
     if (cached) return cached;
     UIFont *base = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
-    // Wrap MarkdownParser in @try — some unusual content (very long
-    // lines, unusual unicode, edge-case markdown) can crash the parser
-    // during streaming. Fall back to plain attributed string.
     NSAttributedString *attr = nil;
-    @try {
-        attr = [MarkdownParser attributedStringFromMarkdown:message.content
-                                                     baseFont:base
-                                                        width:width];
-    } @catch (NSException *e) {
-        // Fall back to plain rendering with the base font.
+    // For very long content (>10K chars), skip Markdown parsing — it's
+    // too slow and can cause memory pressure on iOS 6. Use plain text
+    // rendering instead. (User-reported crash: app dies when AI
+    // generates a lot of text.)
+    if (message.content.length > 10000) {
         attr = [[[NSAttributedString alloc] initWithString:(message.content ?: @"")
                                                 attributes:@{NSFontAttributeName: base,
                                                               NSForegroundColorAttributeName: [iOS6Theme textColor]}] autorelease];
+    } else {
+        @try {
+            attr = [MarkdownParser attributedStringFromMarkdown:message.content
+                                                         baseFont:base
+                                                            width:width];
+        } @catch (NSException *e) {
+            attr = [[[NSAttributedString alloc] initWithString:(message.content ?: @"")
+                                                    attributes:@{NSFontAttributeName: base,
+                                                                  NSForegroundColorAttributeName: [iOS6Theme textColor]}] autorelease];
+        }
     }
     if (attr) {
         [gRenderedAttrCache setObject:attr forKey:cacheKey
