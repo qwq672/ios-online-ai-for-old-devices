@@ -29,6 +29,8 @@
 //
 
 #import "NetworkService.h"
+#import <UIKit/UIKit.h>
+#import <sys/sysctl.h>
 
 @interface NetworkService ()
 @property (nonatomic, retain) NSURLConnection *connection;
@@ -253,9 +255,43 @@
     if (doThink) {
         [body setObject:@{@"type": @"enabled"} forKey:@"thinking"];
     }
-    // If web search tools enabled, add tools + tool_choice.
+    // Tools array. The two lightweight tools (get_current_time,
+    // get_device_info) are ALWAYS available — they don't need any user
+    // config and are useful for time/device queries. tavily_search is
+    // only added when web search is enabled.
+    NSMutableArray *toolsArray = [NSMutableArray array];
+
+    // Tool 1: get_current_time — always available.
+    [toolsArray addObject:@{
+        @"type": @"function",
+        @"function": @{
+            @"name": @"get_current_time",
+            @"description": @"Get the current date, time, timezone, and day of week on the user's device. Use this when the user asks about the current time, today's date, what day it is, or any time-sensitive query.",
+            @"parameters": @{
+                @"type": @"object",
+                @"properties": @{},
+                @"required": @[]
+            }
+        }
+    }];
+
+    // Tool 2: get_device_info — always available.
+    [toolsArray addObject:@{
+        @"type": @"function",
+        @"function": @{
+            @"name": @"get_device_info",
+            @"description": @"Get information about the user's device: hardware model identifier (e.g. iPhone4,1), iOS version, battery level, screen size, language. Use this when the user asks about their device or for debugging.",
+            @"parameters": @{
+                @"type": @"object",
+                @"properties": @{},
+                @"required": @[]
+            }
+        }
+    }];
+
+    // Tool 3: tavily_search — only when web search is enabled.
     if (self.enableWebSearchTools && self.tavilyKey.length > 0) {
-        NSDictionary *tavilyTool = @{
+        [toolsArray addObject:@{
             @"type": @"function",
             @"function": @{
                 @"name": @"tavily_search",
@@ -271,8 +307,11 @@
                     @"required": @[@"query"]
                 }
             }
-        };
-        [body setObject:[NSArray arrayWithObject:tavilyTool] forKey:@"tools"];
+        }];
+    }
+
+    if ([toolsArray count] > 0) {
+        [body setObject:toolsArray forKey:@"tools"];
         [body setObject:@"auto" forKey:@"tool_choice"];
     }
 
@@ -447,6 +486,102 @@
             NSString *callId = [tc objectForKey:@"id"];
             NSString *args   = [tc objectForKey:@"arguments"];
             NSString *fnName = [tc objectForKey:@"name"];
+
+            // === get_current_time =========================================
+            // Returns: {iso8601, timezone, day_of_week}
+            // No parameters needed.
+            if ([fnName isEqualToString:@"get_current_time"]) {
+                NSDate *now = [NSDate date];
+                NSDateFormatter *isoFmt = [[[NSDateFormatter alloc] init] autorelease];
+                [isoFmt setDateFormat:@"yyyy-MM-dd'T'HH:mm:ssZZZZ"];
+                NSString *iso = [isoFmt stringFromDate:now];
+                NSDateFormatter *dowFmt = [[[NSDateFormatter alloc] init] autorelease];
+                [dowFmt setDateFormat:@"EEEE"];
+                NSString *dow = [dowFmt stringFromDate:now];
+                NSTimeZone *tz = [NSTimeZone systemTimeZone];
+                NSString *contentStr = [NSString stringWithFormat:
+                    @"{\n  \"iso8601\": \"%@\",\n  \"timezone\": \"%@\",\n  \"timezone_abbreviation\": \"%@\",\n  \"day_of_week\": \"%@\",\n  \"unix_timestamp\": %.0f\n}",
+                    iso,
+                    [tz name],
+                    [tz abbreviation],
+                    dow,
+                    [now timeIntervalSince1970]];
+                @synchronized(toolResults) {
+                    [toolResults addObject:@{
+                        @"role": @"tool",
+                        @"tool_call_id": callId ?: @"",
+                        @"content": contentStr
+                    }];
+                }
+                continue;
+            }
+
+            // === get_device_info ==========================================
+            // Returns: {model, hardware_identifier, system_version, battery,
+            //           screen_width, screen_height, language, locale}
+            // No parameters needed.
+            if ([fnName isEqualToString:@"get_device_info"]) {
+                UIDevice *device = [UIDevice currentDevice];
+                [device setBatteryMonitoringEnabled:YES];
+                float batteryLevel = [device batteryLevel];
+                NSString *batteryStr;
+                if (batteryLevel < 0) {
+                    batteryStr = @"unknown";
+                } else {
+                    batteryStr = [NSString stringWithFormat:@"%.0f%%", batteryLevel * 100.0f];
+                }
+                UIDeviceBatteryState batteryState = [device batteryState];
+                NSString *batteryStateStr;
+                switch (batteryState) {
+                    case UIDeviceBatteryStateUnplugged: batteryStateStr = @"unplugged"; break;
+                    case UIDeviceBatteryStateCharging:  batteryStateStr = @"charging"; break;
+                    case UIDeviceBatteryStateFull:      batteryStateStr = @"full"; break;
+                    default:                             batteryStateStr = @"unknown"; break;
+                }
+                // Get hardware identifier (e.g. "iPhone4,1") via sysctl.
+                NSString *hwMachine = @"unknown";
+                @try {
+                    size_t size = 0;
+                    sysctlbyname("hw.machine", NULL, &size, NULL, 0);
+                    if (size > 0) {
+                        char *machine = (char *)malloc(size);
+                        if (machine) {
+                            sysctlbyname("hw.machine", machine, &size, NULL, 0);
+                            hwMachine = [NSString stringWithCString:machine
+                                                            encoding:NSUTF8StringEncoding] ?: @"unknown";
+                            free(machine);
+                        }
+                    }
+                } @catch (NSException *e) { /* fall back to "unknown" */ }
+                CGRect screen = [[UIScreen mainScreen] bounds];
+                NSString *lang = [[NSLocale preferredLanguages] objectAtIndex:0] ?: @"unknown";
+                NSLocale *locale = [NSLocale currentLocale];
+                NSString *localeId = [locale localeIdentifier] ?: @"unknown";
+                NSString *contentStr = [NSString stringWithFormat:
+                    @"{\n  \"model\": \"%@\",\n  \"hardware_identifier\": \"%@\",\n  \"system_version\": \"%@\",\n  \"system_name\": \"%@\",\n  \"battery_level\": \"%@\",\n  \"battery_state\": \"%@\",\n  \"screen_width\": %.0f,\n  \"screen_height\": %.0f,\n  \"screen_scale\": %.1f,\n  \"language\": \"%@\",\n  \"locale\": \"%@\"\n}",
+                    [device model] ?: @"unknown",
+                    hwMachine,
+                    [device systemVersion] ?: @"unknown",
+                    [device systemName] ?: @"unknown",
+                    batteryStr,
+                    batteryStateStr,
+                    screen.size.width,
+                    screen.size.height,
+                    [[UIScreen mainScreen] scale],
+                    lang,
+                    localeId];
+                @synchronized(toolResults) {
+                    [toolResults addObject:@{
+                        @"role": @"tool",
+                        @"tool_call_id": callId ?: @"",
+                        @"content": contentStr
+                    }];
+                }
+                continue;
+            }
+
+            // === tavily_search ============================================
+            // Existing handler — search the web via Tavily.
             if (![fnName isEqualToString:@"tavily_search"]) {
                 @synchronized(toolResults) {
                     [toolResults addObject:@{
