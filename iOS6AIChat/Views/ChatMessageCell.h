@@ -34,7 +34,7 @@
 @property (nonatomic, retain) Message          *message;
 @property (nonatomic, retain) NSAttributedString *renderedAttr;
 @property (nonatomic, retain) UIButton *regenerateButton;  // AI reply only
-@property (nonatomic, retain) UIButton *copyButton;         // AI reply only
+@property (nonatomic, retain) UIButton *clipboardButton;    // AI reply only (copy)
 
 // Convenience sizing helper — computes the height required to display
 // the given message at the given width, accounting for text wrapping.

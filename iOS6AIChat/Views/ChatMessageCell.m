@@ -20,6 +20,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import "NSDataBase64.h"
 #import "MarkdownParser.h"
+#import "IconDrawing.h"
 
 // ---- Global image cache (one per app, shared across cells) --------------
 // NSCache auto-evicts under memory pressure so we don't blow up.
@@ -47,7 +48,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 @synthesize thinkingBlock=_thinkingBlock, thinkingToggle=_thinkingToggle,
             thinkingLabel=_thinkingLabel, thinkingSep=_thinkingSep,
             delegate=_delegate,
-            regenerateButton=_regenerateButton, copyButton=_copyButton;
+            regenerateButton=_regenerateButton, clipboardButton=_clipboardButton;
 
 #pragma mark - Cache management (class methods)
 
@@ -246,16 +247,16 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         _regenerateButton.hidden = YES;
         [self.contentView addSubview:_regenerateButton];
 
-        _copyButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        _copyButton.frame = CGRectMake(0, 0, 36, 24);
-        [_copyButton setImage:[IconDrawing imageForType:IconTypeCopy
+        _clipboardButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _clipboardButton.frame = CGRectMake(0, 0, 36, 24);
+        [_clipboardButton setImage:[IconDrawing imageForType:IconTypeCopy
                                                     size:CGSizeMake(16, 16)
                                                    color:[iOS6Theme secondaryTextColor]]
                    forState:UIControlStateNormal];
-        [_copyButton addTarget:self action:@selector(_copyTapped)
+        [_clipboardButton addTarget:self action:@selector(_copyTapped)
                       forControlEvents:UIControlEventTouchUpInside];
-        _copyButton.hidden = YES;
-        [self.contentView addSubview:_copyButton];
+        _clipboardButton.hidden = YES;
+        [self.contentView addSubview:_clipboardButton];
 
         // Listen for theme changes.
         [[NSNotificationCenter defaultCenter] addObserver:self
@@ -301,7 +302,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     self.renderedAttr = nil;
     _textView.attributedText = nil;
     _regenerateButton.hidden = YES;
-    _copyButton.hidden = YES;
+    _clipboardButton.hidden = YES;
 }
 
 - (void)_setCurrentMessageKey:(NSString *)key
@@ -552,14 +553,14 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // === Action buttons (regenerate + copy) — AI assistant only ===
     BOOL showButtons = !_message.isUser && _message.content.length > 0;
     _regenerateButton.hidden = !showButtons;
-    _copyButton.hidden = !showButtons;
+    _clipboardButton.hidden = !showButtons;
     if (showButtons) {
         CGFloat btnY = bubbleY + bubbleHeight + 2;
         CGFloat btnW = 36, btnH = 24, btnGap = 4;
         // Left-align buttons under the bubble.
         CGFloat regenX = bubbleX;
         _regenerateButton.frame = CGRectMake(regenX, btnY, btnW, btnH);
-        _copyButton.frame = CGRectMake(regenX + btnW + btnGap, btnY, btnW, btnH);
+        _clipboardButton.frame = CGRectMake(regenX + btnW + btnGap, btnY, btnW, btnH);
     }
 }
 
@@ -658,7 +659,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     [_imageViews release];
     [_currentMessageKey release];
     [_regenerateButton release];
-    [_copyButton release];
+    [_clipboardButton release];
     [super dealloc];
 }
 
