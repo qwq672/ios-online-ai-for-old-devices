@@ -334,9 +334,12 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
                        systemIcon:(UITabBarSystemItem)systemIcon
 {
     if (!nav) return;
-    // Dark: UIBarStyleBlack gradient. Light: UIBarStyleDefault gradient.
+    // Custom GREY gradient background (not system blue-tinted barStyle).
+    UIImage *navBg = [self _barGradientImageWithHeight:44];
+    if (navBg) {
+        [nav.navigationBar setBackgroundImage:navBg forBarMetrics:UIBarMetricsDefault];
+    }
     nav.navigationBar.barStyle = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-    [nav.navigationBar setBackgroundImage:nil forBarMetrics:UIBarMetricsDefault];
     nav.navigationBar.tintColor = [self tintColor];
     nav.tabBarItem = [[[UITabBarItem alloc] initWithTabBarSystemItem:systemIcon tag:0] autorelease];
     nav.tabBarItem.title = title;
@@ -347,10 +350,14 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
 + (void)styleTabBarController:(UITabBarController *)tbc
 {
     if (!tbc) return;
-    // Dark mode: UIBarStyleBlack gradient. Light: UIBarStyleDefault gradient.
-    // BUG FIX: performSelector:withObject: was passing NSNumber pointer
-    // as UIBarStyle (a NSUInteger primitive) → garbage value → bars showed
-    // wrong color. Use NSInvocation to pass the primitive correctly.
+    // Create a GREY gradient background image (not the system blue-tinted
+    // barStyle). iOS 6's UIBarStyleBlack/Default both have a blue tint.
+    // App Store / Music app use custom grey gradients. We replicate that.
+    UIImage *bg = [self _barGradientImageWithHeight:49];
+    if (bg && [tbc.tabBar respondsToSelector:@selector(setBackgroundImage:)]) {
+        [tbc.tabBar performSelector:@selector(setBackgroundImage:) withObject:bg];
+    }
+    // Also set barStyle for the tint selection indicator.
     if ([tbc.tabBar respondsToSelector:@selector(setBarStyle:)]) {
         UIBarStyle style = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
         NSMethodSignature *sig = [tbc.tabBar methodSignatureForSelector:@selector(setBarStyle:)];
@@ -362,13 +369,41 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
             [inv invoke];
         }
     }
-    // Clear any custom background image.
-    if ([tbc.tabBar respondsToSelector:@selector(setBackgroundImage:)]) {
-        [tbc.tabBar performSelector:@selector(setBackgroundImage:) withObject:nil];
-    }
     tbc.tabBar.tintColor = [self tintColor];
     [tbc.tabBar setNeedsDisplay];
     [tbc.tabBar setNeedsLayout];
+}
+
+// Create a 1px-wide vertical gradient image for bar backgrounds.
+// Dark mode: dark GREY gradient (#3D3D40 → #1C1C1E) — no blue tint.
+// Light mode: light GREY gradient (#E5E5EA → #C7C7CC) — no blue tint.
+// iOS 6's built-in UIBarStyleBlack/Default have a blue tint — App Store
+// and Music app use custom grey gradient backgrounds instead.
++ (UIImage *)_barGradientImageWithHeight:(CGFloat)height
+{
+    NSString *topHex = [self isDarkMode] ? @"#3D3D40" : @"#E5E5EA";
+    NSString *botHex = [self isDarkMode] ? @"#1C1C1E" : @"#C7C7CC";
+    UIColor *top = [self colorWithHex:topHex];
+    UIColor *bot = [self colorWithHex:botHex];
+
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(1, height), NO, [UIScreen mainScreen].scale);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    CGRect rect = CGRectMake(0, 0, 1, height);
+
+    // Draw vertical gradient (top → bottom).
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    NSArray *colors = [NSArray arrayWithObjects:(id)top.CGColor, (id)bot.CGColor, nil];
+    CGFloat locations[] = {0.0f, 1.0f};
+    CGGradientRef grad = CGGradientCreateWithColors(space, (__bridge CFArrayRef)colors, locations);
+    CGContextDrawLinearGradient(ctx, grad,
+                                CGPointMake(0, 0),
+                                CGPointMake(0, height), 0);
+    CGGradientRelease(grad);
+    CGColorSpaceRelease(space);
+
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return img;  // autoreleased
 }
 
 @end

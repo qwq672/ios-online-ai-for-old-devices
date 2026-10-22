@@ -74,6 +74,10 @@ typedef enum {
 + (UIColor *)thinkingBackgroundColor;          // reasoning block bg (subtle)
 + (UIColor *)thinkingBorderColor;              // reasoning block border
 
+// Internal: create a grey gradient bar background image.
+// Called by AppDelegate for navbar, iOS6Theme for tabbar.
++ (UIImage *)_barGradientImageWithHeight:(CGFloat)height;
+
 // === Drawing helpers ===================================================
 
 + (void)drawLinearGradientInRect:(CGRect)rect
