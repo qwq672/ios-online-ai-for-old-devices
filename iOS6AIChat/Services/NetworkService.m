@@ -29,6 +29,8 @@
 //
 
 #import "NetworkService.h"
+#import "SettingsViewController.h"
+#import "NSDataBase64.h"
 #import <UIKit/UIKit.h>
 #import <sys/sysctl.h>
 
