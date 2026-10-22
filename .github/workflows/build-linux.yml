@@ -73,7 +73,7 @@ jobs:
           cp -R "$BUILT_APP" Payload/
           APP=Payload/iOS6AIChat.app
           if [ ! -f "$APP/Info.plist" ]; then cp iOS6AIChat/Resources/iOS6AIChat-Info.plist "$APP/Info.plist"; fi
-          for icon in Icon.png Icon@2x.png Icon-72.png Icon-72@2x.png; do
+          for icon in Icon.png Icon@2x.png Icon-72.png Icon-72@2x.png lightbulb.png camera.png send.png; do
             [ -f "iOS6AIChat/Resources/Icons/$icon" ] && cp "iOS6AIChat/Resources/Icons/$icon" "$APP/$icon"
           done
           ldid -S "$APP/iOS6AIChat" 2>/dev/null || true
