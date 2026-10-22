@@ -341,13 +341,21 @@
 - (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data
 {
     if (!data) return;
-    [_rawBuffer appendData:data];
-    [self _parseBufferedChunks];
+    @try {
+        [_rawBuffer appendData:data];
+        [self _parseBufferedChunks];
+    } @catch (NSException *e) {
+        NSLog(@"[NetworkService] didReceiveData parse crashed: %@", e);
+    }
 }
 
 - (void)connectionDidFinishLoading:(NSURLConnection *)connection
 {
-    [self _parseBufferedChunksForce:YES];
+    @try {
+        [self _parseBufferedChunksForce:YES];
+    } @catch (NSException *e) {
+        NSLog(@"[NetworkService] didFinish parse crashed: %@", e);
+    }
 
     // Check if AI emitted tool_calls → multi-turn tool use flow.
     if ([_toolCallAccumulators count] > 0 && _toolCallTurn < _maxToolTurns) {
@@ -377,8 +385,9 @@
 
 - (void)_runPendingToolCalls
 {
-    // Build the assistant tool_calls message and append it to messages,
-    // then for each tool call, run Tavily and append a tool role message.
+    // Wrap the whole pre-bg part in @try — if any of the dict construction
+    // or array access crashes, fire didFail on main instead of crashing.
+    @try {
     NSMutableArray *newMessages = [NSMutableArray arrayWithArray:self.baseMessages];
 
     // Append the assistant message that contains the tool_calls.
@@ -550,6 +559,20 @@
             });
         }
     });
+    } @catch (NSException *e) {
+        // Pre-bg crash — fire didFail on main.
+        NSLog(@"[NetworkService] _runPendingToolCalls pre-bg crashed: %@", e);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if ([self->_delegate respondsToSelector:@selector(networkService:didFailForConversationID:error:)]) {
+                NSError *err = [NSError errorWithDomain:@"iOS6AIChat"
+                                                   code:500
+                                               userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"工具调用准备失败: %@", e.reason ?: @"unknown"]}];
+                [self->_delegate networkService:self
+                      didFailForConversationID:self->_conversationID
+                                      error:err];
+            }
+        });
+    }
 }
 
 // Expose the accumulated thinking text.
