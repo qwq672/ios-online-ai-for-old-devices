@@ -347,16 +347,22 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
 + (void)styleTabBarController:(UITabBarController *)tbc
 {
     if (!tbc) return;
-    // Dark mode: UIBarStyleBlack gives a nice gradient (dark grey → black).
-    // Light mode: UIBarStyleDefault gives classic light grey gradient.
-    // No custom background image — the system gradient looks better
-    // than solid pure black (user feedback).
+    // Dark mode: UIBarStyleBlack gradient. Light: UIBarStyleDefault gradient.
+    // BUG FIX: performSelector:withObject: was passing NSNumber pointer
+    // as UIBarStyle (a NSUInteger primitive) → garbage value → bars showed
+    // wrong color. Use NSInvocation to pass the primitive correctly.
     if ([tbc.tabBar respondsToSelector:@selector(setBarStyle:)]) {
         UIBarStyle style = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-        [tbc.tabBar performSelector:@selector(setBarStyle:)
-                         withObject:@(style)];
+        NSMethodSignature *sig = [tbc.tabBar methodSignatureForSelector:@selector(setBarStyle:)];
+        if (sig) {
+            NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+            [inv setTarget:tbc.tabBar];
+            [inv setSelector:@selector(setBarStyle:)];
+            [inv setArgument:&style atIndex:2];
+            [inv invoke];
+        }
     }
-    // Clear any custom background image from previous versions.
+    // Clear any custom background image.
     if ([tbc.tabBar respondsToSelector:@selector(setBackgroundImage:)]) {
         [tbc.tabBar performSelector:@selector(setBackgroundImage:) withObject:nil];
     }

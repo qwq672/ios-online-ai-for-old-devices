@@ -61,16 +61,24 @@
 }
 
 // Tint a PNG image (with alpha) with a solid color, scaled to the
-// requested size. The PNG's alpha channel is used as a mask.
+// requested size. Uses drawInRect: + kCGBlendModeSourceIn for correct
+// orientation (drawInRect handles UIKit coordinate system, unlike
+// CGContextClipToMask which uses CGImage's bottom-left origin and
+// flips the image).
 + (UIImage *)_tintImage:(UIImage *)image withColor:(UIColor *)color size:(CGSize)size
 {
     UIGraphicsBeginImageContextWithOptions(size, NO, 0.0);
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     CGRect area = CGRectMake(0, 0, size.width, size.height);
 
-    // Draw the image scaled to the target size, using it as a clip mask.
-    CGContextClipToMask(ctx, area, [image CGImage]);
-    // Fill with the desired color.
+    // Step 1: Draw the image scaled to target size. drawInRect: handles
+    // the UIKit coordinate system (top-left origin) correctly — no flip.
+    [image drawInRect:area];
+
+    // Step 2: Use SourceIn blend mode to replace the image's RGB with
+    // the fill color, keeping the alpha channel. This effectively tints
+    // the image with the desired color.
+    CGContextSetBlendMode(ctx, kCGBlendModeSourceIn);
     CGContextSetFillColorWithColor(ctx, color.CGColor);
     CGContextFillRect(ctx, area);
 
