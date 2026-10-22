@@ -289,6 +289,32 @@
         }
     }];
 
+    // Tool 3: generate_image — always available.
+    // The AI can decide to call this when the user asks to draw/paint/create
+    // an image. Returns the generated image displayed in the chat.
+    [toolsArray addObject:@{
+        @"type": @"function",
+        @"function": @{
+            @"name": @"generate_image",
+            @"description": @"Generate an image based on a text description. Use this when the user asks to draw, paint, create, generate, or make an image/picture/illustration. The generated image will be displayed in the chat automatically.",
+            @"parameters": @{
+                @"type": @"object",
+                @"properties": @{
+                    @"prompt": @{
+                        @"type": @"string",
+                        @"description": @"The image description. Be specific and descriptive for best results. English prompts usually work better."
+                    },
+                    @"size": @{
+                        @"type": @"string",
+                        @"description": @"Image size. Options: '256x256', '512x512', '1024x1024' (default). Some providers also support '1792x1024' or '1024x1792'.",
+                        @"default": @"1024x1024"
+                    }
+                },
+                @"required": @[@"prompt"]
+            }
+        }
+    }];
+
     // Tool 3: tavily_search — only when web search is enabled.
     if (self.enableWebSearchTools && self.tavilyKey.length > 0) {
         [toolsArray addObject:@{
@@ -576,6 +602,85 @@
                         @"tool_call_id": callId ?: @"",
                         @"content": contentStr
                     }];
+                }
+                continue;
+            }
+
+            // === generate_image ===========================================
+            // AI asks to generate an image. iOS calls the image gen API via
+            // transit, gets back a base64 data URL, fires didGenerateImage
+            // delegate so ChatViewController appends it to the assistant
+            // message's images array (image displays in the chat).
+            if ([fnName isEqualToString:@"generate_image"]) {
+                NSData *argsData = [args dataUsingEncoding:NSUTF8StringEncoding];
+                NSDictionary *argsDict = [NSJSONSerialization JSONObjectWithData:argsData
+                                                                          options:0
+                                                                            error:NULL];
+                NSString *prompt = [argsDict objectForKey:@"prompt"];
+                NSString *size = [argsDict objectForKey:@"size"];
+                if (!prompt || prompt.length == 0) {
+                    @synchronized(toolResults) {
+                        [toolResults addObject:@{
+                            @"role": @"tool",
+                            @"tool_call_id": callId ?: @"",
+                            @"content": @"Error: missing 'prompt' argument"
+                        }];
+                    }
+                    continue;
+                }
+                // Default image gen model per provider.
+                NSString *imgModel = [[NSUserDefaults standardUserDefaults] stringForKey:@"imageGenModel"];
+                if (!imgModel || imgModel.length == 0) {
+                    if ([self.provider isEqualToString:@"zhipu"]) {
+                        imgModel = @"cogview-3plus";
+                    } else {
+                        imgModel = @"dall-e-3";
+                    }
+                }
+                @try {
+                    NetworkService *svc = [[[NetworkService alloc] init] autorelease];
+                    NSError *err = nil;
+                    NSString *dataURL = [svc generateImageWithPrompt:prompt
+                                                                model:imgModel
+                                                                size:size
+                                                           useTransit:useTransit
+                                                           transitURL:transitURL
+                                                             provider:self.provider
+                                                              apiKey:tavilyKey  // reuse API key
+                                                                error:&err];
+                    if (dataURL.length > 0) {
+                        // Fire delegate to append image to assistant message.
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            if ([self->_delegate respondsToSelector:@selector(networkService:didGenerateImageForConversationID:imageDataURL:)]) {
+                                [self->_delegate networkService:self
+                          didGenerateImageForConversationID:self->_conversationID
+                                              imageDataURL:dataURL];
+                            }
+                        });
+                        @synchronized(toolResults) {
+                            [toolResults addObject:@{
+                                @"role": @"tool",
+                                @"tool_call_id": callId ?: @"",
+                                @"content": @"Image generated successfully and displayed in the chat above."
+                            }];
+                        }
+                    } else {
+                        @synchronized(toolResults) {
+                            [toolResults addObject:@{
+                                @"role": @"tool",
+                                @"tool_call_id": callId ?: @"",
+                                @"content": [NSString stringWithFormat:@"Image generation failed: %@", err.localizedDescription ?: @"unknown error"]
+                            }];
+                        }
+                    }
+                } @catch (NSException *e) {
+                    @synchronized(toolResults) {
+                        [toolResults addObject:@{
+                            @"role": @"tool",
+                            @"tool_call_id": callId ?: @"",
+                            @"content": [NSString stringWithFormat:@"Image generation exception: %@", e.reason ?: @"unknown"]
+                        }];
+                    }
                 }
                 continue;
             }
@@ -1037,6 +1142,168 @@
         }
     }
     return out;
+}
+
+#pragma mark - Image generation (sync)
+
+- (NSString *)generateImageWithPrompt:(NSString *)prompt
+                                 model:(NSString *)model
+                                 size:(NSString *)size
+                            useTransit:(BOOL)useTransit
+                            transitURL:(NSString *)transitURL
+                              provider:(NSString *)provider
+                               apiKey:(NSString *)apiKey
+                                 error:(NSError **)error
+{
+    if (!prompt || prompt.length == 0) return nil;
+    if (!size || size.length == 0) size = @"1024x1024";
+    if (!model || model.length == 0) {
+        // Default per provider.
+        if ([provider isEqualToString:ProviderIDZhipu]) {
+            model = @"cogview-3plus";
+        } else {
+            model = @"dall-e-3";
+        }
+    }
+
+    // Always use transit for image gen — direct API calls would hit iOS 6
+    // TLS issues with both api.openai.com and open.bigmodel.cn.
+    NSString *base = transitURL;
+    if (!base || base.length == 0) {
+        base = @"https://ai-transit.awa.lat";
+    }
+    base = [base stringByTrimmingCharactersInSet:
+            [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+    NSString *endpoint = [base stringByAppendingPathComponent:@"v1/images/generations"];
+
+    // Build body. OpenAI supports response_format=b64_json (returns base64
+    // directly, no need to fetch URL). Zhipu CogView doesn't support
+    // response_format — always returns URL.
+    NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:@{
+        @"model":    model,
+        @"prompt":    prompt,
+        @"n":        @(1),
+        @"size":      size
+    }];
+    // Use b64_json for OpenAI to avoid fetching URL (iOS 6 TLS issues).
+    if ([provider isEqualToString:ProviderIDOpenAI]) {
+        [body setObject:@"b64_json" forKey:@"response_format"];
+    }
+
+    NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+    if (!bodyData) return nil;
+
+    NSURL *url = [NSURL URLWithString:endpoint];
+    if (!url) return nil;
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
+                                                          cachePolicy:NSURLRequestReloadIgnoringCacheData
+                                                      timeoutInterval:120.0];  // image gen can be slow
+    [req setHTTPMethod:@"POST"];
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    [req setValue:provider ?: @"openai" forHTTPHeaderField:@"X-Provider"];
+    if (apiKey.length > 0) {
+        [req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey]
+        forHTTPHeaderField:@"Authorization"];
+    }
+    [req setHTTPBody:bodyData];
+
+    NSURLResponse *resp = nil;
+    NSError *netErr = nil;
+    NSData *data = [NSURLConnection sendSynchronousRequest:req
+                                          returningResponse:&resp
+                                                      error:&netErr];
+    if (netErr) {
+        if (error) *error = netErr;
+        return nil;
+    }
+    if (!data || data.length == 0) return nil;
+
+    NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+    if (![json isKindOfClass:[NSDictionary class]]) return nil;
+    NSArray *dataArr = [json objectForKey:@"data"];
+    if (![dataArr isKindOfClass:[NSArray class]] || [dataArr count] == 0) {
+        // Check for error response.
+        NSDictionary *errDict = [json objectForKey:@"error"];
+        if ([errDict isKindOfClass:[NSDictionary class]]) {
+            NSString *errMsg = [errDict objectForKey:@"message"] ?: @"unknown";
+            if (error) {
+                *error = [NSError errorWithDomain:@"iOS6AIChat"
+                                              code:500
+                                          userInfo:@{NSLocalizedDescriptionKey: errMsg}];
+            }
+        }
+        return nil;
+    }
+    NSDictionary *firstResult = [dataArr objectAtIndex:0];
+    NSString *b64 = [firstResult objectForKey:@"b64_json"];
+    if ([b64 isKindOfClass:[NSString class]] && b64.length > 0) {
+        // Got base64 directly.
+        return [NSString stringWithFormat:@"data:image/png;base64,%@", b64];
+    }
+    // Otherwise, fetch the URL via transit.
+    NSString *imgURL = [firstResult objectForKey:@"url"];
+    if (![imgURL isKindOfClass:[NSString class]] || imgURL.length == 0) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"iOS6AIChat"
+                                          code:500
+                                      userInfo:@{NSLocalizedDescriptionKey: @"Image gen response missing both b64_json and url"}];
+        }
+        return nil;
+    }
+    return [self fetchImageURLViaTransit:imgURL transitURL:transitURL error:error];
+}
+
+- (NSString *)fetchImageURLViaTransit:(NSString *)imageURL
+                            transitURL:(NSString *)transitURL
+                                error:(NSError **)error
+{
+    if (!imageURL || imageURL.length == 0) return nil;
+    NSString *base = transitURL;
+    if (!base || base.length == 0) {
+        base = @"https://ai-transit.awa.lat";
+    }
+    base = [base stringByTrimmingCharactersInSet:
+            [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+    // URL-encode the image URL as a query param.
+    NSString *encodedURL = [imageURL stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+    NSString *endpoint = [NSString stringWithFormat:@"%@/v1/fetch_image?url=%@", base, encodedURL];
+
+    NSURL *url = [NSURL URLWithString:endpoint];
+    if (!url) return nil;
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
+                                                          cachePolicy:NSURLRequestReloadIgnoringCacheData
+                                                      timeoutInterval:60.0];
+    [req setHTTPMethod:@"GET"];
+
+    NSURLResponse *resp = nil;
+    NSError *netErr = nil;
+    NSData *data = [NSURLConnection sendSynchronousRequest:req
+                                          returningResponse:&resp
+                                                      error:&netErr];
+    if (netErr) {
+        if (error) *error = netErr;
+        return nil;
+    }
+    if (!data || data.length == 0) return nil;
+    NSString *b64 = [data base64String];
+    if (!b64 || b64.length == 0) return nil;
+    // Sniff content type from response if possible — default to png.
+    NSString *mimeType = @"image/png";
+    NSHTTPURLResponse *httpResp = (NSHTTPURLResponse *)resp;
+    if ([httpResp respondsToSelector:@selector(allHeaderFields)]) {
+        NSDictionary *headers = [httpResp allHeaderFields];
+        NSString *ct = [headers objectForKey:@"Content-Type"] ?: [headers objectForKey:@"content-type"];
+        if ([ct isKindOfClass:[NSString class]] && [ct hasPrefix:@"image/"]) {
+            // e.g. "image/jpeg" → use as-is, drop any ;charset suffix.
+            NSRange semi = [ct rangeOfString:@";"];
+            if (semi.location != NSNotFound) {
+                mimeType = [ct substringToIndex:semi.location];
+            } else {
+                mimeType = ct;
+            }
+        }
+    }
+    return [NSString stringWithFormat:@"data:%@;base64,%@", mimeType, b64];
 }
 
 @end

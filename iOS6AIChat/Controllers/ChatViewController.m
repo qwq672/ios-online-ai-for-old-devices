@@ -629,6 +629,25 @@ didReceiveToolCallStartedForConversationID:(NSString *)conversationID
 }
 
 - (void)networkService:(NetworkService *)svc
+didGenerateImageForConversationID:(NSString *)conversationID
+            imageDataURL:(NSString *)imageDataURL
+{
+    if (![conversationID isEqualToString:_conversation.conversationID]) return;
+    if (!imageDataURL || imageDataURL.length == 0) return;
+    if ([_conversation.messages count] == 0) return;
+    // Append the generated image to the last assistant message so it
+    // displays in the chat bubble.
+    Message *lastMsg = [_conversation.messages objectAtIndex:[_conversation.messages count] - 1];
+    if ([lastMsg isAssistant]) {
+        NSMutableArray *images = [NSMutableArray arrayWithArray:lastMsg.images ?: @[]];
+        [images addObject:imageDataURL];
+        lastMsg.images = images;
+        [[ConversationStore sharedStore] saveConversation:_conversation];
+        [self _refreshLastRowForce:YES];
+    }
+}
+
+- (void)networkService:(NetworkService *)svc
 didFinishForConversationID:(NSString *)conversationID
                 fullText:(NSString *)fullText
 {

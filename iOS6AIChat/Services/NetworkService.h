@@ -106,6 +106,39 @@
                                apiKey:(NSString *)apiKey
                                  error:(NSError **)error;
 
+// ============================================================
+// Image generation (sync)
+// ============================================================
+//
+// POST {endpoint}/v1/images/generations  (forwarded by transit server)
+//   Body: { "model": "dall-e-3" | "cogview-3plus" | ...,
+//           "prompt": "...", "n": 1, "size": "1024x1024" }
+//   Returns: { "data": [{ "url": "..." }] } or { "data": [{ "b64_json": "..." }] }
+//
+// If response contains a URL, this method ALSO fetches the image via
+// the transit server's /v1/fetch_image?url=... endpoint (avoids iOS 6
+// TLS issues with the image host).
+//
+// Returns an NSString of the form "data:image/png;base64,..." ready
+// to be added to a Message's images array. Returns nil + *error on failure.
+
+- (NSString *)generateImageWithPrompt:(NSString *)prompt
+                                 model:(NSString *)model
+                                 size:(NSString *)size
+                            useTransit:(BOOL)useTransit
+                            transitURL:(NSString *)transitURL
+                              provider:(NSString *)provider
+                               apiKey:(NSString *)apiKey
+                                 error:(NSError **)error;
+
+// Fetch an arbitrary image URL via the transit server's /v1/fetch_image
+// endpoint (returns the raw image bytes as a base64 data URL string).
+// Use this to download images from hosts that iOS 6's NSURLConnection
+// can't negotiate TLS with.
+- (NSString *)fetchImageURLViaTransit:(NSString *)imageURL
+                            transitURL:(NSString *)transitURL
+                                error:(NSError **)error;
+
 @end
 
 
@@ -122,6 +155,12 @@ didReceiveThinkingForConversationID:(NSString *)conversationID
 - (void)networkService:(NetworkService *)svc
 didReceiveToolCallForConversationID:(NSString *)conversationID
                           toolName:(NSString *)toolName;
+// Fired when the AI calls generate_image and the image has been generated
+// + downloaded. The delegate should append this data URL to the current
+// assistant message's images array so the image displays in the chat.
+- (void)networkService:(NetworkService *)svc
+didGenerateImageForConversationID:(NSString *)conversationID
+            imageDataURL:(NSString *)imageDataURL;
 // Fired when the service has finished collecting tool_calls and is
 // about to execute them and re-launch the stream. Useful for showing
 // "Running tool..." status.
