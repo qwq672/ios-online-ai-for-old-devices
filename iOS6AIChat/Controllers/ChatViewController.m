@@ -343,10 +343,12 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
             systemPrompt];
     }
 
-    // If web search is on, enable tool_calls mode — the AI decides
-    // whether to call tavily_search and may call it multiple times.
-    // We no longer pre-search; instead the service attaches the tools
-    // array to the request and runs any tool_calls the AI emits.
+    // If web search is on, ALWAYS pre-search the user's last message and
+    // inject results as a system message. This is reliable — even if the
+    // AI model doesn't support tool_calls, it still sees the search results.
+    // tool_calls is ALSO enabled so the AI can search more if it wants.
+    // This is a fallback after the pure-tool_calls approach proved
+    // unreliable across different models.
     NSString *tavilyKey = webSearch ? ([settings objectForKey:SettingsKeyTavilyAPIKey] ?: @"") : @"";
     NSInteger maxResults = 0;
     if (webSearch) {
@@ -355,6 +357,130 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
         if (maxResults > 8) maxResults = 8;
     }
 
+    if (webSearch && tavilyKey.length == 0) {
+        // No Tavily key — show warning in status, proceed without search.
+        [self _showSearchStatus:@"⚠️ 未配置 Tavily API Key，搜索不可用"];
+        [self _launchAIStreamWithMessages:nil
+                              systemPrompt:systemPrompt
+                                useTransit:useTransit
+                                transitURL:transitURL
+                                  baseURL:baseURL
+                                  provider:provider
+                                   apiKey:apiKey
+                                    model:model
+                              temperature:temperature
+                          conversationID:_conversation.conversationID
+                            assistantMsg:assistantMsg
+                              webSearch:NO
+                              tavilyKey:@""
+                          tavilyMaxResults:0
+                        deepThinking:deepThinking
+                       preSearchResults:nil];
+        return;
+    }
+
+    if (webSearch && tavilyKey.length > 0) {
+        // Pre-search the user's last message.
+        [self _showSearchStatus:[NSString stringWithFormat:@"🔍 搜索: \"%@\"…", text]];
+        NSString *capturedText = [text copy];
+        NSString *capturedTavilyKey = [tavilyKey copy];
+        NSInteger capturedMaxResults = maxResults;
+        BOOL capturedUseTransit = useTransit;
+        NSString *capturedTransitURL = [transitURL copy];
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            @try {
+                NetworkService *svc = [[[NetworkService alloc] init] autorelease];
+                NSError *err = nil;
+                NSArray *results = [svc tavilySearchWithQuery:capturedText
+                                                         apiKey:capturedTavilyKey
+                                                    maxResults:capturedMaxResults
+                                                    useTransit:capturedUseTransit
+                                                     transitURL:capturedTransitURL
+                                                         error:&err];
+                NSArray *resultsCopy = [results retain];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [self _hideSearchStatus];
+                    if (resultsCopy && [resultsCopy count] > 0) {
+                        // Build a system message with the search results.
+                        NSMutableString *ctx = [NSMutableString string];
+                        [ctx appendString:@"Web search results (use as authoritative context, cite URLs):\n\n"];
+                        NSInteger i = 1;
+                        for (NSDictionary *r in resultsCopy) {
+                            [ctx appendFormat:@"%d. %@\n   URL: %@\n   %@\n\n",
+                                (int)i++,
+                                [r objectForKey:@"title"],
+                                [r objectForKey:@"url"],
+                                [r objectForKey:@"content"]];
+                        }
+                        [self _launchAIStreamWithMessages:nil
+                                              systemPrompt:systemPrompt
+                                                useTransit:capturedUseTransit
+                                                transitURL:capturedTransitURL
+                                                  baseURL:baseURL
+                                                  provider:provider
+                                                   apiKey:apiKey
+                                                    model:model
+                                              temperature:temperature
+                                          conversationID:_conversation.conversationID
+                                            assistantMsg:assistantMsg
+                                              webSearch:YES
+                                              tavilyKey:capturedTavilyKey
+                                          tavilyMaxResults:capturedMaxResults
+                                            deepThinking:deepThinking
+                                           preSearchResults:ctx];
+                    } else {
+                        // Pre-search failed — proceed without search context.
+                        [self _showSearchStatus:[NSString stringWithFormat:@"⚠️ 搜索失败: %@", err.localizedDescription ?: @"无结果"]];
+                        // Hide the warning after 2 seconds.
+                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                            [self _hideSearchStatus];
+                        });
+                        [self _launchAIStreamWithMessages:nil
+                                              systemPrompt:systemPrompt
+                                                useTransit:capturedUseTransit
+                                                transitURL:capturedTransitURL
+                                                  baseURL:baseURL
+                                                  provider:provider
+                                                   apiKey:apiKey
+                                                    model:model
+                                              temperature:temperature
+                                          conversationID:_conversation.conversationID
+                                            assistantMsg:assistantMsg
+                                              webSearch:YES
+                                              tavilyKey:capturedTavilyKey
+                                          tavilyMaxResults:capturedMaxResults
+                                            deepThinking:deepThinking
+                                           preSearchResults:nil];
+                    }
+                    [resultsCopy release];
+                });
+            } @catch (NSException *e) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [self _hideSearchStatus];
+                    [self _launchAIStreamWithMessages:nil
+                                          systemPrompt:systemPrompt
+                                            useTransit:capturedUseTransit
+                                            transitURL:capturedTransitURL
+                                              baseURL:baseURL
+                                              provider:provider
+                                               apiKey:apiKey
+                                                model:model
+                                          temperature:temperature
+                                      conversationID:_conversation.conversationID
+                                        assistantMsg:assistantMsg
+                                          webSearch:YES
+                                          tavilyKey:capturedTavilyKey
+                                      tavilyMaxResults:capturedMaxResults
+                                        deepThinking:deepThinking
+                                       preSearchResults:nil];
+                });
+            }
+        });
+        [capturedText release];
+        return;
+    }
+
+    // No web search — proceed directly.
     [self _launchAIStreamWithMessages:nil
                           systemPrompt:systemPrompt
                             useTransit:useTransit
@@ -369,7 +495,8 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                           webSearch:webSearch
                           tavilyKey:tavilyKey
                           tavilyMaxResults:maxResults
-                        deepThinking:deepThinking];
+                        deepThinking:deepThinking
+                       preSearchResults:nil];
 }
 
 - (void)_showSearchStatus:(NSString *)msg
@@ -405,11 +532,17 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                             tavilyKey:(NSString *)tavilyKey
                         tavilyMaxResults:(NSInteger)tavilyMaxResults
                           deepThinking:(BOOL)deepThinking
+                         preSearchResults:(NSString *)preSearchResults
 {
     // Build the messages array.
     NSMutableArray *messages = [NSMutableArray array];
     if (systemPrompt.length > 0) {
         [messages addObject:[Message messageWithRole:MessageRoleSystem content:systemPrompt]];
+    }
+    // Inject pre-search results as a separate system message (BEFORE the
+    // user messages, so the AI sees search context first).
+    if (preSearchResults.length > 0) {
+        [messages addObject:[Message messageWithRole:MessageRoleSystem content:preSearchResults]];
     }
     for (Message *m in _conversation.messages) {
         if (m == assistantMsg) continue;
@@ -419,9 +552,6 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     // 1. Deep thinking button ON (user wants reasoning)
     // 2. AND modelSupportsThinking ON (model supports it)
     // Either OFF → don't send `thinking` parameter.
-    // This was bug: deep thinking button had no effect because
-    // thinkingEnabled was always YES — models that support thinking
-    // couldn't be turned off.
     _networkService.thinkingEnabled = deepThinking;
     if (webSearch) {
         [self _showSearchStatus:@"🔍 AI 可调用搜索工具"];
