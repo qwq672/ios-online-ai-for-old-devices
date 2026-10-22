@@ -45,7 +45,9 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 
 @synthesize textView=_textView, bubble=_bubble, message=_message, renderedAttr=_renderedAttr;
 @synthesize thinkingBlock=_thinkingBlock, thinkingToggle=_thinkingToggle,
-            thinkingLabel=_thinkingLabel, thinkingSep=_thinkingSep;
+            thinkingLabel=_thinkingLabel, thinkingSep=_thinkingSep,
+            delegate=_delegate,
+            regenerateButton=_regenerateButton, copyButton=_copyButton;
 
 #pragma mark - Cache management (class methods)
 
@@ -232,6 +234,29 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 
         _imageViews = [[NSMutableArray alloc] init];
 
+        // Regenerate + Copy buttons (only shown for AI assistant messages).
+        _regenerateButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _regenerateButton.frame = CGRectMake(0, 0, 36, 24);
+        [_regenerateButton setImage:[IconDrawing imageForType:IconTypeRefresh
+                                                           size:CGSizeMake(16, 16)
+                                                          color:[iOS6Theme secondaryTextColor]]
+                          forState:UIControlStateNormal];
+        [_regenerateButton addTarget:self action:@selector(_regenerateTapped)
+                     forControlEvents:UIControlEventTouchUpInside];
+        _regenerateButton.hidden = YES;
+        [self.contentView addSubview:_regenerateButton];
+
+        _copyButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _copyButton.frame = CGRectMake(0, 0, 36, 24);
+        [_copyButton setImage:[IconDrawing imageForType:IconTypeCopy
+                                                    size:CGSizeMake(16, 16)
+                                                   color:[iOS6Theme secondaryTextColor]]
+                   forState:UIControlStateNormal];
+        [_copyButton addTarget:self action:@selector(_copyTapped)
+                      forControlEvents:UIControlEventTouchUpInside];
+        _copyButton.hidden = YES;
+        [self.contentView addSubview:_copyButton];
+
         // Listen for theme changes.
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(_themeChanged)
@@ -275,6 +300,8 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     _thinkingCollapsed = YES;
     self.renderedAttr = nil;
     _textView.attributedText = nil;
+    _regenerateButton.hidden = YES;
+    _copyButton.hidden = YES;
 }
 
 - (void)_setCurrentMessageKey:(NSString *)key
@@ -282,6 +309,20 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     if (_currentMessageKey != key) {
         [_currentMessageKey release];
         _currentMessageKey = [key copy];
+    }
+}
+
+- (void)_regenerateTapped
+{
+    if ([self.delegate respondsToSelector:@selector(chatCell:didTapRegenerate:)]) {
+        [self.delegate chatCell:self didTapRegenerate:_message];
+    }
+}
+
+- (void)_copyTapped
+{
+    if ([self.delegate respondsToSelector:@selector(chatCell:didTapCopy:)]) {
+        [self.delegate chatCell:self didTapCopy:_message];
     }
 }
 
@@ -467,7 +508,12 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 
     CGFloat bubbleWidth  = MAX(textRect.size.width + 2 * bubbleInnerHPad + 8, 60);
     bubbleWidth = MIN(bubbleWidth, maxBubbleWidth);
-    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + 6 + 4
+    // Bubble height: text + vertical padding + tail (6) + bottom safety (8).
+    // The +8 gives room so the last line of text isn't clipped by the
+    // bubble's tail drawing. (User-reported: bubble doesn't fully cover
+    // the bottom line of text.)
+    CGFloat tailHeight = 6.0f;
+    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + tailHeight + 8
                           + thinkingH + imagesH;
     if (bubbleHeight < 40) bubbleHeight = 40;
 
@@ -487,8 +533,9 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         _thinkingBlock.frame = CGRectMake(4, yOffset, bubbleWidth - 8, thinkingH);
         yOffset += thinkingH + 4;
     }
-    // Text view below thinking block.
-    CGFloat textH = bubbleHeight - yOffset - imagesH - 4;
+    // Text view below thinking block. Leave room for the tail at the bottom
+    // (tailHeight + 4px safety) so text isn't clipped.
+    CGFloat textH = bubbleHeight - yOffset - imagesH - tailHeight - 4;
     _textView.frame = CGRectMake(4, yOffset, bubbleWidth - 8, textH);
 
     // Images at bottom of bubble.
@@ -500,6 +547,19 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
             f.origin.y = imgY;
             iv.frame = f;
         }
+    }
+
+    // === Action buttons (regenerate + copy) — AI assistant only ===
+    BOOL showButtons = !_message.isUser && _message.content.length > 0;
+    _regenerateButton.hidden = !showButtons;
+    _copyButton.hidden = !showButtons;
+    if (showButtons) {
+        CGFloat btnY = bubbleY + bubbleHeight + 2;
+        CGFloat btnW = 36, btnH = 24, btnGap = 4;
+        // Left-align buttons under the bubble.
+        CGFloat regenX = bubbleX;
+        _regenerateButton.frame = CGRectMake(regenX, btnY, btnW, btnH);
+        _copyButton.frame = CGRectMake(regenX + btnW + btnGap, btnY, btnW, btnH);
     }
 }
 
@@ -571,9 +631,13 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         imagesH = 80 + 6;
     }
 
-    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + 6 + 4
-                          + thinkingH + imagesH + 8;
-    CGFloat result = bubbleHeight + 2 * verticalPad;
+    // Match layoutSubviews: text + vpad + tail(6) + safety(8) + thinking + images.
+    // Plus 2*verticalPad for cell padding.
+    // Plus action buttons height (24+2=26) for AI assistant messages.
+    CGFloat buttonH = (!message.isUser && message.content.length > 0) ? 26 : 0;
+    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + 6 + 8
+                          + thinkingH + imagesH;
+    CGFloat result = bubbleHeight + 2 * verticalPad + buttonH;
     if (result < 50) result = 50;
 
     [gHeightCache setObject:[NSNumber numberWithFloat:result] forKey:cacheKey];
@@ -593,6 +657,8 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     [_thinkingSep release];
     [_imageViews release];
     [_currentMessageKey release];
+    [_regenerateButton release];
+    [_copyButton release];
     [super dealloc];
 }
 

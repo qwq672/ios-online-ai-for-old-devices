@@ -734,9 +734,39 @@ didFailForConversationID:(NSString *)conversationID
         cell = [[[ChatMessageCell alloc] initWithStyle:UITableViewCellStyleDefault
                                         reuseIdentifier:kCellReuseID] autorelease];
     }
+    cell.delegate = self;
     Message *m = [_conversation.messages objectAtIndex:indexPath.row];
     [cell applyMessage:m];
     return cell;
+}
+
+#pragma mark - ChatMessageCellDelegate
+
+- (void)chatCell:(ChatMessageCell *)cell didTapRegenerate:(Message *)message
+{
+    if (!message || !message.isAssistant) return;
+    // Find the user message that preceded this AI reply.
+    NSInteger idx = [_conversation.messages indexOfObject:message];
+    if (idx == NSNotFound || idx == 0) return;
+    Message *userMsg = [_conversation.messages objectAtIndex:idx - 1];
+    if (!userMsg.isUser) return;
+    // Remove the current AI reply + everything after it.
+    NSMutableArray *msgs = [NSMutableArray arrayWithArray:_conversation.messages];
+    [_conversation.messages removeAllObjects];
+    for (NSInteger i = 0; i < idx; i++) {
+        [_conversation.messages addObject:[msgs objectAtIndex:i]];
+    }
+    // Re-send the user message.
+    [self _sendUserMessage:userMsg.content
+                    images:userMsg.images
+              deepThinking:[ComposerView deepThinkingEnabled]
+                webSearch:[ComposerView webSearchEnabled]];
+}
+
+- (void)chatCell:(ChatMessageCell *)cell didTapCopy:(Message *)message
+{
+    if (!message) return;
+    [[UIPasteboard generalPasteboard] setString:message.content ?: @""];
 }
 
 #pragma mark - Keyboard

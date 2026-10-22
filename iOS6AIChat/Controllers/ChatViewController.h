@@ -7,6 +7,7 @@
 #import "Conversation.h"
 #import "NetworkService.h"
 #import "ComposerView.h"
+#import "ChatMessageCell.h"
 
 extern NSString *const ChatViewControllerDidLoadConversationNotification;
 extern NSString *const ChatViewControllerConversationIDKey;
@@ -15,7 +16,8 @@ extern NSString *const ChatViewControllerConversationIDKey;
                               <UITableViewDataSource,
                                UITableViewDelegate,
                                NetworkServiceDelegate,
-                               ComposerViewDelegate>
+                               ComposerViewDelegate,
+                               ChatMessageCellDelegate>
 
 @property (nonatomic, retain) UITableView *tableView;
 @property (nonatomic, retain) Conversation *conversation;

@@ -31,6 +31,8 @@
         case IconTypeGear:         [self _drawGear:ctx cx:cx cy:cy w:w h:h]; break;
         case IconTypeChatBubble:   [self _drawChatBubble:ctx cx:cx cy:cy w:w h:h]; break;
         case IconTypeClock:        [self _drawClock:ctx cx:cx cy:cy w:w h:h]; break;
+        case IconTypeRefresh:      [self _drawRefresh:ctx cx:cx cy:cy w:w h:h]; break;
+        case IconTypeCopy:         [self _drawCopy:ctx cx:cx cy:cy w:w h:h]; break;
     }
 
     UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
@@ -291,6 +293,66 @@
     CGFloat dotR = r * 0.1f;
     CGRect dot = CGRectMake(cx - dotR, cy - dotR, dotR * 2, dotR * 2);
     CGContextFillEllipseInRect(ctx, dot);
+}
+
++ (void)_drawRefresh:(CGContextRef)ctx cx:(CGFloat)cx cy:(CGFloat)cy w:(CGFloat)w h:(CGFloat)h
+{
+    // Circular arrow (regenerate icon).
+    CGFloat r = MIN(w, h) * 0.38f;
+    CGFloat startAngle = -M_PI * 0.25f;   // start from upper right
+    CGFloat endAngle   = -M_PI * 0.25f + M_PI * 1.5f;  // 3/4 circle, clockwise
+
+    CGContextSetLineWidth(ctx, MAX(1.5f, r * 0.15f));
+    CGContextSetLineCap(ctx, kCGLineCapRound);
+
+    // Draw 3/4 arc.
+    CGContextAddArc(ctx, cx, cy, r, startAngle, endAngle, 0);  // 0 = clockwise
+    CGContextStrokePath(ctx);
+
+    // Arrowhead at end of arc.
+    CGFloat arrowAngle = endAngle;
+    CGFloat arrowX = cx + r * cos(arrowAngle);
+    CGFloat arrowY = cy + r * sin(arrowAngle);
+    CGFloat aSize = r * 0.35f;
+    // Draw a filled triangle as the arrowhead, pointing in the direction
+    // of the arc's tangent at the end point.
+    CGFloat tangentAngle = arrowAngle + M_PI_2;  // tangent is perpendicular to radius, clockwise
+    CGFloat p1x = arrowX + aSize * cos(tangentAngle);
+    CGFloat p1y = arrowY + aSize * sin(tangentAngle);
+    CGFloat p2x = arrowX - aSize * cos(tangentAngle);
+    CGFloat p2y = arrowY - aSize * sin(tangentAngle);
+    CGFloat p3x = arrowX + aSize * cos(arrowAngle);
+    CGFloat p3y = arrowY + aSize * sin(arrowAngle);
+    CGContextMoveToPoint(ctx, p1x, p1y);
+    CGContextAddLineToPoint(ctx, p2x, p2y);
+    CGContextAddLineToPoint(ctx, p3x, p3y);
+    CGContextClosePath(ctx);
+    CGContextFillPath(ctx);
+}
+
++ (void)_drawCopy:(CGContextRef)ctx cx:(CGFloat)cx cy:(CGFloat)cy w:(CGFloat)w h:(CGFloat)h
+{
+    // Two overlapping rectangles (copy icon).
+    CGFloat rectW = w * 0.35f;
+    CGFloat rectH = h * 0.35f;
+    CGFloat lineW = MAX(1.5f, rectW * 0.12f);
+    CGContextSetLineWidth(ctx, lineW);
+    CGContextSetLineJoin(ctx, kCGLineJoinRound);
+
+    // Back rectangle (offset upper-right).
+    CGFloat backX = cx - rectW * 0.1f;
+    CGFloat backY = cy - rectH * 0.6f;
+    CGRect backRect = CGRectMake(backX, backY, rectW, rectH);
+    CGContextStrokeRect(ctx, backRect);
+
+    // Front rectangle (offset lower-left, filled with bg to mask back).
+    CGFloat frontX = cx - rectW * 0.9f;
+    CGFloat frontY = cy - rectH * 0.1f;
+    CGRect frontRect = CGRectMake(frontX, frontY, rectW, rectH);
+    // Fill front rect with current fill color (solid).
+    CGContextFillRect(ctx, frontRect);
+    // Then stroke it.
+    CGContextStrokeRect(ctx, frontRect);
 }
 
 @end

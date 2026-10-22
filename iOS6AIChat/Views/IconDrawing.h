@@ -21,6 +21,8 @@ typedef enum {
     IconTypeGear,             // Settings
     IconTypeChatBubble,       // Chat
     IconTypeClock,            // History
+    IconTypeRefresh,          // Regenerate reply (circular arrow)
+    IconTypeCopy,             // Copy (two overlapping rectangles)
 } IconType;
 
 @interface IconDrawing : NSObject
