@@ -334,22 +334,9 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
                        systemIcon:(UITabBarSystemItem)systemIcon
 {
     if (!nav) return;
-    // Per user request:
-    // - Dark mode: pure black navbar (App Store/iTunes style)
-    // - Light mode: classic iOS 6 light grey gradient
-    if ([self isDarkMode]) {
-        nav.navigationBar.barStyle = UIBarStyleBlack;
-        // Override gradient with solid black background.
-        UIGraphicsBeginImageContextWithOptions(CGSizeMake(1, 1), NO, [UIScreen mainScreen].scale);
-        [[UIColor blackColor] setFill];
-        UIRectFill(CGRectMake(0, 0, 1, 1));
-        UIImage *bg = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
-        [nav.navigationBar setBackgroundImage:bg forBarMetrics:UIBarMetricsDefault];
-    } else {
-        nav.navigationBar.barStyle = UIBarStyleDefault;
-        [nav.navigationBar setBackgroundImage:nil forBarMetrics:UIBarMetricsDefault];
-    }
+    // Dark: UIBarStyleBlack gradient. Light: UIBarStyleDefault gradient.
+    nav.navigationBar.barStyle = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
+    [nav.navigationBar setBackgroundImage:nil forBarMetrics:UIBarMetricsDefault];
     nav.navigationBar.tintColor = [self tintColor];
     nav.tabBarItem = [[[UITabBarItem alloc] initWithTabBarSystemItem:systemIcon tag:0] autorelease];
     nav.tabBarItem.title = title;
@@ -360,33 +347,18 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
 + (void)styleTabBarController:(UITabBarController *)tbc
 {
     if (!tbc) return;
-    // Per user request:
-    // - Dark mode: pure black tabbar (like App Store/iTunes)
-    // - Light mode: classic iOS 6 light grey gradient
-    if ([self isDarkMode]) {
-        if ([tbc.tabBar respondsToSelector:@selector(setBarStyle:)]) {
-            [tbc.tabBar performSelector:@selector(setBarStyle:)
-                             withObject:@(UIBarStyleBlack)];
-        }
-        // Override gradient with solid black background.
-        if ([tbc.tabBar respondsToSelector:@selector(setBackgroundImage:)]) {
-            // 1x1 solid black image.
-            UIGraphicsBeginImageContextWithOptions(CGSizeMake(1, 1), NO, [UIScreen mainScreen].scale);
-            [[UIColor blackColor] setFill];
-            UIRectFill(CGRectMake(0, 0, 1, 1));
-            UIImage *bg = UIGraphicsGetImageFromCurrentImageContext();
-            UIGraphicsEndImageContext();
-            [tbc.tabBar performSelector:@selector(setBackgroundImage:) withObject:bg];
-        }
-    } else {
-        if ([tbc.tabBar respondsToSelector:@selector(setBarStyle:)]) {
-            [tbc.tabBar performSelector:@selector(setBarStyle:)
-                             withObject:@(UIBarStyleDefault)];
-        }
-        // Clear custom background — use default grey gradient.
-        if ([tbc.tabBar respondsToSelector:@selector(setBackgroundImage:)]) {
-            [tbc.tabBar performSelector:@selector(setBackgroundImage:) withObject:nil];
-        }
+    // Dark mode: UIBarStyleBlack gives a nice gradient (dark grey → black).
+    // Light mode: UIBarStyleDefault gives classic light grey gradient.
+    // No custom background image — the system gradient looks better
+    // than solid pure black (user feedback).
+    if ([tbc.tabBar respondsToSelector:@selector(setBarStyle:)]) {
+        UIBarStyle style = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
+        [tbc.tabBar performSelector:@selector(setBarStyle:)
+                         withObject:@(style)];
+    }
+    // Clear any custom background image from previous versions.
+    if ([tbc.tabBar respondsToSelector:@selector(setBackgroundImage:)]) {
+        [tbc.tabBar performSelector:@selector(setBackgroundImage:) withObject:nil];
     }
     tbc.tabBar.tintColor = [self tintColor];
     [tbc.tabBar setNeedsDisplay];
