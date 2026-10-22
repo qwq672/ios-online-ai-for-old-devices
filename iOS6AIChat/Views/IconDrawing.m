@@ -15,6 +15,26 @@
                     color:(UIColor *)color
 {
     if (!color) color = [UIColor blackColor];
+
+    // For icons that have PNG assets (from user-provided SVGs), load the
+    // PNG and tint it with the requested color. This gives nicer-looking
+    // icons than the hand-drawn CoreGraphics versions.
+    NSString *pngName = nil;
+    switch (type) {
+        case IconTypeLightbulb:   pngName = @"lightbulb";   break;
+        case IconTypeCamera:      pngName = @"camera";      break;
+        case IconTypeSendArrow:   pngName = @"send";        break;
+        default: break;  // other types use CoreGraphics below
+    }
+    if (pngName) {
+        UIImage *base = [UIImage imageNamed:pngName];
+        if (base) {
+            return [self _tintImage:base withColor:color size:size];
+        }
+        // Fall through to CoreGraphics if PNG not found.
+    }
+
+    // CoreGraphics fallback for all icons.
     UIGraphicsBeginImageContextWithOptions(size, NO, 0.0);
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     CGContextSetFillColorWithColor(ctx, color.CGColor);
@@ -37,10 +57,26 @@
 
     UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    // UIGraphicsGetImageFromCurrentImageContext returns an autoreleased
-    // image — return as-is (callers retain via property setters or button
-    // setBackgroundImage: which retains internally).
     return img;
+}
+
+// Tint a PNG image (with alpha) with a solid color, scaled to the
+// requested size. The PNG's alpha channel is used as a mask.
++ (UIImage *)_tintImage:(UIImage *)image withColor:(UIColor *)color size:(CGSize)size
+{
+    UIGraphicsBeginImageContextWithOptions(size, NO, 0.0);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    CGRect area = CGRectMake(0, 0, size.width, size.height);
+
+    // Draw the image scaled to the target size, using it as a clip mask.
+    CGContextClipToMask(ctx, area, [image CGImage]);
+    // Fill with the desired color.
+    CGContextSetFillColorWithColor(ctx, color.CGColor);
+    CGContextFillRect(ctx, area);
+
+    UIImage *tinted = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return tinted;
 }
 
 #pragma mark - Lightbulb
