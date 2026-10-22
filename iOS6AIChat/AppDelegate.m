@@ -77,12 +77,34 @@
 {
     for (NSUInteger i = 0; i < [navs count]; i++) {
         UINavigationController *nav = [navs objectAtIndex:i];
-        // Per user request: navbar always BLACK regardless of dark/light mode.
-        // Was: barStyle = isDarkMode ? Black : Default.
-        nav.navigationBar.barStyle = UIBarStyleBlack;
+        if ([iOS6Theme isDarkMode]) {
+            // Dark mode: pure black navbar (like App Store/iTunes).
+            // UIBarStyleBlack gives a gradient — override with a solid
+            // black background image for true pure black.
+            nav.navigationBar.barStyle = UIBarStyleBlack;
+            [nav.navigationBar setBackgroundImage:[self _solidColorImage:[UIColor blackColor]]
+                                   forBarMetrics:UIBarMetricsDefault];
+        } else {
+            // Light mode: classic iOS 6 light grey gradient.
+            nav.navigationBar.barStyle = UIBarStyleDefault;
+            [nav.navigationBar setBackgroundImage:nil forBarMetrics:UIBarMetricsDefault];
+        }
         nav.navigationBar.tintColor = [iOS6Theme tintColor];
         nav.navigationBar.translucent = NO;
     }
+}
+
+// Create a 1x1 solid-color UIImage for use as a bar background.
+// On iOS 6, setBackgroundImage:forBarMetrics: stretches the image
+// to fill the bar, so a 1x1 image is enough. Returns autoreleased.
+- (UIImage *)_solidColorImage:(UIColor *)color
+{
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(1, 1), NO, [UIScreen mainScreen].scale);
+    [color setFill];
+    UIRectFill(CGRectMake(0, 0, 1, 1));
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return img;  // autoreleased — caller (setBackgroundImage:) retains
 }
 
 - (void)_themeChanged
