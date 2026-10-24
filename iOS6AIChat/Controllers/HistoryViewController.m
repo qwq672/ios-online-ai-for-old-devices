@@ -19,6 +19,7 @@
 #import "ChatViewController.h"
 #import "ManagementViewController.h"
 #import "Logger.h"
+#import <QuartzCore/QuartzCore.h>
 
 static NSString *const kCellReuseID = @"HistoryCell";
 

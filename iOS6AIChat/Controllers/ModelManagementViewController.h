@@ -20,5 +20,6 @@
                                UIActionSheetDelegate>
 
 @property (nonatomic, retain) UITableView *tableView;
+@property (nonatomic, retain) NSMutableArray *availableModels;  // for /v1/models search picker
 
 @end

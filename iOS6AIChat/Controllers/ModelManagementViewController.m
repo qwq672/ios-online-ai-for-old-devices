@@ -15,6 +15,7 @@
 #import "SettingsViewController.h"
 #import "NetworkService.h"
 #import "Logger.h"
+#import <QuartzCore/QuartzCore.h>
 
 static NSString *const kCellReuseID = @"ModelMgmtCell";
 
@@ -35,7 +36,7 @@ enum {
 
 @implementation ModelManagementViewController
 
-@synthesize tableView=_tableView;
+@synthesize tableView=_tableView, availableModels=_availableModels;
 
 #pragma mark - Model list persistence (class helpers)
 
