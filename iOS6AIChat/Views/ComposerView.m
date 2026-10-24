@@ -245,22 +245,16 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 + (void)setWebSearchEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyWebSearch]; [[NSUserDefaults standardUserDefaults] synchronize]; }
 
 - (void)_deepThinkingTapped {
-    @try {
-        BOOL v = ![[self class] deepThinkingEnabled];
-        [[self class] setDeepThinkingEnabled:v];
-        [self _refreshToggleVisuals];
-    } @catch (NSException *e) {
-        NSLog(@"[ComposerView] _deepThinkingTapped crashed: %@", e);
-    }
+    // v261024-19: NO @try — class accessors can't throw.
+    BOOL v = ![[self class] deepThinkingEnabled];
+    [[self class] setDeepThinkingEnabled:v];
+    [self _refreshToggleVisuals];
 }
 - (void)_webSearchTapped {
-    @try {
-        BOOL v = ![[self class] webSearchEnabled];
-        [[self class] setWebSearchEnabled:v];
-        [self _refreshToggleVisuals];
-    } @catch (NSException *e) {
-        NSLog(@"[ComposerView] _webSearchTapped crashed: %@", e);
-    }
+    // v261024-19: NO @try — class accessors can't throw.
+    BOOL v = ![[self class] webSearchEnabled];
+    [[self class] setWebSearchEnabled:v];
+    [self _refreshToggleVisuals];
 }
 
 - (void)_keyboardDone { [_textView resignFirstResponder]; }
@@ -339,15 +333,12 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
             // Guard against edge cases (extremely tiny source images) that
             // could crash on iOS 6.
             UIGraphicsBeginImageContextWithOptions(CGSizeMake(w, h), NO, 0.0);
-            @try {
-                [image drawInRect:CGRectMake(0, 0, w, h)];
-                UIImage *resized = UIGraphicsGetImageFromCurrentImageContext();
-                UIGraphicsEndImageContext();
-                if (resized) image = resized;
-            } @catch (NSException *e) {
-                UIGraphicsEndImageContext();
-                // Fall back to original image.
-            }
+            // v261024-19: NO @try — drawInRect: with positive-dim context
+            // is safe; just make sure to end the context no matter what.
+            [image drawInRect:CGRectMake(0, 0, w, h)];
+            UIImage *resized = UIGraphicsGetImageFromCurrentImageContext();
+            UIGraphicsEndImageContext();
+            if (resized) image = resized;
         }
     }
     // Show a placeholder badge while encoding runs on bg queue.
@@ -359,12 +350,8 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     UIImage *capturedImage = [image retain];  // MRC: bg queue retains
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSData *jpegData = nil;
-        @try {
-            jpegData = UIImageJPEGRepresentation(capturedImage, 0.7);
-        } @catch (NSException *e) {
-            jpegData = nil;
-        }
+        // v261024-19: NO @try — nil-check on jpegData instead.
+        NSData *jpegData = UIImageJPEGRepresentation(capturedImage, 0.7);
         NSString *base64 = jpegData ? [jpegData base64String] : nil;
         dispatch_async(dispatch_get_main_queue(), ^{
             [capturedImage release];

@@ -380,6 +380,11 @@ forRowAtIndexPath:(NSIndexPath *)indexPath
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
+    // v261024-19: detailed per-step logging. The "activate character" path
+    // has been a 90% crash hotspot — adding one log line per step so the
+    // next crash log shows the exact last-reached step (no more blind
+    // guessing about where it died).
+    [[Logger sharedLogger] info:[NSString stringWithFormat:@"CharMgmt didSelect sec=%ld row=%ld", (long)indexPath.section, (long)indexPath.row]];
     if (indexPath.section == kCharSectionAdd) {
         UIAlertView *av = [[[UIAlertView alloc]
             initWithTitle:NSLocalizedString(@"角色名", nil)
@@ -393,24 +398,46 @@ forRowAtIndexPath:(NSIndexPath *)indexPath
         [av setTag:kAlertAddCharacter];
         [av show];
     } else if (indexPath.section == kCharSectionList) {
-        if (indexPath.row >= (NSInteger)[_characters count]) {
+        // Bounds-check before any array access — fast enumeration over
+        // _characters was suspect (the array might be nil if init
+        // failed). Treat nil as empty.
+        NSUInteger charCount = [_characters count];
+        [[Logger sharedLogger] info:[NSString stringWithFormat:@"CharMgmt list count=%lu", (unsigned long)charCount]];
+        if (indexPath.row >= (NSInteger)charCount) {
+            [[Logger sharedLogger] info:@"CharMgmt row OOB — deselect + return"];
             [tableView deselectRowAtIndexPath:indexPath animated:YES];
             return;
         }
         NSDictionary *c = [_characters objectAtIndex:indexPath.row];
+        if (![c isKindOfClass:[NSDictionary class]]) {
+            [[Logger sharedLogger] error:@"CharMgmt: item is not a dict"];
+            [tableView deselectRowAtIndexPath:indexPath animated:YES];
+            return;
+        }
         NSString *name = [c objectForKey:@"name"];
+        if (![name isKindOfClass:[NSString class]] || name.length == 0) {
+            [[Logger sharedLogger] error:@"CharMgmt: name missing or not a string"];
+            [tableView deselectRowAtIndexPath:indexPath animated:YES];
+            return;
+        }
+        [[Logger sharedLogger] info:[NSString stringWithFormat:@"CharMgmt got name=%@", name]];
         // Toggle: tapping the active character = deactivate.
         NSString *cur = [CharacterManagementViewController activeCharacterName];
+        [[Logger sharedLogger] info:[NSString stringWithFormat:@"CharMgmt cur active=%@", cur ?: @"(nil)"]];
         if (cur && [cur isEqualToString:name]) {
+            [[Logger sharedLogger] info:@"CharMgmt deactivating"];
             [CharacterManagementViewController setActiveCharacterName:@""];
-            [[Logger sharedLogger] info:[NSString stringWithFormat:@"Deactivated character %@", name]];
+            [[Logger sharedLogger] info:@"CharMgmt deactivated; reload"];
         } else {
+            [[Logger sharedLogger] info:@"CharMgmt activating"];
             [CharacterManagementViewController setActiveCharacterName:name];
-            [[Logger sharedLogger] info:[NSString stringWithFormat:@"Activated character %@", name]];
+            [[Logger sharedLogger] info:[NSString stringWithFormat:@"CharMgmt activated %@", name]];
         }
         [_tableView reloadData];
+        [[Logger sharedLogger] info:@"CharMgmt reload done"];
     }
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    [[Logger sharedLogger] info:@"CharMgmt didSelect exit"];
 }
 
 - (IBAction)_identityToggle:(UISwitch *)sw

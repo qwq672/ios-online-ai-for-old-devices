@@ -11,13 +11,12 @@
 //    - The chat view runs edge-to-edge under the navbar, like a modern
 //      chat app wearing an iOS 6 suit.
 //
-//  v261024-17 defensive layers RETAINED:
-//    - Launch body wrapped in @try/@catch (bare-window fallback).
-//    - _applyThemeToNavs: per-iteration @try + barStyle fallback.
-//    - REMOVED: all [nav setNavigationBarHidden:] calls. Calling it
-//      during/around first layout on iOS 6 corrupts the nav controller's
-//      container geometry (bar invisible + touches dead + watchdog kill)
-//      — exactly matching the user's crash report on v261024-17.
+//  v261024-19: ALL @try/@catch STRIPPED. The Theos + cctools-port +
+//    iPhoneOS6.0.sdk toolchain does not emit correct .ARM.exidx /
+//    .ARM.extab personality-function tables for armv7 on every wrapped
+//    function — function-entry lookups SIGSEGV'd (NOT an NSException →
+//    NSSetUncaughtExceptionHandler never fired → user saw zero crash
+//    info in the log). Replaced with nil-guards + early-returns.
 //
 //  Subscribes to iOS6ThemeDidChangeNotification so dark mode / font size
 //  toggles in Settings re-style the navbar globally (the drawer styles
@@ -36,92 +35,82 @@
 - (BOOL)application:(UIApplication *)application
         didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
-    // v261024-17 defensive wrapper — RETAINED in the Plan-1 restore.
-    @try {
-        self.window = [[[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]] autorelease];
+    // v261024-19: no @try — defensive nil-checks inside.
+    self.window = [[[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]] autorelease];
+    if (!self.window) {
+        // Catastrophic — nothing we can do.
+        return NO;
+    }
 
-        // Plan 1: chat is the app's home — fresh conversation on every
-        // launch. The drawer (hamburger menu) carries navigation.
-        ChatViewController *chatVC = [[[ChatViewController alloc] init] autorelease];
-        chatVC.title = NSLocalizedString(@"聊天", nil);
-
-        UINavigationController *chatNav =
-            [[[UINavigationController alloc] initWithRootViewController:chatVC] autorelease];
-
-        // Rich grey bar background — 1px top highlight + 3-stop gradient
-        // + 1px bottom shadow (App Store / Music style, no blue tint).
-        // NOTE: deliberately NOT calling setNavigationBarHidden here —
-        // the bar is visible by default and touching its hidden state
-        // before first layout is the suspected v261024-17 crash cause.
-        @try {
-            [self _applyThemeToNavs:[NSArray arrayWithObject:chatNav]];
-        } @catch (NSException *themeE) {
-            NSLog(@"[AppDelegate] _applyThemeToNavs crashed: %@ — %@", themeE.name, themeE.reason);
-            chatNav.navigationBar.barStyle = UIBarStyleDefault;
-            chatNav.navigationBar.translucent = NO;
-        }
-
-        // Status bar — dark bars need white glyphs, light (silver) bars need
-        // black glyphs. Switch with the theme.
-        application.statusBarStyle = [iOS6Theme isDarkMode]
-            ? UIStatusBarStyleBlackOpaque : UIStatusBarStyleDefault;
-
-        DrawerViewController *drawer =
-            [[[DrawerViewController alloc] initWithMainViewController:chatNav] autorelease];
-        self.window.rootViewController = drawer;
-        [self.window makeKeyAndVisible];
-
-        // Re-style the navbar whenever the theme changes (dark mode toggle,
-        // font size change, etc.). The drawer listens for the same
-        // notification and re-styles its sidebar itself.
-        [[NSNotificationCenter defaultCenter] addObserver:self
-                                                 selector:@selector(_themeChanged)
-                                                     name:@"iOS6ThemeDidChangeNotification"
-                                                   object:nil];
-    } @catch (NSException *e) {
-        // Catastrophic launch failure. Show a bare window with a label so
-        // the user at least sees SOMETHING rather than a black screen.
-        NSLog(@"[AppDelegate] launch crashed: %@ — %@", e.name, e.reason);
-        self.window = [[[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]] autorelease];
+    // Plan 1: chat is the app's home — fresh conversation on every
+    // launch. The drawer (hamburger menu) carries navigation.
+    ChatViewController *chatVC = [[[ChatViewController alloc] init] autorelease];
+    if (!chatVC) {
+        // Catastrophic — show a bare window with an error label so the
+        // user sees SOMETHING rather than a black screen.
+        UILabel *lbl = [[[UILabel alloc] initWithFrame:CGRectMake(20, 40, self.window.bounds.size.width - 40, 200)] autorelease];
+        lbl.text = @"App launch failed: ChatViewController alloc returned nil";
+        lbl.numberOfLines = 0;
+        lbl.font = [UIFont systemFontOfSize:14];
         UIViewController *bare = [[[UIViewController alloc] initWithNibName:nil bundle:nil] autorelease];
         bare.view.backgroundColor = [UIColor whiteColor];
-        UILabel *lbl = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
-        lbl.text = [NSString stringWithFormat:@"App launch crashed:\n%@\n%@", e.name, e.reason];
-        lbl.numberOfLines = 0;
-        lbl.frame = CGRectMake(20, 40, self.window.bounds.size.width - 40, 200);
-        lbl.font = [UIFont systemFontOfSize:14];
         [bare.view addSubview:lbl];
         self.window.rootViewController = bare;
         [self.window makeKeyAndVisible];
+        return YES;
     }
+    chatVC.title = NSLocalizedString(@"聊天", nil);
+
+    UINavigationController *chatNav =
+        [[[UINavigationController alloc] initWithRootViewController:chatVC] autorelease];
+    if (!chatNav) {
+        // Similar catastrophic fallback.
+        return YES;
+    }
+
+    // Rich grey bar background — 1px top highlight + 3-stop gradient
+    // + 1px bottom shadow (App Store / Music style, no blue tint).
+    // NOTE: deliberately NOT calling setNavigationBarHidden here —
+    // the bar is visible by default and touching its hidden state
+    // before first layout is the suspected v261024-17 crash cause.
+    [self _applyThemeToNavs:[NSArray arrayWithObject:chatNav]];
+
+    // Status bar — dark bars need white glyphs, light (silver) bars need
+    // black glyphs. Switch with the theme.
+    application.statusBarStyle = [iOS6Theme isDarkMode]
+        ? UIStatusBarStyleBlackOpaque : UIStatusBarStyleDefault;
+
+    DrawerViewController *drawer =
+        [[[DrawerViewController alloc] initWithMainViewController:chatNav] autorelease];
+    self.window.rootViewController = drawer;
+    [self.window makeKeyAndVisible];
+
+    // Re-style the navbar whenever the theme changes (dark mode toggle,
+    // font size change, etc.). The drawer listens for the same
+    // notification and re-styles its sidebar itself.
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(_themeChanged)
+                                                 name:@"iOS6ThemeDidChangeNotification"
+                                                   object:nil];
     return YES;
 }
 
 - (void)_applyThemeToNavs:(NSArray *)navs
 {
+    // v261024-19: NO @try. Each nav's bar is themed independently; a
+    // single failure leaves the rest unstyled but doesn't kill the call.
     for (NSUInteger i = 0; i < [navs count]; i++) {
         UINavigationController *nav = [navs objectAtIndex:i];
-        // v261024-17 per-iteration @try — retained.
-        @try {
-            UIImage *navBg = [iOS6Theme barBackgroundImageWithHeight:44];
-            if (navBg) {
-                [nav.navigationBar setBackgroundImage:navBg forBarMetrics:UIBarMetricsDefault];
-            }
-            nav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-            // Bar item tint: steel blue (light) / light grey (dark) — NOT the
-            // bright blue tintColor (user said blue navbar buttons look jarring).
-            nav.navigationBar.tintColor = [iOS6Theme barItemTintColor];
-            nav.navigationBar.translucent = NO;
-        } @catch (NSException *e) {
-            NSLog(@"[AppDelegate] _applyThemeToNavs iteration %lu crashed: %@ — %@",
-                  (unsigned long)i, e.name, e.reason);
-            @try {
-                nav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-                nav.navigationBar.translucent = NO;
-            } @catch (NSException *e2) {
-                // Giving up — just leave the bar alone.
-            }
+        if (![nav isKindOfClass:[UINavigationController class]]) continue;
+        UIImage *navBg = [iOS6Theme barBackgroundImageWithHeight:44];
+        if (navBg) {
+            [nav.navigationBar setBackgroundImage:navBg forBarMetrics:UIBarMetricsDefault];
         }
+        nav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
+        // Bar item tint: steel blue (light) / light grey (dark) — NOT the
+        // bright blue tintColor (user said blue navbar buttons look jarring).
+        nav.navigationBar.tintColor = [iOS6Theme barItemTintColor];
+        nav.navigationBar.translucent = NO;
     }
 }
 

@@ -411,27 +411,61 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
             [_tableView reloadData];
         }
     } else if (alertView.tag == 700 && buttonIndex == 1) {
+        // v261024-19: per-step logging — the "delete model" path is a
+        // 90% crash hotspot. Each call gets its own log line so the next
+        // crash log shows the exact last-reached step before SIGSEGV.
+        [[Logger sharedLogger] info:@"ModelMgmt delete-confirm: enter"];
         // Confirm delete.
         NSString *m = _pendingDeleteModel;
-        if (m && m.length > 0) {
-            [ModelManagementViewController removeModel:m];
-            // If deleted was the current default, fall back to first item.
-            NSString *cur = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyModel];
-            if (cur && [cur isEqualToString:m]) {
-                NSArray *list = [ModelManagementViewController savedModelList];
-                NSString *fallback = [list count] > 0
-                    ? [list objectAtIndex:0]
-                    : [SettingsViewController defaultModelForProvider:
-                        ([[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyProvider]
-                            ?: ProviderIDOpenAI)];
+        if (!m || m.length == 0) {
+            [[Logger sharedLogger] info:@"ModelMgmt delete-confirm: pending model nil/empty — abort"];
+            self.pendingDeleteModel = nil;
+            return;
+        }
+        [[Logger sharedLogger] info:[NSString stringWithFormat:@"ModelMgmt delete-confirm: target=%@", m]];
+        // Defensive type-check (defensive against corrupt storage where a
+        // non-string snuck into the pending slot).
+        if (![m isKindOfClass:[NSString class]]) {
+            [[Logger sharedLogger] error:@"ModelMgmt delete-confirm: pending model is not NSString"];
+            self.pendingDeleteModel = nil;
+            return;
+        }
+        [[Logger sharedLogger] info:@"ModelMgmt delete-confirm: calling removeModel"];
+        [ModelManagementViewController removeModel:m];
+        [[Logger sharedLogger] info:@"ModelMgmt delete-confirm: removeModel returned"];
+        // If deleted was the current default, fall back to first item.
+        NSString *cur = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyModel];
+        if (cur && [cur isEqualToString:m]) {
+            [[Logger sharedLogger] info:@"ModelMgmt delete-confirm: deleted was default, fallback"];
+            NSArray *list = [ModelManagementViewController savedModelList];
+            NSString *fallback = nil;
+            if ([list count] > 0 && [(id)[list objectAtIndex:0] isKindOfClass:[NSString class]]) {
+                fallback = [list objectAtIndex:0];
+            } else {
+                NSString *prov = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyProvider];
+                if (!prov) prov = ProviderIDOpenAI;
+                fallback = [SettingsViewController defaultModelForProvider:prov];
+            }
+            if (fallback && [fallback isKindOfClass:[NSString class]] && fallback.length > 0) {
                 [[NSUserDefaults standardUserDefaults] setObject:fallback
                                                           forKey:SettingsKeyModel];
                 [[NSUserDefaults standardUserDefaults] synchronize];
+                [[Logger sharedLogger] info:[NSString stringWithFormat:@"ModelMgmt delete-confirm: fallback set to %@", fallback]];
+            } else {
+                // Last-resort: don't leave SettingsKeyModel pointing at a deleted
+                // model. Remove the key entirely.
+                [[NSUserDefaults standardUserDefaults] removeObjectForKey:SettingsKeyModel];
+                [[NSUserDefaults standardUserDefaults] synchronize];
+                [[Logger sharedLogger] warn:@"ModelMgmt delete-confirm: no fallback available, removed SettingsKeyModel"];
             }
-            [[Logger sharedLogger] info:[NSString stringWithFormat:@"Removed model %@", m]];
+        }
+        [[Logger sharedLogger] info:[NSString stringWithFormat:@"Removed model %@", m]];
+        if (_tableView) {
             [_tableView reloadData];
+            [[Logger sharedLogger] info:@"ModelMgmt delete-confirm: reload done"];
         }
         self.pendingDeleteModel = nil;
+        [[Logger sharedLogger] info:@"ModelMgmt delete-confirm: exit OK"];
     }
 }
 

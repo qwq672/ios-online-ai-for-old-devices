@@ -282,13 +282,17 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     if ([_conversation.messages count] == 0) return;
     NSIndexPath *lastIdx = [NSIndexPath indexPathForRow:[_conversation.messages count] - 1
                                               inSection:0];
-    @try {
-        [_tableView scrollToRowAtIndexPath:lastIdx
-                          atScrollPosition:UITableViewScrollPositionBottom
-                                  animated:animated];
-    } @catch (NSException *e) {
-        // Sometimes the row count is stale — silently ignore.
+    // v261024-19: NO @try — bounds-check before scrolling instead.
+    if (!lastIdx) return;
+    NSInteger totalRows = (NSInteger)[_tableView numberOfRowsInSection:0];
+    if (lastIdx.row >= totalRows) {
+        // Row count is stale — full reload instead.
+        [_tableView reloadData];
+        return;
     }
+    [_tableView scrollToRowAtIndexPath:lastIdx
+                      atScrollPosition:UITableViewScrollPositionBottom
+                              animated:animated];
 }
 
 - (void)_dismissKeyboard
@@ -442,75 +446,53 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
         BOOL capturedUseTransit = useTransit;
         NSString *capturedTransitURL = [transitURL copy];
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            @try {
-                NetworkService *svc = [[[NetworkService alloc] init] autorelease];
-                NSError *err = nil;
-                NSArray *results = [svc tavilySearchWithQuery:capturedText
-                                                         apiKey:capturedTavilyKey
-                                                    maxResults:capturedMaxResults
-                                                    useTransit:capturedUseTransit
-                                                     transitURL:capturedTransitURL
-                                                         error:&err];
-                NSArray *resultsCopy = [results retain];
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    [self _hideSearchStatus];
-                    if (resultsCopy && [resultsCopy count] > 0) {
-                        // Build a system message with the search results.
-                        NSMutableString *ctx = [NSMutableString string];
-                        [ctx appendString:@"Web search results (use as authoritative context, cite URLs):\n\n"];
-                        NSInteger i = 1;
-                        for (NSDictionary *r in resultsCopy) {
-                            [ctx appendFormat:@"%d. %@\n   URL: %@\n   %@\n\n",
-                                (int)i++,
-                                [r objectForKey:@"title"],
-                                [r objectForKey:@"url"],
-                                [r objectForKey:@"content"]];
-                        }
-                        [self _launchAIStreamWithMessages:nil
-                                              systemPrompt:systemPrompt
+            // v261024-19: NO @try — nil-guards on results instead.
+            NetworkService *svc = [[[NetworkService alloc] init] autorelease];
+            NSError *err = nil;
+            NSArray *results = [svc tavilySearchWithQuery:capturedText
+                                                     apiKey:capturedTavilyKey
+                                                maxResults:capturedMaxResults
                                                 useTransit:capturedUseTransit
-                                                transitURL:capturedTransitURL
-                                                  baseURL:baseURL
-                                                  provider:provider
-                                                   apiKey:apiKey
-                                                    model:model
-                                              temperature:temperature
-                                          conversationID:_conversation.conversationID
-                                            assistantMsg:assistantMsg
-                                              webSearch:YES
-                                              tavilyKey:capturedTavilyKey
-                                          tavilyMaxResults:capturedMaxResults
-                                            deepThinking:deepThinking
-                                           preSearchResults:ctx];
-                    } else {
-                        // Pre-search failed — proceed without search context.
-                        [self _showSearchStatus:[NSString stringWithFormat:@"⚠️ 搜索失败: %@", err.localizedDescription ?: @"无结果"]];
-                        // Hide the warning after 2 seconds.
-                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                            [self _hideSearchStatus];
-                        });
-                        [self _launchAIStreamWithMessages:nil
-                                              systemPrompt:systemPrompt
-                                                useTransit:capturedUseTransit
-                                                transitURL:capturedTransitURL
-                                                  baseURL:baseURL
-                                                  provider:provider
-                                                   apiKey:apiKey
-                                                    model:model
-                                              temperature:temperature
-                                          conversationID:_conversation.conversationID
-                                            assistantMsg:assistantMsg
-                                              webSearch:YES
-                                              tavilyKey:capturedTavilyKey
-                                          tavilyMaxResults:capturedMaxResults
-                                            deepThinking:deepThinking
-                                           preSearchResults:nil];
+                                                 transitURL:capturedTransitURL
+                                                     error:&err];
+            NSArray *resultsCopy = [results retain];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self _hideSearchStatus];
+                if (resultsCopy && [resultsCopy count] > 0) {
+                    // Build a system message with the search results.
+                    NSMutableString *ctx = [NSMutableString string];
+                    [ctx appendString:@"Web search results (use as authoritative context, cite URLs):\n\n"];
+                    NSInteger i = 1;
+                    for (NSDictionary *r in resultsCopy) {
+                        [ctx appendFormat:@"%d. %@\n   URL: %@\n   %@\n\n",
+                            (int)i++,
+                            [r objectForKey:@"title"],
+                            [r objectForKey:@"url"],
+                            [r objectForKey:@"content"]];
                     }
-                    [resultsCopy release];
-                });
-            } @catch (NSException *e) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    [self _hideSearchStatus];
+                    [self _launchAIStreamWithMessages:nil
+                                          systemPrompt:systemPrompt
+                                            useTransit:capturedUseTransit
+                                            transitURL:capturedTransitURL
+                                              baseURL:baseURL
+                                              provider:provider
+                                               apiKey:apiKey
+                                                model:model
+                                          temperature:temperature
+                                      conversationID:_conversation.conversationID
+                                        assistantMsg:assistantMsg
+                                          webSearch:YES
+                                          tavilyKey:capturedTavilyKey
+                                      tavilyMaxResults:capturedMaxResults
+                                        deepThinking:deepThinking
+                                       preSearchResults:ctx];
+                } else {
+                    // Pre-search failed — proceed without search context.
+                    [self _showSearchStatus:[NSString stringWithFormat:@"⚠️ 搜索失败: %@", err.localizedDescription ?: @"无结果"]];
+                    // Hide the warning after 2 seconds.
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                        [self _hideSearchStatus];
+                    });
                     [self _launchAIStreamWithMessages:nil
                                           systemPrompt:systemPrompt
                                             useTransit:capturedUseTransit
@@ -527,8 +509,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                                       tavilyMaxResults:capturedMaxResults
                                         deepThinking:deepThinking
                                        preSearchResults:nil];
-                });
-            }
+                }
+                [resultsCopy release];
+            });
         });
         [capturedText release];
         return;
@@ -758,15 +741,15 @@ didFailForConversationID:(NSString *)conversationID
 
     NSIndexPath *lastIdx = [NSIndexPath indexPathForRow:[_conversation.messages count] - 1
                                               inSection:0];
-    // Use reloadRowsAtIndexPaths instead of reloadData — much cheaper.
-    @try {
+    // v261024-19: NO @try — bounds-check instead of catching exception.
+    if (!lastIdx || lastIdx.row < 0 ||
+        lastIdx.row >= (NSInteger)[_tableView numberOfRowsInSection:0]) {
+        [_tableView reloadData];
+    } else {
         [_tableView beginUpdates];
         [_tableView reloadRowsAtIndexPaths:[NSArray arrayWithObject:lastIdx]
                         withRowAnimation:UITableViewRowAnimationNone];
         [_tableView endUpdates];
-    } @catch (NSException *e) {
-        // Fall back to full reload if batch update fails.
-        [_tableView reloadData];
     }
     [self _scrollToBottomAnimated:YES];
 }
@@ -780,13 +763,14 @@ didFailForConversationID:(NSString *)conversationID
 
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    @try {
-        Message *m = [_conversation.messages objectAtIndex:indexPath.row];
-        return [ChatMessageCell heightForMessage:m width:_tableView.bounds.size.width];
-    } @catch (NSException *e) {
-        NSLog(@"[ChatVC] heightForRow crashed: %@", e);
+    // v261024-19: NO @try — bounds-check instead.
+    if (indexPath.row < 0 ||
+        indexPath.row >= (NSInteger)[_conversation.messages count]) {
         return 80;  // safe default
     }
+    Message *m = [_conversation.messages objectAtIndex:indexPath.row];
+    if (!m) return 80;
+    return [ChatMessageCell heightForMessage:m width:_tableView.bounds.size.width];
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
@@ -798,14 +782,18 @@ didFailForConversationID:(NSString *)conversationID
                                         reuseIdentifier:kCellReuseID] autorelease];
     }
     cell.delegate = self;
-    @try {
-        Message *m = [_conversation.messages objectAtIndex:indexPath.row];
-        [cell applyMessage:m];
-    } @catch (NSException *e) {
-        NSLog(@"[ChatVC] cellForRow crashed: %@", e);
-        // Render a plain fallback cell instead of crashing.
-        cell.textLabel.text = @"⚠️ 消息渲染出错";
+    // v261024-19: NO @try — bounds-check + nil-guards.
+    if (indexPath.row < 0 ||
+        indexPath.row >= (NSInteger)[_conversation.messages count]) {
+        cell.textLabel.text = @"⚠️ 消息索引越界";
+        return cell;
     }
+    Message *m = [_conversation.messages objectAtIndex:indexPath.row];
+    if (!m) {
+        cell.textLabel.text = @"⚠️ 消息为空";
+        return cell;
+    }
+    [cell applyMessage:m];
     return cell;
 }
 

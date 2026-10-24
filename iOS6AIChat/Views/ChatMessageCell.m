@@ -130,11 +130,11 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
                                                 attributes:@{NSFontAttributeName: base,
                                                               NSForegroundColorAttributeName: [iOS6Theme textColor]}] autorelease];
     } else {
-        @try {
-            attr = [MarkdownParser attributedStringFromMarkdown:message.content
-                                                         baseFont:base
-                                                            width:width];
-        } @catch (NSException *e) {
+        // v261024-19: NO @try — if parser returns nil, fall back to plain.
+        attr = [MarkdownParser attributedStringFromMarkdown:message.content
+                                                     baseFont:base
+                                                        width:width];
+        if (!attr) {
             attr = [[[NSAttributedString alloc] initWithString:(message.content ?: @"")
                                                     attributes:@{NSFontAttributeName: base,
                                                                   NSForegroundColorAttributeName: [iOS6Theme textColor]}] autorelease];
@@ -201,32 +201,29 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         return;
     }
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        @try {
-            // Strip the data: URL prefix safely. Support multiple formats:
-            //   data:image/jpeg;base64,XXXX
-            //   data:image/png;base64,XXXX
-            //   data:image/webp;base64,XXXX
-            NSString *base64 = dataURL;
-            NSRange comma = [dataURL rangeOfString:@","];
-            if (comma.location != NSNotFound) {
-                base64 = [dataURL substringFromIndex:comma.location + comma.length];
-            }
-            NSData *imgData = [NSData dataFromBase64String:base64];
-            if (!imgData || [imgData length] == 0) {
-                dispatch_async(dispatch_get_main_queue(), ^{ callback(nil); });
-                return;
-            }
-            UIImage *img = [UIImage imageWithData:imgData];
-            if (img) {
-                NSUInteger cost = [imgData length];
-                [gImageCache setObject:img forKey:key cost:cost];
-            }
-            dispatch_async(dispatch_get_main_queue(), ^{
-                callback(img);
-            });
-        } @catch (NSException *e) {
-            dispatch_async(dispatch_get_main_queue(), ^{ callback(nil); });
+        // v261024-19: NO @try — nil-guards instead.
+        // Strip the data: URL prefix safely. Support multiple formats:
+        //   data:image/jpeg;base64,XXXX
+        //   data:image/png;base64,XXXX
+        //   data:image/webp;base64,XXXX
+        NSString *base64 = dataURL;
+        NSRange comma = [dataURL rangeOfString:@","];
+        if (comma.location != NSNotFound) {
+            base64 = [dataURL substringFromIndex:comma.location + comma.length];
         }
+        NSData *imgData = [NSData dataFromBase64String:base64];
+        if (!imgData || [imgData length] == 0) {
+            dispatch_async(dispatch_get_main_queue(), ^{ callback(nil); });
+            return;
+        }
+        UIImage *img = [UIImage imageWithData:imgData];
+        if (img) {
+            NSUInteger cost = [imgData length];
+            [gImageCache setObject:img forKey:key cost:cost];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            callback(img);
+        });
     });
 }
 
@@ -405,17 +402,16 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 
 - (void)applyMessage:(Message *)message
 {
-    @try {
-        [self _applyMessageInternal:message];
-    } @catch (NSException *e) {
-        NSLog(@"[ChatMessageCell] applyMessage crashed: %@", e);
-        // Fallback: plain text, no markdown, no thinking block.
-        self.message = message;
-        _textView.attributedText = nil;
-        _textView.text = message.content ?: @"⚠️ 渲染出错";
+    // v261024-19: NO @try — caller-side nil-guard + the internal func
+    // does its own checks. If something is malformed, the worst case is
+    // a sparse bubble, not a crash.
+    if (!message) {
+        _textView.text = @"⚠️ 消息为空";
         _textView.textColor = [iOS6Theme textColor];
         _thinkingBlock.hidden = YES;
+        return;
     }
+    [self _applyMessageInternal:message];
 }
 
 - (void)_applyMessageInternal:(Message *)message
@@ -530,15 +526,8 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 {
     [super layoutSubviews];
     if (!_message) return;
-    // Crash guard: boundingRectWithSize can throw NSInvalidArgumentException
-    // on malformed attributed strings mid-stream (user-reported random
-    // crashes even on SHORT chats). If layout throws, keep the previous
-    // frames rather than killing the app.
-    @try {
+    // v261024-19: NO @try — _layoutInternal does its own nil-guards.
     [self _layoutInternal];
-    } @catch (NSException *e) {
-        NSLog(@"[ChatMessageCell] layout crashed: %@", e);
-    }
 }
 
 - (void)_layoutInternal
@@ -683,13 +672,9 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 
 + (CGFloat)heightForMessage:(Message *)message width:(CGFloat)width
 {
+    // v261024-19: NO @try — internal func does its own checks.
     if (!message) return 60;
-    @try {
-        return [self _heightForMessageInternal:message width:width];
-    } @catch (NSException *e) {
-        NSLog(@"[ChatMessageCell] heightForMessage crashed: %@", e);
-        return 80;  // safe default — user-reported crashes even on short chats
-    }
+    return [self _heightForMessageInternal:message width:width];
 }
 
 + (CGFloat)_heightForMessageInternal:(Message *)message width:(CGFloat)width

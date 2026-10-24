@@ -43,129 +43,94 @@ static NSString *const kCellReuseID = @"HistoryCell";
 - (void)viewDidLoad
 {
     [super viewDidLoad];
-    // v261024-17: wrap the WHOLE viewDidLoad in @try/@catch.
-    // Previously, a single bad call here (Logger init failure,
-    // QuartzCore layer.cornerRadius on a missing CALayer ref,
-    // UISearchBar barStyle on an unexpected state, etc.) would
-    // crash the app at launch and the user would see nothing —
-    // they'd report "主页没有导航栏 / 一进主页就闪退". With @try
-    // here, even if a sub-step throws, we fall back to a plain
-    // (unstyled) table + nav bar instead of killing the app.
-    @try {
-        [[Logger sharedLogger] info:@"HistoryViewController viewDidLoad"];
-        self.view.backgroundColor = [iOS6Theme pinstripeBackground];
+    // v261024-19: STRIPPED @try/@catch — cctools-port armv7 exception
+    // tables are unreliable; nil-guards + early-returns instead.
+    [[Logger sharedLogger] info:@"HistoryViewController viewDidLoad"];
+    self.view.backgroundColor = [iOS6Theme pinstripeBackground];
 
-        // Use the full bounds — the nav controller's container view already
-        // sizes the VC's view to fit below the navbar.
-        CGRect frame = self.view.bounds;
-        // v261024-17: bounds may be CGRectZero at very first viewDidLoad
-        // (the window hasn't sized the rootVC view yet on iOS 6 in some
-        // launch orderings). Fall back to screen bounds — the table view's
-        // autoresizingMask will re-fit it once the parent sizes us.
-        if (frame.size.width < 100 || frame.size.height < 100) {
-            frame = [[UIScreen mainScreen] bounds];
-        }
-        _tableView = [[UITableView alloc] initWithFrame:frame style:UITableViewStyleGrouped];
-        _tableView.dataSource = self;
-        _tableView.delegate = self;
-        _tableView.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
-                                        UIViewAutoresizingFlexibleHeight);
-        // Make the table view transparent so the parent's pinstripe shows
-        // through between cells (otherwise we get a bright default background
-        // bleeding through and the theme looks broken).
-        _tableView.backgroundColor = [UIColor clearColor];
-        _tableView.backgroundView = nil;  // remove iOS 6 default striped pattern
-        _tableView.opaque = NO;
-        [self.view addSubview:_tableView];
-
-        // Search bar for filtering conversations.
-        UISearchBar *searchBar = [[[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 44)] autorelease];
-        searchBar.placeholder = NSLocalizedString(@"搜索对话", nil);
-        searchBar.delegate = self;
-        // Dark mode search bar styling: on iOS 6 UISearchBar has limited
-        // customization. We set barStyle to UIBarStyleBlack which makes the
-        // search field background dark, and tintColor to the theme accent.
-        if ([iOS6Theme isDarkMode]) {
-            searchBar.barStyle = UIBarStyleBlack;
-            searchBar.tintColor = [iOS6Theme tintColor];
-        } else {
-            searchBar.barStyle = UIBarStyleDefault;
-            searchBar.tintColor = [iOS6Theme tintColor];
-        }
-        _tableView.tableHeaderView = searchBar;
-
-        // Edit button on the left (iOS Messages home style), + on the right.
-        self.navigationItem.leftBarButtonItem = self.editButtonItem;
-        self.navigationItem.rightBarButtonItem = [[[UIBarButtonItem alloc]
-                                                     initWithBarButtonSystemItem:UIBarButtonSystemItemAdd
-                                                     target:self
-                                                     action:@selector(startNewConversation)] autorelease];
-
-        // Table footer: "⚙️ 管理" button — entry point into ManagementViewController
-        // (设置 / 模型管理 / 角色管理 / 日志). Stays anchored to the bottom of the
-        // table content so it scrolls with the list when the list is long.
-        [self _installManagementFooter];
-
-        // Listen for theme changes.
-        [[NSNotificationCenter defaultCenter] addObserver:self
-                                                 selector:@selector(_themeChanged)
-                                                     name:@"iOS6ThemeDidChangeNotification"
-                                                       object:nil];
-    } @catch (NSException *e) {
-        // Last-resort fallback: at least show the table + nav buttons so
-        // the user can still create a new conversation. Without this they'd
-        // see a black screen and report "no nav bar / crash".
-        NSLog(@"[HistoryVC] viewDidLoad crashed: %@ — %@", e.name, e.reason);
-        if (!_tableView) {
-            _tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleGrouped];
-            _tableView.dataSource = self;
-            _tableView.delegate = self;
-            _tableView.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
-                                            UIViewAutoresizingFlexibleHeight);
-            [self.view addSubview:_tableView];
-        }
-        if (!self.navigationItem.rightBarButtonItem) {
-            self.navigationItem.rightBarButtonItem = [[[UIBarButtonItem alloc]
-                initWithBarButtonSystemItem:UIBarButtonSystemItemAdd
-                target:self action:@selector(startNewConversation)] autorelease];
-        }
-        if (!self.navigationItem.leftBarButtonItem) {
-            self.navigationItem.leftBarButtonItem = self.editButtonItem;
-        }
+    // Use the full bounds — the nav controller's container view already
+    // sizes the VC's view to fit below the navbar.
+    CGRect frame = self.view.bounds;
+    // bounds may be CGRectZero at very first viewDidLoad (the window
+    // hasn't sized the rootVC view yet on iOS 6 in some launch
+    // orderings). Fall back to screen bounds — the table view's
+    // autoresizingMask will re-fit it once the parent sizes us.
+    if (frame.size.width < 100 || frame.size.height < 100) {
+        frame = [[UIScreen mainScreen] bounds];
     }
+    _tableView = [[UITableView alloc] initWithFrame:frame style:UITableViewStyleGrouped];
+    _tableView.dataSource = self;
+    _tableView.delegate = self;
+    _tableView.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
+                                    UIViewAutoresizingFlexibleHeight);
+    // Make the table view transparent so the parent's pinstripe shows
+    // through between cells (otherwise we get a bright default background
+    // bleeding through and the theme looks broken).
+    _tableView.backgroundColor = [UIColor clearColor];
+    _tableView.backgroundView = nil;  // remove iOS 6 default striped pattern
+    _tableView.opaque = NO;
+    [self.view addSubview:_tableView];
+
+    // Search bar for filtering conversations.
+    UISearchBar *searchBar = [[[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 44)] autorelease];
+    searchBar.placeholder = NSLocalizedString(@"搜索对话", nil);
+    searchBar.delegate = self;
+    // Dark mode search bar styling: on iOS 6 UISearchBar has limited
+    // customization. We set barStyle to UIBarStyleBlack which makes the
+    // search field background dark, and tintColor to the theme accent.
+    if ([iOS6Theme isDarkMode]) {
+        searchBar.barStyle = UIBarStyleBlack;
+        searchBar.tintColor = [iOS6Theme tintColor];
+    } else {
+        searchBar.barStyle = UIBarStyleDefault;
+        searchBar.tintColor = [iOS6Theme tintColor];
+    }
+    _tableView.tableHeaderView = searchBar;
+
+    // Edit button on the left (iOS Messages home style), + on the right.
+    self.navigationItem.leftBarButtonItem = self.editButtonItem;
+    self.navigationItem.rightBarButtonItem = [[[UIBarButtonItem alloc]
+                                                 initWithBarButtonSystemItem:UIBarButtonSystemItemAdd
+                                                 target:self
+                                                 action:@selector(startNewConversation)] autorelease];
+
+    // Table footer: "⚙️ 管理" button — entry point into ManagementViewController
+    // (设置 / 模型管理 / 角色管理 / 日志). Stays anchored to the bottom of the
+    // table content so it scrolls with the list when the list is long.
+    [self _installManagementFooter];
+
+    // Listen for theme changes.
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(_themeChanged)
+                                                 name:@"iOS6ThemeDidChangeNotification"
+                                                   object:nil];
 }
 
 - (void)_installManagementFooter
 {
-    // v261024-17: defensive — CALayer.cornerRadius access on iOS 6
-    // sometimes crashes if the layer's been torn down mid-theme-switch.
-    // The footer is non-critical (just an entry-point button); skip on
-    // failure rather than killing the launch.
-    @try {
-        CGFloat footerH = 56.0f;
-        UIView *footer = [[[UIView alloc] initWithFrame:CGRectMake(0, 0,
-                                                                    self.view.bounds.size.width,
-                                                                    footerH)] autorelease];
-        footer.backgroundColor = [UIColor clearColor];
+    // v261024-19: NO @try — nil-guards instead.
+    if (!_tableView) return;
+    CGFloat footerH = 56.0f;
+    UIView *footer = [[[UIView alloc] initWithFrame:CGRectMake(0, 0,
+                                                                self.view.bounds.size.width,
+                                                                footerH)] autorelease];
+    footer.backgroundColor = [UIColor clearColor];
 
-        // A sub-button styled like a grouped-table cell, centered in the footer.
-        UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
-        btn.frame = CGRectMake(12, 6, self.view.bounds.size.width - 24, footerH - 12);
-        btn.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-        btn.backgroundColor = [iOS6Theme bubbleAssistantColor];
-        btn.layer.cornerRadius = 8.0f;
-        btn.layer.masksToBounds = YES;
-        [btn setTitle:NSLocalizedString(@"⚙️ 管理", nil)
-             forState:UIControlStateNormal];
-        [btn setTitleColor:[iOS6Theme textColor] forState:UIControlStateNormal];
-        btn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];
-        [btn addTarget:self action:@selector(_openManagement)
-          forControlEvents:UIControlEventTouchUpInside];
-        [footer addSubview:btn];
-        _tableView.tableFooterView = footer;
-    } @catch (NSException *e) {
-        NSLog(@"[HistoryVC] _installManagementFooter crashed: %@ — %@", e.name, e.reason);
-    }
+    // A sub-button styled like a grouped-table cell, centered in the footer.
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+    btn.frame = CGRectMake(12, 6, self.view.bounds.size.width - 24, footerH - 12);
+    btn.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    btn.backgroundColor = [iOS6Theme bubbleAssistantColor];
+    btn.layer.cornerRadius = 8.0f;
+    btn.layer.masksToBounds = YES;
+    [btn setTitle:NSLocalizedString(@"⚙️ 管理", nil)
+         forState:UIControlStateNormal];
+    [btn setTitleColor:[iOS6Theme textColor] forState:UIControlStateNormal];
+    btn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];
+    [btn addTarget:self action:@selector(_openManagement)
+      forControlEvents:UIControlEventTouchUpInside];
+    [footer addSubview:btn];
+    _tableView.tableFooterView = footer;
 }
 
 - (void)_openManagement
@@ -196,6 +161,10 @@ static NSString *const kCellReuseID = @"HistoryCell";
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
+    // v261024-19: detailed log so we can see in the log file which step
+    // the HistoryVC reached before crashing — most user crashes happen
+    // shortly after entering the History list.
+    [[Logger sharedLogger] info:@"HistoryVC viewWillAppear enter"];
     // v261024-18 Plan-1: HistoryVC is PUSHED from the drawer menu onto the
     // chat nav stack — the navbar is naturally visible. The previous
     // explicit [nav setNavigationBarHidden:NO] (v261024-17) is REMOVED:
@@ -211,6 +180,7 @@ static NSString *const kCellReuseID = @"HistoryCell";
         [self _installManagementFooter];
         [_tableView reloadData];
     }
+    [[Logger sharedLogger] info:@"HistoryVC viewWillAppear exit"];
 }
 
 - (void)viewDidAppear:(BOOL)animated
@@ -369,14 +339,29 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     }
     // Plan 1 (v261024-18): push a fresh ChatViewController and tell it which
     // conversation to load. Direct call, simpler and traceable.
+    // v261024-19: detailed entry/exit logging — the HistoryVC has been a
+    // crash hotspot (75% per user report). Each step gets its own line so
+    // the next crash will show the exact last-reached step.
+    [[Logger sharedLogger] info:[NSString stringWithFormat:@"HistoryVC didSelect row=%ld conv=%@", (long)indexPath.row, c.conversationID ?: @"(nil)"]];
     ChatViewController *chat = [[[ChatViewController alloc] initWithNibName:nil bundle:nil] autorelease];
-    [self.navigationController pushViewController:chat animated:YES];
-    @try {
-        [chat loadConversation:c];
-    } @catch (NSException *e) {
-        [[Logger sharedLogger] error:[NSString stringWithFormat:@"loadConversation crashed: %@", e]];
+    if (!chat) {
+        [[Logger sharedLogger] error:@"HistoryVC: ChatViewController alloc failed"];
+        [tableView deselectRowAtIndexPath:indexPath animated:YES];
+        return;
     }
+    UINavigationController *nav = self.navigationController;
+    if (!nav) {
+        [[Logger sharedLogger] error:@"HistoryVC: navigationController is nil"];
+        [tableView deselectRowAtIndexPath:indexPath animated:YES];
+        return;
+    }
+    [[Logger sharedLogger] info:@"HistoryVC push chat start"];
+    [nav pushViewController:chat animated:YES];
+    [[Logger sharedLogger] info:@"HistoryVC push chat done, calling loadConversation"];
+    [chat loadConversation:c];
+    [[Logger sharedLogger] info:@"HistoryVC loadConversation returned"];
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    [[Logger sharedLogger] info:@"HistoryVC didSelect exit"];
 }
 
 - (void)tableView:(UITableView *)tableView

@@ -419,13 +419,11 @@
 
 - (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data
 {
+    // v261024-19: NO @try — nil-guards.
     if (!data) return;
-    @try {
-        [_rawBuffer appendData:data];
-        [self _parseBufferedChunks];
-    } @catch (NSException *e) {
-        NSLog(@"[NetworkService] didReceiveData parse crashed: %@", e);
-    }
+    if (!_rawBuffer) return;
+    [_rawBuffer appendData:data];
+    [self _parseBufferedChunks];
 }
 
 - (void)connectionDidFinishLoading:(NSURLConnection *)connection
@@ -452,11 +450,8 @@
         return;
     }
 
-    @try {
-        [self _parseBufferedChunksForce:YES];
-    } @catch (NSException *e) {
-        NSLog(@"[NetworkService] didFinish parse crashed: %@", e);
-    }
+    // v261024-19: NO @try — direct call.
+    [self _parseBufferedChunksForce:YES];
 
     // Check if AI emitted tool_calls → multi-turn tool use flow.
     if ([_toolCallAccumulators count] > 0 && _toolCallTurn < _maxToolTurns) {
@@ -486,9 +481,7 @@
 
 - (void)_runPendingToolCalls
 {
-    // Wrap the whole pre-bg part in @try — if any of the dict construction
-    // or array access crashes, fire didFail on main instead of crashing.
-    @try {
+    // v261024-19: NO @try — defensive nil-guards instead.
     NSMutableArray *newMessages = [NSMutableArray arrayWithArray:self.baseMessages];
 
     // Append the assistant message that contains the tool_calls.
@@ -551,11 +544,9 @@
         // so the `autorelease`d NetworkService/NSDateFormatter objects
         // below don't leak per tool-call round.
         @autoreleasepool {
-        // Wrap the whole bg flow in @try — a crash anywhere here would
-        // leave the chat stuck (status banner shown, composer disabled).
-        // The user reported crashes during "中转搜索". This catch-all
-        // ensures we always fire didFinish/didFail to release the UI.
-        @try {
+        // v261024-19: NO @try — per-step nil-guards. If anything goes
+        // wrong mid-loop we still re-launch with whatever tool results
+        // we have so the chat doesn't get stuck.
         NSMutableArray *toolResults = [NSMutableArray array];
         for (NSDictionary *tc in toolCallAcc) {
             NSString *callId = [tc objectForKey:@"id"];
@@ -622,19 +613,20 @@
                 }
                 // Get hardware identifier (e.g. "iPhone4,1") via sysctl.
                 NSString *hwMachine = @"unknown";
-                @try {
-                    size_t size = 0;
-                    sysctlbyname("hw.machine", NULL, &size, NULL, 0);
-                    if (size > 0) {
-                        char *machine = (char *)malloc(size);
-                        if (machine) {
-                            sysctlbyname("hw.machine", machine, &size, NULL, 0);
-                            hwMachine = [NSString stringWithCString:machine
-                                                            encoding:NSUTF8StringEncoding] ?: @"unknown";
-                            free(machine);
-                        }
+                // v261024-19: NO @try — sysctl returns 0 size on failure;
+                // fall-through to "unknown" is the same effect.
+                size_t size = 0;
+                sysctlbyname("hw.machine", NULL, &size, NULL, 0);
+                if (size > 0) {
+                    char *machine = (char *)malloc(size);
+                    if (machine) {
+                        sysctlbyname("hw.machine", machine, &size, NULL, 0);
+                        NSString *s = [NSString stringWithCString:machine
+                                                          encoding:NSUTF8StringEncoding];
+                        if (s) hwMachine = s;
+                        free(machine);
                     }
-                } @catch (NSException *e) { /* fall back to "unknown" */ }
+                }
                 CGRect screen = [[UIScreen mainScreen] bounds];
                 NSString *lang = [[NSLocale preferredLanguages] objectAtIndex:0] ?: @"unknown";
                 NSLocale *locale = [NSLocale currentLocale];
@@ -696,48 +688,39 @@
                         imgModel = @"dall-e-3";
                     }
                 }
-                @try {
-                    NetworkService *svc = [[[NetworkService alloc] init] autorelease];
-                    NSError *err = nil;
-                    NSString *dataURL = [svc generateImageWithPrompt:prompt
-                                                                model:imgModel
-                                                                size:size
-                                                           useTransit:useTransit
-                                                           transitURL:transitURL
-                                                             provider:providerName
-                                                              apiKey:providerKey
-                                                                error:&err];
-                    if (dataURL.length > 0) {
-                        // Fire delegate to append image to assistant message.
-                        dispatch_async(dispatch_get_main_queue(), ^{
-                            if ([self->_delegate respondsToSelector:@selector(networkService:didGenerateImageForConversationID:imageDataURL:)]) {
-                                [self->_delegate networkService:self
-                          didGenerateImageForConversationID:self->_conversationID
-                                              imageDataURL:dataURL];
-                            }
-                        });
-                        @synchronized(toolResults) {
-                            [toolResults addObject:@{
-                                @"role": @"tool",
-                                @"tool_call_id": callId ?: @"",
-                                @"content": @"Image generated successfully and displayed in the chat above."
-                            }];
+                // v261024-19: NO @try — nil-check on dataURL instead.
+                NetworkService *svc = [[[NetworkService alloc] init] autorelease];
+                NSError *err = nil;
+                NSString *dataURL = [svc generateImageWithPrompt:prompt
+                                                            model:imgModel
+                                                            size:size
+                                                       useTransit:useTransit
+                                                       transitURL:transitURL
+                                                         provider:providerName
+                                                          apiKey:providerKey
+                                                            error:&err];
+                if (dataURL.length > 0) {
+                    // Fire delegate to append image to assistant message.
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        if ([self->_delegate respondsToSelector:@selector(networkService:didGenerateImageForConversationID:imageDataURL:)]) {
+                            [self->_delegate networkService:self
+                      didGenerateImageForConversationID:self->_conversationID
+                                          imageDataURL:dataURL];
                         }
-                    } else {
-                        @synchronized(toolResults) {
-                            [toolResults addObject:@{
-                                @"role": @"tool",
-                                @"tool_call_id": callId ?: @"",
-                                @"content": [NSString stringWithFormat:@"Image generation failed: %@", err.localizedDescription ?: @"unknown error"]
-                            }];
-                        }
-                    }
-                } @catch (NSException *e) {
+                    });
                     @synchronized(toolResults) {
                         [toolResults addObject:@{
                             @"role": @"tool",
                             @"tool_call_id": callId ?: @"",
-                            @"content": [NSString stringWithFormat:@"Image generation exception: %@", e.reason ?: @"unknown"]
+                            @"content": @"Image generated successfully and displayed in the chat above."
+                        }];
+                    }
+                } else {
+                    @synchronized(toolResults) {
+                        [toolResults addObject:@{
+                            @"role": @"tool",
+                            @"tool_call_id": callId ?: @"",
+                            @"content": [NSString stringWithFormat:@"Image generation failed: %@", err.localizedDescription ?: @"unknown error"]
                         }];
                     }
                 }
@@ -773,48 +756,39 @@
                 }
                 continue;
             }
-            @try {
-                NetworkService *svc = [[[NetworkService alloc] init] autorelease];
-                NSError *err = nil;
-                NSArray *searchResults = [svc tavilySearchWithQuery:query
-                                                              apiKey:tavilyKey
-                                                         maxResults:tavilyMax
-                                                         useTransit:useTransit
-                                                          transitURL:transitURL
-                                                              error:&err];
-                if (err || !searchResults || [searchResults count] == 0) {
-                    @synchronized(toolResults) {
-                        [toolResults addObject:@{
-                            @"role": @"tool",
-                            @"tool_call_id": callId ?: @"",
-                            @"content": [NSString stringWithFormat:@"Search returned no results: %@", err.localizedDescription ?: @"empty"]
-                        }];
-                    }
-                } else {
-                    NSMutableString *contentStr = [NSMutableString string];
-                    [contentStr appendFormat:@"Search results for \"%@\" (%d):\n", query, (int)[searchResults count]];
-                    NSInteger i = 1;
-                    for (NSDictionary *r in searchResults) {
-                        [contentStr appendFormat:@"%d. %@\n   URL: %@\n   %@\n\n",
-                            (int)i++,
-                            [r objectForKey:@"title"],
-                            [r objectForKey:@"url"],
-                            [r objectForKey:@"content"]];
-                    }
-                    @synchronized(toolResults) {
-                        [toolResults addObject:@{
-                            @"role": @"tool",
-                            @"tool_call_id": callId ?: @"",
-                            @"content": contentStr
-                        }];
-                    }
-                }
-            } @catch (NSException *e) {
+            // v261024-19: NO @try — nil-check on searchResults instead.
+            NetworkService *svc = [[[NetworkService alloc] init] autorelease];
+            NSError *err = nil;
+            NSArray *searchResults = [svc tavilySearchWithQuery:query
+                                                          apiKey:tavilyKey
+                                                     maxResults:tavilyMax
+                                                     useTransit:useTransit
+                                                      transitURL:transitURL
+                                                          error:&err];
+            if (err || !searchResults || [searchResults count] == 0) {
                 @synchronized(toolResults) {
                     [toolResults addObject:@{
                         @"role": @"tool",
                         @"tool_call_id": callId ?: @"",
-                        @"content": [NSString stringWithFormat:@"Exception: %@", e.reason]
+                        @"content": [NSString stringWithFormat:@"Search returned no results: %@", err.localizedDescription ?: @"empty"]
+                    }];
+                }
+            } else {
+                NSMutableString *contentStr = [NSMutableString string];
+                [contentStr appendFormat:@"Search results for \"%@\" (%d):\n", query, (int)[searchResults count]];
+                NSInteger i = 1;
+                for (NSDictionary *r in searchResults) {
+                    [contentStr appendFormat:@"%d. %@\n   URL: %@\n   %@\n\n",
+                        (int)i++,
+                        [r objectForKey:@"title"],
+                        [r objectForKey:@"url"],
+                        [r objectForKey:@"content"]];
+                }
+                @synchronized(toolResults) {
+                    [toolResults addObject:@{
+                        @"role": @"tool",
+                        @"tool_call_id": callId ?: @"",
+                        @"content": contentStr
                     }];
                 }
             }
@@ -826,55 +800,17 @@
         self.baseMessages = newMessages;
 
         // Reset accumulators and re-launch stream on main.
+        // v261024-19: NO @try — defensive nil-guards (the only ops that
+        // could fail are setObject:forKey: on nil-key, but _accumulated
+        // and _toolCallAccumulators are non-nil by init).
         dispatch_async(dispatch_get_main_queue(), ^{
-            @try {
-                [self->_accumulated setString:@""];
-                [self->_toolCallAccumulators removeAllObjects];
-                self.toolCallPending = NO;
-                [self _launchStreamWithMessages:self.baseMessages];
-            } @catch (NSException *e) {
-                // Re-launch failed — fire didFail so the UI releases.
-                NSLog(@"[NetworkService] tool call re-launch failed: %@", e);
-                if ([self->_delegate respondsToSelector:@selector(networkService:didFailForConversationID:error:)]) {
-                    NSError *err = [NSError errorWithDomain:@"iOS6AIChat"
-                                                       code:500
-                                                   userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"工具调用重试失败: %@", e.reason ?: @"unknown"]}];
-                    [self->_delegate networkService:self
-                          didFailForConversationID:self->_conversationID
-                                          error:err];
-                }
-            }
+            if (self->_accumulated) [self->_accumulated setString:@""];
+            if (self->_toolCallAccumulators) [self->_toolCallAccumulators removeAllObjects];
+            self.toolCallPending = NO;
+            [self _launchStreamWithMessages:self.baseMessages];
         });
-        } @catch (NSException *e) {
-            // Whole bg flow crashed — fire didFail on main so UI releases.
-            NSLog(@"[NetworkService] tool call bg execution crashed: %@", e);
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if ([self->_delegate respondsToSelector:@selector(networkService:didFailForConversationID:error:)]) {
-                    NSError *err = [NSError errorWithDomain:@"iOS6AIChat"
-                                                       code:500
-                                                   userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"工具调用执行崩溃: %@", e.reason ?: @"unknown"]}];
-                    [self->_delegate networkService:self
-                          didFailForConversationID:self->_conversationID
-                                          error:err];
-                }
-            });
-        }
         } // @autoreleasepool
     });
-    } @catch (NSException *e) {
-        // Pre-bg crash — fire didFail on main.
-        NSLog(@"[NetworkService] _runPendingToolCalls pre-bg crashed: %@", e);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if ([self->_delegate respondsToSelector:@selector(networkService:didFailForConversationID:error:)]) {
-                NSError *err = [NSError errorWithDomain:@"iOS6AIChat"
-                                                   code:500
-                                               userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"工具调用准备失败: %@", e.reason ?: @"unknown"]}];
-                [self->_delegate networkService:self
-                      didFailForConversationID:self->_conversationID
-                                      error:err];
-            }
-        });
-    }
 }
 
 // Expose the accumulated thinking text.
@@ -1083,23 +1019,22 @@
 // {"message": "msg"}, {"detail": "msg"}.
 - (NSString *)_extractErrorMessageFromBody:(NSString *)bodyText
 {
+    // v261024-19: NO @try — every access is isKindOfClass-guarded.
     if (bodyText.length == 0) return nil;
-    @try {
-        NSData *jd = [bodyText dataUsingEncoding:NSUTF8StringEncoding];
-        if (!jd) return nil;
-        id obj = [NSJSONSerialization JSONObjectWithData:jd options:0 error:NULL];
-        if (![obj isKindOfClass:[NSDictionary class]]) return nil;
-        id errObj = [obj objectForKey:@"error"];
-        if ([errObj isKindOfClass:[NSString class]]) return errObj;
-        if ([errObj isKindOfClass:[NSDictionary class]]) {
-            id msg = [errObj objectForKey:@"message"];
-            if ([msg isKindOfClass:[NSString class]]) return msg;
-        }
-        for (NSString *key in @[@"message", @"detail"]) {
-            id v = [obj objectForKey:key];
-            if ([v isKindOfClass:[NSString class]]) return v;
-        }
-    } @catch (NSException *e) { }
+    NSData *jd = [bodyText dataUsingEncoding:NSUTF8StringEncoding];
+    if (!jd) return nil;
+    id obj = [NSJSONSerialization JSONObjectWithData:jd options:0 error:NULL];
+    if (![obj isKindOfClass:[NSDictionary class]]) return nil;
+    id errObj = [obj objectForKey:@"error"];
+    if ([errObj isKindOfClass:[NSString class]]) return errObj;
+    if ([errObj isKindOfClass:[NSDictionary class]]) {
+        id msg = [errObj objectForKey:@"message"];
+        if ([msg isKindOfClass:[NSString class]]) return msg;
+    }
+    for (NSString *key in @[@"message", @"detail"]) {
+        id v = [obj objectForKey:key];
+        if ([v isKindOfClass:[NSString class]]) return v;
+    }
     return nil;
 }
 

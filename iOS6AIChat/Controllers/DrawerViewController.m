@@ -125,24 +125,17 @@ static CGFloat const kDimAlpha     = 0.45f;
 {
     [super viewDidLoad];
 
-    // v261024-18: same defensive wrapper that saved HistoryVC — the
-    // drawer is now the ROOT controller, so a crash here kills the app
-    // at launch (the exact bug class the user kept hitting).
-    @try {
-        [self _buildViewHierarchy];
-    } @catch (NSException *e) {
-        NSLog(@"[DrawerVC] viewDidLoad crashed: %@ — %@", e.name, e.reason);
+    // v261024-19: STRIPPED @try — no exception tables on cctools-port
+    // armv7. _buildViewHierarchy does its own nil-checks. If anything
+    // inside it returns early with a partial setup, the fallback below
+    // adds the main chat view so the app stays usable.
+    [self _buildViewHierarchy];
+    if (!_mainNav.view.superview) {
         // Fallback: at least show the main chat so the app is usable.
-        if (!_mainNav.view.superview) {
-            @try {
-                [self addChildViewController:_mainNav];
-                _mainNav.view.frame = self.view.bounds;
-                [self.view addSubview:_mainNav.view];
-                [_mainNav didMoveToParentViewController:self];
-            } @catch (NSException *e2) {
-                NSLog(@"[DrawerVC] fallback also crashed: %@", e2);
-            }
-        }
+        [self addChildViewController:_mainNav];
+        _mainNav.view.frame = self.view.bounds;
+        [self.view addSubview:_mainNav.view];
+        [_mainNav didMoveToParentViewController:self];
     }
 }
 
@@ -256,99 +249,95 @@ static CGFloat const kDimAlpha     = 0.45f;
 // Settings app background. 8x8pt tile, diagonal weave strokes.
 - (UIImage *)_linenPatternImage
 {
-    @try {
-        CGFloat tile = 8.0f;
-        UIGraphicsBeginImageContextWithOptions(CGSizeMake(tile, tile), NO, 0.0);
-        CGContextRef ctx = UIGraphicsGetCurrentContext();
-        if (!ctx) {
-            UIGraphicsEndImageContext();
-            return nil;
-        }
-        BOOL dark = [iOS6Theme isDarkMode];
-        // Base fill.
-        NSString *baseHex = dark ? @"#151517" : @"#EDEDF0";
-        CGContextSetFillColorWithColor(ctx, [iOS6Theme colorWithHex:baseHex].CGColor);
-        CGContextFillRect(ctx, CGRectMake(0, 0, tile, tile));
-        // Weave strokes: two thin diagonal lines (light + darker) that
-        // cross at ~45°, replicated per tile — the classic "linen" look.
-        UIColor *hi = dark ? [UIColor colorWithWhite:1.0f alpha:0.045f]
-                           : [UIColor colorWithWhite:1.0f alpha:0.75f];
-        UIColor *lo = dark ? [UIColor colorWithWhite:0.0f alpha:0.28f]
-                           : [UIColor colorWithWhite:0.0f alpha:0.045f];
-        CGContextSetLineWidth(ctx, 0.8f);
-        // Line A: top-left → bottom-right (+ wrap-around segments so the
-        // tile joins seamlessly).
-        CGContextSetStrokeColorWithColor(ctx, hi.CGColor);
-        CGContextMoveToPoint(ctx, -2, tile + 2);
-        CGContextAddLineToPoint(ctx, tile + 2, -2);
-        CGContextStrokePath(ctx);
-        // Line B: bottom-left → top-right.
-        CGContextSetStrokeColorWithColor(ctx, lo.CGColor);
-        CGContextMoveToPoint(ctx, -2, -2);
-        CGContextAddLineToPoint(ctx, tile + 2, tile + 2);
-        CGContextStrokePath(ctx);
-
-        UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    // v261024-19: NO @try — nil-guards instead.
+    CGFloat tile = 8.0f;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(tile, tile), NO, 0.0);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (!ctx) {
         UIGraphicsEndImageContext();
-        // Return the 8pt tile — the caller wraps it in a repeating
-        // pattern via colorWithPatternImage:.
-        return img;  // autoreleased
-    } @catch (NSException *e) {
-        NSLog(@"[DrawerVC] linen pattern draw failed: %@", e);
         return nil;
     }
+    BOOL dark = [iOS6Theme isDarkMode];
+    // Base fill.
+    NSString *baseHex = dark ? @"#151517" : @"#EDEDF0";
+    CGContextSetFillColorWithColor(ctx, [iOS6Theme colorWithHex:baseHex].CGColor);
+    CGContextFillRect(ctx, CGRectMake(0, 0, tile, tile));
+    // Weave strokes: two thin diagonal lines (light + darker) that
+    // cross at ~45°, replicated per tile — the classic "linen" look.
+    UIColor *hi = dark ? [UIColor colorWithWhite:1.0f alpha:0.045f]
+                       : [UIColor colorWithWhite:1.0f alpha:0.75f];
+    UIColor *lo = dark ? [UIColor colorWithWhite:0.0f alpha:0.28f]
+                       : [UIColor colorWithWhite:0.0f alpha:0.045f];
+    CGContextSetLineWidth(ctx, 0.8f);
+    // Line A: top-left → bottom-right (+ wrap-around segments so the
+    // tile joins seamlessly).
+    CGContextSetStrokeColorWithColor(ctx, hi.CGColor);
+    CGContextMoveToPoint(ctx, -2, tile + 2);
+    CGContextAddLineToPoint(ctx, tile + 2, -2);
+    CGContextStrokePath(ctx);
+    // Line B: bottom-left → top-right.
+    CGContextSetStrokeColorWithColor(ctx, lo.CGColor);
+    CGContextMoveToPoint(ctx, -2, -2);
+    CGContextAddLineToPoint(ctx, tile + 2, tile + 2);
+    CGContextStrokePath(ctx);
+
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return img;  // autoreleased
 }
 
 - (void)_styleSidebar
 {
-    @try {
-        _headerTitle.textColor = [iOS6Theme textColor];
-        _headerTitle.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:20]];
-        _headerSubtitle.textColor = [iOS6Theme secondaryTextColor];
-        _headerSubtitle.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:11]];
-        _headerSubtitle.shadowColor = [iOS6Theme isDarkMode]
-            ? [UIColor colorWithWhite:0.0f alpha:0.4f]
-            : [UIColor colorWithWhite:1.0f alpha:0.7f];
-        _headerSubtitle.shadowOffset = CGSizeMake(0, 1);
-        _headerHairline.backgroundColor = [iOS6Theme hairlineColor];
-        _edgeHighlight.backgroundColor = [UIColor colorWithWhite:1.0f alpha:0.35f];
-
-        // Refresh the linen background (theme-dependent).
-        UIImage *linen = [self _linenPatternImage];
-        if (linen) {
-            // Pattern-color background so the 8pt tile REPEATS.
-            UIColor *pattern = [UIColor colorWithPatternImage:linen];
-            _sidebarView.backgroundColor = pattern;
-        } else {
-            _sidebarView.backgroundColor = [iOS6Theme pinstripeBackground];
-        }
-
-        // Menu icons tinted with the saturated tab-selected blue — matches
-        // the "selected tab" blue the user liked on the old tab bar.
-        // Order matches menu rows across both sections:
-        //   chat: NewChat / History — manage: Models / Characters / Logs / Settings
-        UIColor *iconColor = [iOS6Theme tabBarSelectedTintColor];
-        NSArray *types = [NSArray arrayWithObjects:
-                          [NSNumber numberWithInt:IconTypeChatBubble],
-                          [NSNumber numberWithInt:IconTypeClock],
-                          [NSNumber numberWithInt:IconTypeLayers],
-                          [NSNumber numberWithInt:IconTypePerson],
-                          [NSNumber numberWithInt:IconTypeDoc],
-                          [NSNumber numberWithInt:IconTypeGear], nil];
-        NSMutableArray *imgs = [NSMutableArray arrayWithCapacity:[types count]];
-        for (NSNumber *tn in types) {
-            UIImage *img = [IconDrawing imageForType:(IconType)[tn intValue]
-                                                size:CGSizeMake(26, 26)
-                                               color:iconColor];
-            [imgs addObject:img];
-        }
-        [_menuIcons release];
-        _menuIcons = [imgs retain];
-
-        [_menuTable reloadData];
-    } @catch (NSException *e) {
-        NSLog(@"[DrawerVC] _styleSidebar crashed: %@ — %@", e.name, e.reason);
+    // v261024-19: NO @try — each step is independently nil-guarded.
+    if (!_headerTitle || !_headerSubtitle || !_headerHairline ||
+        !_edgeHighlight || !_sidebarView || !_menuTable) {
+        NSLog(@"[DrawerVC] _styleSidebar: missing subview — skip");
+        return;
     }
+    _headerTitle.textColor = [iOS6Theme textColor];
+    _headerTitle.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:20]];
+    _headerSubtitle.textColor = [iOS6Theme secondaryTextColor];
+    _headerSubtitle.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:11]];
+    _headerSubtitle.shadowColor = [iOS6Theme isDarkMode]
+        ? [UIColor colorWithWhite:0.0f alpha:0.4f]
+        : [UIColor colorWithWhite:1.0f alpha:0.7f];
+    _headerSubtitle.shadowOffset = CGSizeMake(0, 1);
+    _headerHairline.backgroundColor = [iOS6Theme hairlineColor];
+    _edgeHighlight.backgroundColor = [UIColor colorWithWhite:1.0f alpha:0.35f];
+
+    // Refresh the linen background (theme-dependent).
+    UIImage *linen = [self _linenPatternImage];
+    if (linen) {
+        // Pattern-color background so the 8pt tile REPEATS.
+        UIColor *pattern = [UIColor colorWithPatternImage:linen];
+        _sidebarView.backgroundColor = pattern;
+    } else {
+        _sidebarView.backgroundColor = [iOS6Theme pinstripeBackground];
+    }
+
+    // Menu icons tinted with the saturated tab-selected blue — matches
+    // the "selected tab" blue the user liked on the old tab bar.
+    // Order matches menu rows across both sections:
+    //   chat: NewChat / History — manage: Models / Characters / Logs / Settings
+    UIColor *iconColor = [iOS6Theme tabBarSelectedTintColor];
+    NSArray *types = [NSArray arrayWithObjects:
+                      [NSNumber numberWithInt:IconTypeChatBubble],
+                      [NSNumber numberWithInt:IconTypeClock],
+                      [NSNumber numberWithInt:IconTypeLayers],
+                      [NSNumber numberWithInt:IconTypePerson],
+                      [NSNumber numberWithInt:IconTypeDoc],
+                      [NSNumber numberWithInt:IconTypeGear], nil];
+    NSMutableArray *imgs = [NSMutableArray arrayWithCapacity:[types count]];
+    for (NSNumber *tn in types) {
+        UIImage *img = [IconDrawing imageForType:(IconType)[tn intValue]
+                                            size:CGSizeMake(26, 26)
+                                           color:iconColor];
+        if (img) [imgs addObject:img];
+    }
+    [_menuIcons release];
+    _menuIcons = [imgs retain];
+
+    [_menuTable reloadData];
 }
 
 - (NSString *)_versionLine
