@@ -54,6 +54,9 @@
         case IconTypeRefresh:      [self _drawRefresh:ctx cx:cx cy:cy w:w h:h]; break;
         case IconTypeCopy:         [self _drawCopy:ctx cx:cx cy:cy w:w h:h]; break;
         case IconTypeHamburger:    [self _drawHamburger:ctx cx:cx cy:cy w:w h:h]; break;
+        case IconTypeLayers:       [self _drawLayers:ctx cx:cx cy:cy w:w h:h]; break;
+        case IconTypePerson:       [self _drawPerson:ctx cx:cx cy:cy w:w h:h]; break;
+        case IconTypeDoc:          [self _drawDoc:ctx cx:cx cy:cy w:w h:h]; break;
     }
 
     UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
@@ -415,6 +418,102 @@
     CGFloat x1 = cx + spanW * 0.5f;
     for (NSInteger i = -1; i <= 1; i++) {
         CGFloat y = cy + gap * (CGFloat)i;
+        CGContextMoveToPoint(ctx, x0, y);
+        CGContextAddLineToPoint(ctx, x1, y);
+    }
+    CGContextStrokePath(ctx);
+}
+
++ (void)_drawLayers:(CGContextRef)ctx cx:(CGFloat)cx cy:(CGFloat)cy w:(CGFloat)w h:(CGFloat)h
+{
+    // Model management: three stacked rounded "cards" (like a layer stack /
+    // database symbol). Reads as "a list of models" at 26pt.
+    CGFloat cardW = w * 0.62f;
+    CGFloat cardH = h * 0.16f;
+    CGFloat gap   = h * 0.085f;
+    CGFloat lineW = MAX(1.6f, cardH * 0.30f);
+    CGContextSetLineWidth(ctx, lineW);
+    CGContextSetLineJoin(ctx, kCGLineJoinRound);
+    CGContextSetLineCap(ctx, kCGLineCapRound);
+
+    // Top card: filled diamond-ish rounded rect (solid = "current default").
+    // Middle + bottom cards: outlined.
+    CGFloat totalH = cardH * 3 + gap * 2;
+    CGFloat topY = cy - totalH * 0.5f;
+
+    for (NSInteger i = 0; i < 3; i++) {
+        CGFloat y = topY + (cardH + gap) * (CGFloat)i;
+        CGRect card = CGRectMake(cx - cardW * 0.5f, y, cardW, cardH);
+        if (i == 0) {
+            // Filled top card with slightly rounded corners.
+            CGFloat r = cardH * 0.35f;
+            UIBezierPath *p = [UIBezierPath bezierPathWithRoundedRect:card cornerRadius:r];
+            CGContextAddPath(ctx, p.CGPath);
+            CGContextFillPath(ctx);
+        } else {
+            CGFloat r = cardH * 0.35f;
+            UIBezierPath *p = [UIBezierPath bezierPathWithRoundedRect:card cornerRadius:r];
+            CGContextAddPath(ctx, p.CGPath);
+            CGContextStrokePath(ctx);
+        }
+    }
+}
+
++ (void)_drawPerson:(CGContextRef)ctx cx:(CGFloat)cx cy:(CGFloat)cy w:(CGFloat)w h:(CGFloat)h
+{
+    // Character management: head + shoulders silhouette ( Contacts-app
+    // style person). Reads clearly at 26pt.
+    CGFloat headR = MIN(w, h) * 0.155f;
+    CGFloat headCY = cy - h * 0.16f;
+
+    // Head (filled circle).
+    CGRect head = CGRectMake(cx - headR, headCY - headR, headR * 2, headR * 2);
+    CGContextFillEllipseInRect(ctx, head);
+
+    // Shoulders (filled half-ellipse / dome).
+    CGFloat domeW = w * 0.56f;
+    CGFloat domeH = h * 0.30f;
+    CGFloat domeTop = cy + h * 0.04f;
+    // Draw the dome as an ellipse clipped to its upper half.
+    CGRect dome = CGRectMake(cx - domeW * 0.5f, domeTop, domeW, domeH * 2.0f);
+    CGContextSaveGState(ctx);
+    CGContextClipToRect(ctx, CGRectMake(dome.origin.x, dome.origin.y,
+                                         dome.size.width, dome.size.height));
+    CGContextFillEllipseInRect(ctx, dome);
+    CGContextRestoreGState(ctx);
+}
+
++ (void)_drawDoc:(CGContextRef)ctx cx:(CGFloat)cx cy:(CGFloat)cy w:(CGFloat)w h:(CGFloat)h
+{
+    // Log viewer: document sheet with text lines (Notes-app style).
+    CGFloat docW = w * 0.52f;
+    CGFloat docH = h * 0.62f;
+    CGFloat lineW = MAX(1.4f, docW * 0.07f);
+    CGContextSetLineWidth(ctx, lineW);
+    CGContextSetLineJoin(ctx, kCGLineJoinRound);
+    CGContextSetLineCap(ctx, kCGLineCapRound);
+
+    CGRect doc = CGRectMake(cx - docW * 0.5f, cy - docH * 0.5f, docW, docH);
+    // Slightly rounded document corners.
+    CGFloat r = MIN(docW, docH) * 0.12f;
+    UIBezierPath *bp = [UIBezierPath bezierPathWithRoundedRect:doc cornerRadius:r];
+    CGContextAddPath(ctx, bp.CGPath);
+    CGContextStrokePath(ctx);
+
+    // Three text lines inside; the middle one shorter (classic doc glyph).
+    CGFloat insetX = docW * 0.20f;
+    CGFloat lineGap = docH * 0.24f;
+    CGFloat firstY  = doc.origin.y + docH * 0.26f;
+    NSArray *fracs = [NSArray arrayWithObjects:
+                      [NSNumber numberWithFloat:1.0f],
+                      [NSNumber numberWithFloat:0.62f],
+                      [NSNumber numberWithFloat:1.0f], nil];
+    for (NSInteger i = 0; i < 3; i++) {
+        CGFloat frac = [(NSNumber *)[fracs objectAtIndex:i] floatValue];
+        CGFloat y = firstY + lineGap * (CGFloat)i;
+        CGFloat x0 = doc.origin.x + insetX;
+        // Shorten from the right for the middle line.
+        CGFloat x1 = doc.origin.x + (docW - insetX * 2.0f) * frac + insetX;
         CGContextMoveToPoint(ctx, x0, y);
         CGContextAddLineToPoint(ctx, x1, y);
     }

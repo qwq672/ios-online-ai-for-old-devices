@@ -24,6 +24,9 @@ typedef enum {
     IconTypeRefresh,          // Regenerate reply (circular arrow)
     IconTypeCopy,             // Copy (two overlapping rectangles)
     IconTypeHamburger,        // Drawer menu (three horizontal lines)
+    IconTypeLayers,           // Model management (stacked layers)
+    IconTypePerson,           // Character management (person silhouette)
+    IconTypeDoc,              // Log viewer (document with lines)
 } IconType;
 
 @interface IconDrawing : NSObject

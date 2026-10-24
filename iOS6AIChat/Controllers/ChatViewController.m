@@ -32,6 +32,7 @@
 #import "SettingsViewController.h"
 #import "HistoryViewController.h"
 #import "CharacterManagementViewController.h"
+#import "DrawerViewController.h"
 #import "Logger.h"
 
 NSString *const ChatViewControllerDidLoadConversationNotification = @"ChatViewControllerDidLoadConversation";
@@ -157,11 +158,12 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     tap.cancelsTouchesInView = NO; // don't block cell taps
     [_tableView addGestureRecognizer:tap];
 
-// Navigation items — a "new chat" button.
+// Navigation items — hamburger (drawer) on the left, "+" new chat on the right.
     self.navigationItem.rightBarButtonItem = [[[UIBarButtonItem alloc]
                                                  initWithBarButtonSystemItem:UIBarButtonSystemItemAdd
                                                  target:self
                                                  action:@selector(startNewConversation)] autorelease];
+    [self _installDrawerButton];
 
     // Keyboard observers.
     [[NSNotificationCenter defaultCenter] addObserver:self
@@ -209,7 +211,34 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     // black because cache still returns light-theme-colored strings).
     [ChatMessageCell flushCaches];
     [self _applyTheme];
+    [self _installDrawerButton];   // re-tint hamburger with new bar tint
     [_tableView reloadData];
+}
+
+#pragma mark - Drawer (hamburger) button
+
+- (void)_installDrawerButton
+{
+    // iOS 6 renders bar-button images as-is (no auto tint like iOS 7+),
+    // so the icon is drawn in the current bar-item tint colour and
+    // re-created whenever the theme flips.
+    UIImage *menuIcon = [IconDrawing imageForType:IconTypeHamburger
+                                            size:CGSizeMake(22, 22)
+                                           color:[iOS6Theme barItemTintColor]];
+    UIBarButtonItem *menuBtn =
+        [[[UIBarButtonItem alloc] initWithImage:menuIcon
+                                          style:UIBarButtonItemStyleBordered
+                                         target:self
+                                         action:@selector(_toggleDrawer)] autorelease];
+    self.navigationItem.leftBarButtonItem = menuBtn;
+}
+
+- (void)_toggleDrawer
+{
+    // Don't slide the drawer under an open keyboard.
+    [self _dismissKeyboard];
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:DrawerViewControllerToggleNotification object:nil];
 }
 
 #pragma mark - Conversation management
@@ -223,32 +252,11 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
 - (void)startNewConversation
 {
-    // Plan 2: ChatVC is pushed onto a stack whose root is HistoryViewController.
-    // To "start a new conversation" we pop back to the root VC and ask it to
-    // push a fresh ChatVC. The history list re-appears briefly during the
-    // transition — that mirrors how iOS Messages handles the same action.
-    UINavigationController *nav = self.navigationController;
-    if (!nav) {
-        // Defensive fallback: no nav stack, just clear in place.
-        if ([_conversation.messages count] > 0) {
-            self.conversation = [[ConversationStore sharedStore] createNewConversation];
-            [self _reload];
-        }
-        return;
-    }
-    for (UIViewController *vc in nav.viewControllers) {
-        if ([vc isKindOfClass:[HistoryViewController class]]) {
-            [nav popToViewController:vc animated:YES];
-            // Defer the push so the pop animation finishes first
-            // (avoid UINavigationController visual hitches when two
-            // push/pop operations run simultaneously).
-            [vc performSelector:@selector(startNewConversation)
-                     withObject:nil
-                     afterDelay:0.35];
-            return;
-        }
-    }
-    // HistoryViewController not on the stack — fallback.
+    // Plan 1 (v261024-18): ChatVC IS the nav root — a "new chat" simply
+    // swaps the conversation in place. No pop/push gymnastics (that was
+    // Plan-2-only; the pop-then-delayed-push dance was also a suspect
+    // in the crash reports).
+    [[Logger sharedLogger] info:@"ChatVC startNewConversation (in-place)"];
     if ([_conversation.messages count] > 0) {
         self.conversation = [[ConversationStore sharedStore] createNewConversation];
         [self _reload];

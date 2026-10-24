@@ -66,7 +66,8 @@ iOS6AIChat_FILES = \
     iOS6AIChat/Controllers/ManagementViewController.m \
     iOS6AIChat/Controllers/ModelManagementViewController.m \
     iOS6AIChat/Controllers/CharacterManagementViewController.m \
-    iOS6AIChat/Controllers/LogViewController.m
+    iOS6AIChat/Controllers/LogViewController.m \
+    iOS6AIChat/Controllers/DrawerViewController.m
 
 # === Info.plist (source — Theos merges in standard fields) ===============
 iOS6AIChat_INFOPLIST_FILE = iOS6AIChat/Resources/iOS6AIChat-Info.plist

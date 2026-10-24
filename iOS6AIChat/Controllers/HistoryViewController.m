@@ -196,15 +196,13 @@ static NSString *const kCellReuseID = @"HistoryCell";
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
-    // v261024-17: Plan 2 only removes the nav bar INSIDE the conversation
-    // (ChatVC). The home page (this VC) MUST keep its nav bar — that's
-    // where the Edit / + bar buttons live. If a previous ChatVC ever set
-    // navigationBarHidden=YES (it shouldn't, but defensively), un-hide
-    // it here so the home page always shows its bar + Edit/+ buttons.
-    UINavigationController *nav = self.navigationController;
-    if (nav && [nav isNavigationBarHidden]) {
-        [nav setNavigationBarHidden:NO animated:NO];
-    }
+    // v261024-18 Plan-1: HistoryVC is PUSHED from the drawer menu onto the
+    // chat nav stack — the navbar is naturally visible. The previous
+    // explicit [nav setNavigationBarHidden:NO] (v261024-17) is REMOVED:
+    // touching the bar's hidden state around appear/layout transitions
+    // corrupts the container geometry on iOS 6 (bar invisible + touches
+    // dead + watchdog kill — exactly the user's crash report).
+    //
     // Re-apply theme in case it changed in Settings.
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
     if (_tableView) {
@@ -227,9 +225,24 @@ static NSString *const kCellReuseID = @"HistoryCell";
 
 - (void)startNewConversation
 {
-    [[Logger sharedLogger] info:@"HistoryVC startNewConversation → push new ChatVC"];
-    ChatViewController *chat = [[[ChatViewController alloc] initWithNibName:nil bundle:nil] autorelease];
-    [self.navigationController pushViewController:chat animated:YES];
+    // v261024-18 Plan-1: HistoryVC lives on the chat nav stack (pushed
+    // from the drawer menu). "+" pops back to the chat root and asks it
+    // to start a fresh conversation in place. The deferred call is safe:
+    // ChatVC's startNewConversation does NO navigation (it only swaps the
+    // conversation + reloads), so there's no animation-interval race.
+    [[Logger sharedLogger] info:@"HistoryVC startNewConversation → pop to chat root"];
+    UINavigationController *nav = self.navigationController;
+    if (!nav || [nav.viewControllers count] == 0) {
+        // Defensive: no stack — shouldn't happen in Plan 1.
+        return;
+    }
+    UIViewController *root = [nav.viewControllers objectAtIndex:0];
+    [nav popToRootViewControllerAnimated:YES];
+    if ([root isKindOfClass:[ChatViewController class]]) {
+        [root performSelector:@selector(startNewConversation)
+                   withObject:nil
+                   afterDelay:0.35];
+    }
 }
 
 #pragma mark - UISearchBarDelegate
@@ -354,8 +367,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
         }
         c = [allConvs objectAtIndex:indexPath.row];
     }
-    // Plan 2: push a fresh ChatViewController and tell it which conversation
-    // to load. No notification — direct call, simpler and traceable.
+    // Plan 1 (v261024-18): push a fresh ChatViewController and tell it which
+    // conversation to load. Direct call, simpler and traceable.
     ChatViewController *chat = [[[ChatViewController alloc] initWithNibName:nil bundle:nil] autorelease];
     [self.navigationController pushViewController:chat animated:YES];
     @try {

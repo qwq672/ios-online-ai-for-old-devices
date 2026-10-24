@@ -2,7 +2,7 @@
 //  DrawerViewController.m
 //  iOS6AIChat
 //
-//  Slide-out drawer navigation (see header for design notes).
+//  Slide-out drawer navigation (v261024-18 Plan-1 restore + upgrade).
 //
 //  Geometry (Path-style overlay drawer, NOT Facebook main-shift):
 //    - The sidebar slides in OVER the dimmed main content — moving the
@@ -10,6 +10,18 @@
 //      a manual-layout OS), so we never touch it.
 //    - sidebarW = MIN(280, screenW * 0.8)  → 256pt on a 320pt iPhone.
 //    - z-order: main nav view (0) < dim overlay (1) < sidebar (2).
+//
+//  v261024-18 menu (user-requested Plan-1 fallback with upgrades):
+//    Section 0 — 聊天:   新对话 / 历史记录
+//    Section 1 — 管理:   模型管理 / 角色管理 / 日志 / 设置
+//
+//  Skeuomorphic styling (user: "界面要好看点,确定所有界面均符合拟物感"):
+//    - Sidebar background: drawn LINEN pattern (fine woven texture like
+//      the iOS 6 Settings/Notes background — CoreGraphics, no assets).
+//    - Sidebar right edge: 1px highlight line + soft drop shadow — reads
+//      as a physical panel sliding over the content.
+//    - Header block with app name + version line, divided by a hairline.
+//    - Grouped menu table, tinted silhouette icons, bold labels.
 //
 //  Memory model: MRC (matches the rest of the codebase).
 //
@@ -20,17 +32,33 @@
 #import "ChatViewController.h"
 #import "HistoryViewController.h"
 #import "SettingsViewController.h"
+#import "ModelManagementViewController.h"
+#import "CharacterManagementViewController.h"
+#import "LogViewController.h"
+#import <QuartzCore/QuartzCore.h>
 
 NSString *const DrawerViewControllerToggleNotification = @"DrawerViewControllerToggle";
 
 static NSString *const kMenuCellID = @"DrawerMenuCell";
 
-// Menu model.
+// Menu model — two sections.
+enum {
+    kMenuSectionChat = 0,      // 新对话 / 历史记录
+    kMenuSectionManage,        // 模型管理 / 角色管理 / 日志 / 设置
+    kMenuSectionCount
+};
+
+// Rows per section.
 enum {
     kMenuRowNewChat = 0,
     kMenuRowHistory = 1,
-    kMenuRowSettings = 2,
-    kMenuRowCount   = 3
+    kMenuRowChatCount = 2,
+
+    kMenuRowModels = 0,
+    kMenuRowCharacters = 1,
+    kMenuRowLogs = 2,
+    kMenuRowSettings = 3,
+    kMenuRowManageCount = 4
 };
 
 static CGFloat const kAnimDuration = 0.25f;
@@ -44,7 +72,7 @@ static CGFloat const kDimAlpha     = 0.45f;
     UILabel     *_headerTitle;
     UILabel     *_headerSubtitle;
     UIView      *_headerHairline;
-    NSArray     *_menuTitles;
+    UIView      *_edgeHighlight; // 1px light line on the sidebar's right edge
     NSArray     *_menuIcons;     // re-built on theme change (icon tint)
     BOOL         _open;
     CGFloat      _sidebarW;
@@ -68,11 +96,6 @@ static CGFloat const kDimAlpha     = 0.45f;
         CGRect scr = [[UIScreen mainScreen] bounds];
         _sidebarW = MIN(280.0f, scr.size.width * 0.8f);
 
-        _menuTitles = [[NSArray arrayWithObjects:
-                        NSLocalizedString(@"新对话", nil),
-                        NSLocalizedString(@"历史记录", nil),
-                        NSLocalizedString(@"设置", nil), nil] retain];
-
         // The drawer toggles itself when ChatViewController posts the
         // toggle notification (hamburger button) — no direct coupling.
         [[NSNotificationCenter defaultCenter] addObserver:self
@@ -93,7 +116,7 @@ static CGFloat const kDimAlpha     = 0.45f;
     [_headerTitle release];
     [_headerSubtitle release];
     [_headerHairline release];
-    [_menuTitles release];
+    [_edgeHighlight release];
     [_menuIcons release];
     [super dealloc];
 }
@@ -102,6 +125,29 @@ static CGFloat const kDimAlpha     = 0.45f;
 {
     [super viewDidLoad];
 
+    // v261024-18: same defensive wrapper that saved HistoryVC — the
+    // drawer is now the ROOT controller, so a crash here kills the app
+    // at launch (the exact bug class the user kept hitting).
+    @try {
+        [self _buildViewHierarchy];
+    } @catch (NSException *e) {
+        NSLog(@"[DrawerVC] viewDidLoad crashed: %@ — %@", e.name, e.reason);
+        // Fallback: at least show the main chat so the app is usable.
+        if (!_mainNav.view.superview) {
+            @try {
+                [self addChildViewController:_mainNav];
+                _mainNav.view.frame = self.view.bounds;
+                [self.view addSubview:_mainNav.view];
+                [_mainNav didMoveToParentViewController:self];
+            } @catch (NSException *e2) {
+                NSLog(@"[DrawerVC] fallback also crashed: %@", e2);
+            }
+        }
+    }
+}
+
+- (void)_buildViewHierarchy
+{
     // Drawer void — visible only as the dimmed strip right of the
     // sidebar while open; black works for both themes.
     self.view.backgroundColor = [UIColor blackColor];
@@ -128,26 +174,67 @@ static CGFloat const kDimAlpha     = 0.45f;
 
     // --- Sidebar ---------------------------------------------------------
     CGFloat H = self.view.bounds.size.height;
+    if (H < 200) H = [[UIScreen mainScreen] bounds].size.height; // bounds-zero guard
     _sidebarView = [[UIView alloc] initWithFrame:CGRectMake(-_sidebarW, 0, _sidebarW, H)];
     _sidebarView.autoresizingMask = UIViewAutoresizingFlexibleHeight;
-    _sidebarView.backgroundColor = [iOS6Theme pinstripeBackground];
+
+    // Skeuomorphic panel: linen-pattern background (drawn, no assets),
+    // drop shadow, and a 1px light bevel on the right edge so it reads
+    // as a physical slab sliding over the content.
+    _sidebarView.backgroundColor = [UIColor clearColor];
+    // Pattern-colored background view drawn in a subclass-free way:
+    // set the CALayer contents to the pattern image directly.
+    UIImage *linen = [self _linenPatternImage];
+    if (linen) {
+        _sidebarView.layer.contents = (id)linen.CGImage;
+        // contentsGravity default 'resize' stretches; use scale-to-fill.
+        _sidebarView.layer.contentsGravity = kCAGravityResize;
+    } else {
+        _sidebarView.backgroundColor = [iOS6Theme pinstripeBackground];
+    }
+
+    // Physical-panel drop shadow (right edge only via shadow path).
+    _sidebarView.layer.shadowColor = [UIColor blackColor].CGColor;
+    _sidebarView.layer.shadowOpacity = 0.55f;
+    _sidebarView.layer.shadowRadius = 6.0f;
+    _sidebarView.layer.shadowOffset = CGSizeMake(4.0f, 0.0f);
+    // Shadow path hugging the right edge (cheaper than full-rect shadow).
+    CGPathRef shadowPath = CGPathCreateWithRect(
+        CGRectMake(_sidebarW - 2.0f, -20.0f, 8.0f, H + 40.0f), NULL);
+    _sidebarView.layer.shadowPath = shadowPath;
+    CGPathRelease(shadowPath);
+
+    // 1px light bevel line on the right edge (the "lit" side of the slab).
+    _edgeHighlight = [[UIView alloc] initWithFrame:CGRectMake(_sidebarW - 1.5f, 0, 1.5f, H)];
+    _edgeHighlight.backgroundColor = [UIColor colorWithWhite:1.0f alpha:0.35f];
+    _edgeHighlight.autoresizingMask = UIViewAutoresizingFlexibleHeight;
+    [_sidebarView addSubview:_edgeHighlight];
+
     [self.view addSubview:_sidebarView];
 
     // Fixed header (does NOT scroll with the menu table).
     // Content starts below the 20pt status bar.
-    _headerTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 30, _sidebarW - 32, 24)];
+    _headerTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 28, _sidebarW - 32, 26)];
     _headerTitle.text = NSLocalizedString(@"AI 聊天", nil);
-    _headerTitle.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:19]];
+    _headerTitle.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:20]];
     _headerTitle.backgroundColor = [UIColor clearColor];
+    // Subtle embossed text shadow (light mode) — classic iOS 6 label look.
+    _headerTitle.shadowColor = [iOS6Theme isDarkMode]
+        ? [UIColor colorWithWhite:0.0f alpha:0.5f]
+        : [UIColor colorWithWhite:1.0f alpha:0.85f];
+    _headerTitle.shadowOffset = CGSizeMake(0, 1);
     [_sidebarView addSubview:_headerTitle];
 
-    _headerSubtitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 56, _sidebarW - 32, 16)];
+    _headerSubtitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 55, _sidebarW - 32, 16)];
     _headerSubtitle.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:11]];
     _headerSubtitle.backgroundColor = [UIColor clearColor];
     _headerSubtitle.text = [self _versionLine];
     [_sidebarView addSubview:_headerSubtitle];
 
-    _headerHairline = [[UIView alloc] initWithFrame:CGRectMake(0, 80, _sidebarW, 1)];
+    _headerHairline = [[UIView alloc] initWithFrame:CGRectMake(0, 80, _sidebarW, 2)];
+    // Double-line hairline: dark line under a light line (recessed groove).
+    _headerHairline.backgroundColor = [iOS6Theme hairlineColor];
+    _headerHairline.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [_sidebarView addSubview:_headerHairline];
 
     // Menu table below the header.
@@ -160,6 +247,8 @@ static CGFloat const kDimAlpha     = 0.45f;
     _menuTable.opaque = NO;
     _menuTable.rowHeight = 46;
     _menuTable.autoresizingMask = UIViewAutoresizingFlexibleHeight;
+    // Light separator color so grouped rows read as separate "tiles".
+    _menuTable.separatorColor = [iOS6Theme hairlineColor];
     [_sidebarView addSubview:_menuTable];
 
     // Theme-dependent colors + icons.
@@ -171,33 +260,107 @@ static CGFloat const kDimAlpha     = 0.45f;
     [self _styleSidebar];
 }
 
+// Draw the linen background pattern — fine woven texture like the iOS 6
+// Settings app background. 8x8pt tile, diagonal weave strokes.
+- (UIImage *)_linenPatternImage
+{
+    @try {
+        CGFloat tile = 8.0f;
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(tile, tile), NO, 0.0);
+        CGContextRef ctx = UIGraphicsGetCurrentContext();
+        if (!ctx) {
+            UIGraphicsEndImageContext();
+            return nil;
+        }
+        BOOL dark = [iOS6Theme isDarkMode];
+        // Base fill.
+        NSString *baseHex = dark ? @"#151517" : @"#EDEDF0";
+        CGContextSetFillColorWithColor(ctx, [iOS6Theme colorWithHex:baseHex].CGColor);
+        CGContextFillRect(ctx, CGRectMake(0, 0, tile, tile));
+        // Weave strokes: two thin diagonal lines (light + darker) that
+        // cross at ~45°, replicated per tile — the classic "linen" look.
+        UIColor *hi = dark ? [UIColor colorWithWhite:1.0f alpha:0.045f]
+                           : [UIColor colorWithWhite:1.0f alpha:0.75f];
+        UIColor *lo = dark ? [UIColor colorWithWhite:0.0f alpha:0.28f]
+                           : [UIColor colorWithWhite:0.0f alpha:0.045f];
+        CGContextSetLineWidth(ctx, 0.8f);
+        // Line A: top-left → bottom-right (+ wrap-around segments so the
+        // tile joins seamlessly).
+        CGContextSetStrokeColorWithColor(ctx, hi.CGColor);
+        CGContextMoveToPoint(ctx, -2, tile + 2);
+        CGContextAddLineToPoint(ctx, tile + 2, -2);
+        CGContextStrokePath(ctx);
+        // Line B: bottom-left → top-right.
+        CGContextSetStrokeColorWithColor(ctx, lo.CGColor);
+        CGContextMoveToPoint(ctx, -2, -2);
+        CGContextAddLineToPoint(ctx, tile + 2, tile + 2);
+        CGContextStrokePath(ctx);
+
+        UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        // Convert to a pattern that stretches — actually for a repeating
+        // pattern we'd want colorWithPatternInColor; but CALayer.contents
+        // stretches the image. Instead we return the tile and let the
+        // caller use it via UIColor pattern (see below).
+        return img;  // autoreleased
+    } @catch (NSException *e) {
+        NSLog(@"[DrawerVC] linen pattern draw failed: %@", e);
+        return nil;
+    }
+}
+
 - (void)_styleSidebar
 {
-    _sidebarView.backgroundColor = [iOS6Theme pinstripeBackground];
-    _headerTitle.textColor = [iOS6Theme textColor];
-    _headerTitle.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:19]];
-    _headerSubtitle.textColor = [iOS6Theme secondaryTextColor];
-    _headerSubtitle.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:11]];
-    _headerHairline.backgroundColor = [iOS6Theme hairlineColor];
+    @try {
+        _headerTitle.textColor = [iOS6Theme textColor];
+        _headerTitle.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:20]];
+        _headerSubtitle.textColor = [iOS6Theme secondaryTextColor];
+        _headerSubtitle.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:11]];
+        _headerSubtitle.shadowColor = [iOS6Theme isDarkMode]
+            ? [UIColor colorWithWhite:0.0f alpha:0.4f]
+            : [UIColor colorWithWhite:1.0f alpha:0.7f];
+        _headerSubtitle.shadowOffset = CGSizeMake(0, 1);
+        _headerHairline.backgroundColor = [iOS6Theme hairlineColor];
+        _edgeHighlight.backgroundColor = [UIColor colorWithWhite:1.0f alpha:0.35f];
 
-    // Menu icons tinted with the saturated tab-selected blue — matches
-    // the "selected tab" blue the user liked on the old tab bar.
-    UIColor *iconColor = [iOS6Theme tabBarSelectedTintColor];
-    NSArray *types = [NSArray arrayWithObjects:
-                      [NSNumber numberWithInt:IconTypeChatBubble],
-                      [NSNumber numberWithInt:IconTypeClock],
-                      [NSNumber numberWithInt:IconTypeGear], nil];
-    NSMutableArray *imgs = [NSMutableArray arrayWithCapacity:[types count]];
-    for (NSNumber *tn in types) {
-        UIImage *img = [IconDrawing imageForType:(IconType)[tn intValue]
-                                            size:CGSizeMake(26, 26)
-                                           color:iconColor];
-        [imgs addObject:img];
+        // Refresh the linen background (theme-dependent).
+        UIImage *linen = [self _linenPatternImage];
+        if (linen) {
+            // Use a pattern-color background so the 8pt tile REPEATS
+            // (CALayer.contents would stretch it).
+            UIColor *pattern = [UIColor colorWithPatternImage:linen];
+            _sidebarView.layer.contents = nil;
+            _sidebarView.backgroundColor = pattern;
+        } else {
+            _sidebarView.backgroundColor = [iOS6Theme pinstripeBackground];
+        }
+
+        // Menu icons tinted with the saturated tab-selected blue — matches
+        // the "selected tab" blue the user liked on the old tab bar.
+        // Order matches menu rows across both sections:
+        //   chat: NewChat / History — manage: Models / Characters / Logs / Settings
+        UIColor *iconColor = [iOS6Theme tabBarSelectedTintColor];
+        NSArray *types = [NSArray arrayWithObjects:
+                          [NSNumber numberWithInt:IconTypeChatBubble],
+                          [NSNumber numberWithInt:IconTypeClock],
+                          [NSNumber numberWithInt:IconTypeLayers],
+                          [NSNumber numberWithInt:IconTypePerson],
+                          [NSNumber numberWithInt:IconTypeDoc],
+                          [NSNumber numberWithInt:IconTypeGear], nil];
+        NSMutableArray *imgs = [NSMutableArray arrayWithCapacity:[types count]];
+        for (NSNumber *tn in types) {
+            UIImage *img = [IconDrawing imageForType:(IconType)[tn intValue]
+                                                size:CGSizeMake(26, 26)
+                                               color:iconColor];
+            [imgs addObject:img];
+        }
+        [_menuIcons release];
+        _menuIcons = [imgs retain];
+
+        [_menuTable reloadData];
+    } @catch (NSException *e) {
+        NSLog(@"[DrawerVC] _styleSidebar crashed: %@ — %@", e.name, e.reason);
     }
-    [_menuIcons release];
-    _menuIcons = [imgs retain];
-
-    [_menuTable reloadData];
 }
 
 - (NSString *)_versionLine
@@ -301,12 +464,21 @@ static CGFloat const kDimAlpha     = 0.45f;
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
 {
-    return 1;
+    return kMenuSectionCount;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
-    return kMenuRowCount;
+    if (section == kMenuSectionChat) return kMenuRowChatCount;
+    return kMenuRowManageCount;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
+{
+    if (section == kMenuSectionChat) {
+        return NSLocalizedString(@"聊天", nil);
+    }
+    return NSLocalizedString(@"管理", nil);
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
@@ -317,24 +489,44 @@ static CGFloat const kDimAlpha     = 0.45f;
         cell = [[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
                                        reuseIdentifier:kMenuCellID] autorelease];
         cell.accessoryType = UITableViewCellAccessoryNone;
+        cell.selectionStyle = UITableViewCellSelectionStyleBlue;
     }
     // Re-applied EVERY configure (not just on creation) — reused cells
     // would otherwise keep the pre-theme-flip background colour.
     // Default grouped cells are white; dark mode needs the charcoal
-    // fill or the sidebar looks broken against the dark pinstripe.
+    // fill or the sidebar looks broken against the dark linen.
     cell.backgroundColor = [iOS6Theme isDarkMode]
         ? [iOS6Theme colorWithHex:@"#26262A"]
         : [UIColor whiteColor];
-    NSInteger row = indexPath.row;
-    if (row >= 0 && row < (NSInteger)[_menuTitles count]) {
-        cell.textLabel.text  = [_menuTitles objectAtIndex:row];
-        cell.textLabel.font  = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];
-        cell.textLabel.textColor = [iOS6Theme textColor];
-        if (row < (NSInteger)[_menuIcons count]) {
-            cell.imageView.image = [_menuIcons objectAtIndex:row];
-        }
+    cell.textLabel.textColor = [iOS6Theme textColor];
+    cell.textLabel.shadowColor = [iOS6Theme isDarkMode]
+        ? [UIColor colorWithWhite:0.0f alpha:0.35f]
+        : [UIColor colorWithWhite:1.0f alpha:0.9f];
+    cell.textLabel.shadowOffset = CGSizeMake(0, 1);
+
+    // Map (section,row) → flat icon index (chat rows 0-1, manage rows 2-5).
+    NSInteger flat = indexPath.section == kMenuSectionChat
+        ? indexPath.row
+        : kMenuRowChatCount + indexPath.row;
+    cell.textLabel.text = [self _titleForFlatIndex:flat];
+    cell.textLabel.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];
+    if (flat >= 0 && flat < (NSInteger)[_menuIcons count]) {
+        cell.imageView.image = [_menuIcons objectAtIndex:flat];
     }
     return cell;
+}
+
+- (NSString *)_titleForFlatIndex:(NSInteger)flat
+{
+    switch (flat) {
+        case 0:  return NSLocalizedString(@"新对话", nil);
+        case 1:  return NSLocalizedString(@"历史记录", nil);
+        case 2:  return NSLocalizedString(@"模型管理", nil);
+        case 3:  return NSLocalizedString(@"角色管理", nil);
+        case 4:  return NSLocalizedString(@"日志", nil);
+        case 5:  return NSLocalizedString(@"设置", nil);
+        default: return @"";
+    }
 }
 
 #pragma mark - Menu table (delegate)
@@ -343,26 +535,44 @@ static CGFloat const kDimAlpha     = 0.45f;
 didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    switch (indexPath.row) {
-        case kMenuRowNewChat:
-            [self closeSidebarAnimated:YES];
-            [self performSelector:@selector(_newChatAfterClose)
-                       withObject:nil
-                       afterDelay:kAnimDuration + 0.03];
-            break;
-        case kMenuRowHistory: {
-            HistoryViewController *history = [[[HistoryViewController alloc] init] autorelease];
-            // Its own init sets the English "History" — keep the navbar
-            // consistently Chinese like the rest of the chrome.
-            history.title = NSLocalizedString(@"历史", nil);
-            [self pushViewControllerAfterClose:history];
-            break;
+    if (indexPath.section == kMenuSectionChat) {
+        switch (indexPath.row) {
+            case kMenuRowNewChat:
+                [self closeSidebarAnimated:YES];
+                [self performSelector:@selector(_newChatAfterClose)
+                           withObject:nil
+                           afterDelay:kAnimDuration + 0.03];
+                break;
+            case kMenuRowHistory: {
+                HistoryViewController *history = [[[HistoryViewController alloc] init] autorelease];
+                history.title = NSLocalizedString(@"历史", nil);
+                [self pushViewControllerAfterClose:history];
+                break;
+            }
         }
-        case kMenuRowSettings: {
-            SettingsViewController *settings = [[[SettingsViewController alloc] init] autorelease];
-            settings.title = NSLocalizedString(@"设置", nil);
-            [self pushViewControllerAfterClose:settings];
-            break;
+    } else {
+        switch (indexPath.row) {
+            case kMenuRowModels: {
+                ModelManagementViewController *mm = [[[ModelManagementViewController alloc] init] autorelease];
+                [self pushViewControllerAfterClose:mm];
+                break;
+            }
+            case kMenuRowCharacters: {
+                CharacterManagementViewController *cm = [[[CharacterManagementViewController alloc] init] autorelease];
+                [self pushViewControllerAfterClose:cm];
+                break;
+            }
+            case kMenuRowLogs: {
+                LogViewController *lv = [[[LogViewController alloc] init] autorelease];
+                [self pushViewControllerAfterClose:lv];
+                break;
+            }
+            case kMenuRowSettings: {
+                SettingsViewController *settings = [[[SettingsViewController alloc] init] autorelease];
+                settings.title = NSLocalizedString(@"设置", nil);
+                [self pushViewControllerAfterClose:settings];
+                break;
+            }
         }
     }
 }
