@@ -1221,7 +1221,7 @@
     NSData *data = [NSURLConnection sendSynchronousRequest:req
                                           returningResponse:&resp
                                                       error:&netErr];
-    NSTimeInterval dur = [NSDate timeIntervalSinceDate:t0];
+    NSTimeInterval dur = -[t0 timeIntervalSinceNow];
     if (netErr) {
         [[Logger sharedLogger] error:[NSString stringWithFormat:
             @"SEARCH ✗ %.1fs net code=%ld — %@", dur, (long)netErr.code,
@@ -1308,7 +1308,7 @@
     NSData *data = [NSURLConnection sendSynchronousRequest:req
                                           returningResponse:&resp
                                                       error:&netErr];
-    NSTimeInterval dur = [NSDate timeIntervalSinceDate:t0];
+    NSTimeInterval dur = -[t0 timeIntervalSinceNow];
     if (netErr) {
         [[Logger sharedLogger] error:[NSString stringWithFormat:
             @"MODELS ✗ %.1fs net code=%ld — %@", dur, (long)netErr.code,

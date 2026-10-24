@@ -75,7 +75,11 @@ static const char base64Chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrs
     
     NSData *result = [NSData dataWithBytes:out length:outLen];
     free(out);
-    return [result retain]; // MRC: caller owns
+    // v261025-1: return +0 (autoreleased), matching the convenience-
+    // constructor naming convention. The old `[result retain]` returned +1
+    // with a "caller owns" comment, but the ONLY caller (ChatMessageCell's
+    // bg decode block) never released it → multi-MB leak per decoded image.
+    return result;
 }
 
 - (NSString *)base64String {
