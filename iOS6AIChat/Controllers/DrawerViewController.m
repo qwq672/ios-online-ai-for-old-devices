@@ -60,10 +60,10 @@ static CGFloat const kDimAlpha     = 0.45f;
 
 #pragma mark - Lifecycle
 
-- (id)initWithMainViewController:(UIViewController *)mainVC
+- (id)initWithMainViewController:(UINavigationController *)mainNav
 {
     if (self = [super initWithNibName:nil bundle:nil]) {
-        _mainNav = [mainVC retain];
+        _mainNav = [mainNav retain];
 
         CGRect scr = [[UIScreen mainScreen] bounds];
         _sidebarW = MIN(280.0f, scr.size.width * 0.8f);

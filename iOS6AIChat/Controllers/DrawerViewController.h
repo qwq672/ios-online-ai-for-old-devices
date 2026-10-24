@@ -25,9 +25,10 @@ extern NSString *const DrawerViewControllerToggleNotification;
 
 @interface DrawerViewController : UIViewController
 
-// Designated initializer. mainVC is retained as the drawer's centre
-// content (typically a UINavigationController wrapping ChatViewController).
-- (id)initWithMainViewController:(UIViewController *)mainVC;
+// Designated initializer. mainNav is retained as the drawer's centre
+// content — a UINavigationController wrapping ChatViewController.
+// History / Settings are pushed onto this same stack.
+- (id)initWithMainViewController:(UINavigationController *)mainNav;
 
 - (void)toggleSidebar;
 - (void)openSidebar;
