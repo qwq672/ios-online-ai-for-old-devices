@@ -181,17 +181,9 @@ static CGFloat const kDimAlpha     = 0.45f;
     // Skeuomorphic panel: linen-pattern background (drawn, no assets),
     // drop shadow, and a 1px light bevel on the right edge so it reads
     // as a physical slab sliding over the content.
-    _sidebarView.backgroundColor = [UIColor clearColor];
-    // Pattern-colored background view drawn in a subclass-free way:
-    // set the CALayer contents to the pattern image directly.
-    UIImage *linen = [self _linenPatternImage];
-    if (linen) {
-        _sidebarView.layer.contents = (id)linen.CGImage;
-        // contentsGravity default 'resize' stretches; use scale-to-fill.
-        _sidebarView.layer.contentsGravity = kCAGravityResize;
-    } else {
-        _sidebarView.backgroundColor = [iOS6Theme pinstripeBackground];
-    }
+    // (Background pattern applied in _styleSidebar via
+    // colorWithPatternImage: — a repeating 8pt tile.)
+    _sidebarView.backgroundColor = [iOS6Theme pinstripeBackground];
 
     // Physical-panel drop shadow (right edge only via shadow path).
     _sidebarView.layer.shadowColor = [UIColor blackColor].CGColor;
@@ -298,10 +290,8 @@ static CGFloat const kDimAlpha     = 0.45f;
 
         UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
         UIGraphicsEndImageContext();
-        // Convert to a pattern that stretches — actually for a repeating
-        // pattern we'd want colorWithPatternInColor; but CALayer.contents
-        // stretches the image. Instead we return the tile and let the
-        // caller use it via UIColor pattern (see below).
+        // Return the 8pt tile — the caller wraps it in a repeating
+        // pattern via colorWithPatternImage:.
         return img;  // autoreleased
     } @catch (NSException *e) {
         NSLog(@"[DrawerVC] linen pattern draw failed: %@", e);
@@ -326,10 +316,8 @@ static CGFloat const kDimAlpha     = 0.45f;
         // Refresh the linen background (theme-dependent).
         UIImage *linen = [self _linenPatternImage];
         if (linen) {
-            // Use a pattern-color background so the 8pt tile REPEATS
-            // (CALayer.contents would stretch it).
+            // Pattern-color background so the 8pt tile REPEATS.
             UIColor *pattern = [UIColor colorWithPatternImage:linen];
-            _sidebarView.layer.contents = nil;
             _sidebarView.backgroundColor = pattern;
         } else {
             _sidebarView.backgroundColor = [iOS6Theme pinstripeBackground];
