@@ -303,11 +303,13 @@ enum {
             NSString *prompt = [c objectForKey:@"prompt"];
             cell.textLabel.text = name;
             // Truncate prompt to 60 chars for the detail label.
-            NSString *short = prompt;
-            if (short.length > 60) {
-                short = [NSString stringWithFormat:@"%@…", [short substringToIndex:59]];
+            // (Note: `shortPrompt` is used because `short` is a C reserved
+            //  keyword — `short int` is a type.)
+            NSString *shortPrompt = prompt;
+            if (shortPrompt.length > 60) {
+                shortPrompt = [NSString stringWithFormat:@"%@…", [shortPrompt substringToIndex:59]];
             }
-            cell.detailTextLabel.text = short;
+            cell.detailTextLabel.text = shortPrompt;
             cell.detailTextLabel.numberOfLines = 1;
             // Checkmark if active.
             NSString *active = [CharacterManagementViewController activeCharacterName];
