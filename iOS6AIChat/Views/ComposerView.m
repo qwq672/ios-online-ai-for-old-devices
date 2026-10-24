@@ -350,20 +350,24 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     UIImage *capturedImage = [image retain];  // MRC: bg queue retains
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // v261024-19: NO @try — nil-check on jpegData instead.
-        NSData *jpegData = UIImageJPEGRepresentation(capturedImage, 0.7);
-        NSString *base64 = jpegData ? [jpegData base64String] : nil;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [capturedImage release];
-            if (!base64 || base64.length == 0) {
-                // Encoding failed — show empty badge state.
-                _imageBadge.hidden = YES;
-                return;
-            }
-            NSString *dataUrl = [NSString stringWithFormat:@"data:image/jpeg;base64,%@", base64];
-            [_pendingImages addObject:dataUrl];
-            [self _refreshToggleVisuals];
-        });
+        // v261025-1: @autoreleasepool — GCD worker threads have NO pool;
+        // the autoreleased JPEG data / base64 string below would otherwise
+        // leak on every image pick.
+        @autoreleasepool {
+            NSData *jpegData = UIImageJPEGRepresentation(capturedImage, 0.7);
+            NSString *base64 = jpegData ? [jpegData base64String] : nil;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [capturedImage release];
+                if (!base64 || base64.length == 0) {
+                    // Encoding failed — show empty badge state.
+                    _imageBadge.hidden = YES;
+                    return;
+                }
+                NSString *dataUrl = [NSString stringWithFormat:@"data:image/jpeg;base64,%@", base64];
+                [_pendingImages addObject:dataUrl];
+                [self _refreshToggleVisuals];
+            });
+        }
     });
 }
 
@@ -376,6 +380,12 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 
 - (void)_sendTapped
 {
+    // v261025-1: belt-and-braces guard — the send button is disabled
+    // during streaming, but if the isStreaming flag ever desyncs we
+    // still refuse to double-send here rather than launching a second
+    // stream on top of the first.
+    if (_isStreaming) return;
+
     NSString *text = [_textView.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (text.length == 0 && [_pendingImages count] == 0) return;
     [_textView resignFirstResponder];
@@ -384,16 +394,12 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     BOOL ws = [[self class] webSearchEnabled];
     NSArray *imgs = [_pendingImages count] > 0 ? [NSArray arrayWithArray:_pendingImages] : nil;
 
+    // v261025-1: REMOVED the ComposerViewSendMessageNotification post —
+    // it duplicated the delegate call (double-send landmine if any
+    // observer ever subscribes). The delegate channel is the only path.
     if ([_delegate respondsToSelector:@selector(composer:didSendText:images:deepThinking:webSearch:)]) {
         [_delegate composer:self didSendText:text images:imgs deepThinking:dt webSearch:ws];
     }
-    [[NSNotificationCenter defaultCenter] postNotificationName:ComposerViewSendMessageNotification object:self
-        userInfo:@{
-            ComposerViewSendMessageTextKey: text ?: @"",
-            ComposerViewSendMessageDeepThinkingKey: @(dt),
-            ComposerViewSendMessageWebSearchKey: @(ws),
-            ComposerViewSendMessageImagesKey: imgs ?: [NSNull null]
-        }];
 
     [self clearText];
 }

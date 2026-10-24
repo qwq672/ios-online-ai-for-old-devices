@@ -161,17 +161,10 @@ static NSString *const kCellReuseID = @"HistoryCell";
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
-    // v261024-19: detailed log so we can see in the log file which step
-    // the HistoryVC reached before crashing — most user crashes happen
-    // shortly after entering the History list.
-    [[Logger sharedLogger] info:@"HistoryVC viewWillAppear enter"];
-    // v261024-18 Plan-1: HistoryVC is PUSHED from the drawer menu onto the
-    // chat nav stack — the navbar is naturally visible. The previous
-    // explicit [nav setNavigationBarHidden:NO] (v261024-17) is REMOVED:
-    // touching the bar's hidden state around appear/layout transitions
-    // corrupts the container geometry on iOS 6 (bar invisible + touches
-    // dead + watchdog kill — exactly the user's crash report).
-    //
+    // v261025-1: single line — enough to bracket the entry; the heavy
+    // per-step logging of v19 drowned the log and (with the v19 Logger
+    // over-release bug) each line was itself a crash trigger.
+    [[Logger sharedLogger] info:@"HistoryVC viewWillAppear"];
     // Re-apply theme in case it changed in Settings.
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
     if (_tableView) {
@@ -180,7 +173,6 @@ static NSString *const kCellReuseID = @"HistoryCell";
         [self _installManagementFooter];
         [_tableView reloadData];
     }
-    [[Logger sharedLogger] info:@"HistoryVC viewWillAppear exit"];
 }
 
 - (void)viewDidAppear:(BOOL)animated
@@ -248,6 +240,30 @@ static NSString *const kCellReuseID = @"HistoryCell";
     return (NSInteger)[[ConversationStore sharedStore].conversations count];
 }
 
+- (Conversation *)_conversationAtRow:(NSInteger)row
+{
+    // v261025-1: ONE resolver used by every row-oriented callback
+    // (cellForRow / didSelect / commitEditingStyle). The old code
+    // duplicated the filter logic three times, and commitEditingStyle
+    // resolved the row against the UNFILTERED list while the table was
+    // showing the FILTERED list — deleting the WRONG conversation and
+    // then crashing deleteRows with a count mismatch (NSInternal-
+    // InconsistencyException).
+    NSArray *allConvs = [ConversationStore sharedStore].conversations;
+    if (_searchText && _searchText.length > 0) {
+        NSMutableArray *filtered = [NSMutableArray array];
+        for (Conversation *conv in allConvs) {
+            if ([conv.displayTitle rangeOfString:_searchText options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                [filtered addObject:conv];
+            }
+        }
+        if (row < 0 || row >= (NSInteger)[filtered count]) return nil;
+        return [filtered objectAtIndex:row];
+    }
+    if (row < 0 || row >= (NSInteger)[allConvs count]) return nil;
+    return [allConvs objectAtIndex:row];
+}
+
 - (UITableViewCell *)tableView:(UITableView *)tableView
               cellForRowAtIndexPath:(NSIndexPath *)indexPath
 {
@@ -264,21 +280,8 @@ static NSString *const kCellReuseID = @"HistoryCell";
     cell.detailTextLabel.textColor = [iOS6Theme secondaryTextColor];
     cell.detailTextLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
 
-    NSArray *allConvs = [ConversationStore sharedStore].conversations;
-    Conversation *c;
-    if (_searchText && _searchText.length > 0) {
-        NSMutableArray *filtered = [NSMutableArray array];
-        for (Conversation *conv in allConvs) {
-            if ([conv.displayTitle rangeOfString:_searchText options:NSCaseInsensitiveSearch].location != NSNotFound) {
-                [filtered addObject:conv];
-            }
-        }
-        if ((NSInteger)[filtered count] <= indexPath.row) return cell;
-        c = [filtered objectAtIndex:indexPath.row];
-    } else {
-        if ((NSInteger)[allConvs count] <= indexPath.row) return cell;
-        c = [allConvs objectAtIndex:indexPath.row];
-    }
+    Conversation *c = [self _conversationAtRow:indexPath.row];
+    if (!c) return cell;
     cell.textLabel.text = [c displayTitle];
     NSDateFormatter *df = [[[NSDateFormatter alloc] init] autorelease];
     [df setDateFormat: @"yyyy-MM-dd HH:mm"];
@@ -316,52 +319,27 @@ titleForHeaderInSection:(NSInteger)section
 - (void)tableView:(UITableView *)tableView
 didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    NSArray *allConvs = [ConversationStore sharedStore].conversations;
-    Conversation *c;
-    if (_searchText && _searchText.length > 0) {
-        NSMutableArray *filtered = [NSMutableArray array];
-        for (Conversation *conv in allConvs) {
-            if ([conv.displayTitle rangeOfString:_searchText options:NSCaseInsensitiveSearch].location != NSNotFound) {
-                [filtered addObject:conv];
-            }
-        }
-        if ((NSInteger)[filtered count] <= indexPath.row) {
-            [tableView deselectRowAtIndexPath:indexPath animated:YES];
-            return;
-        }
-        c = [filtered objectAtIndex:indexPath.row];
-    } else {
-        if ((NSInteger)[allConvs count] <= indexPath.row) {
-            [tableView deselectRowAtIndexPath:indexPath animated:YES];
-            return;
-        }
-        c = [allConvs objectAtIndex:indexPath.row];
+    Conversation *c = [self _conversationAtRow:indexPath.row];
+    if (!c) {
+        [tableView deselectRowAtIndexPath:indexPath animated:YES];
+        return;
     }
-    // Plan 1 (v261024-18): push a fresh ChatViewController and tell it which
-    // conversation to load. Direct call, simpler and traceable.
-    // v261024-19: detailed entry/exit logging — the HistoryVC has been a
-    // crash hotspot (75% per user report). Each step gets its own line so
-    // the next crash will show the exact last-reached step.
-    [[Logger sharedLogger] info:[NSString stringWithFormat:@"HistoryVC didSelect row=%ld conv=%@", (long)indexPath.row, c.conversationID ?: @"(nil)"]];
+    // v261025-1: lean logging — one line in, one line out. (v19's six
+    // lines per tap drowned the log; logging is crash-safe now, so
+    // two lines are enough to bracket the operation.)
+    [[Logger sharedLogger] info:[NSString stringWithFormat:@"HistoryVC didSelect row=%ld conv=%@",
+                                  (long)indexPath.row, c.conversationID ?: @"?"]];
     ChatViewController *chat = [[[ChatViewController alloc] initWithNibName:nil bundle:nil] autorelease];
-    if (!chat) {
-        [[Logger sharedLogger] error:@"HistoryVC: ChatViewController alloc failed"];
-        [tableView deselectRowAtIndexPath:indexPath animated:YES];
-        return;
-    }
     UINavigationController *nav = self.navigationController;
-    if (!nav) {
-        [[Logger sharedLogger] error:@"HistoryVC: navigationController is nil"];
+    if (!chat || !nav) {
+        [[Logger sharedLogger] error:@"HistoryVC didSelect — chat or nav nil"];
         [tableView deselectRowAtIndexPath:indexPath animated:YES];
         return;
     }
-    [[Logger sharedLogger] info:@"HistoryVC push chat start"];
     [nav pushViewController:chat animated:YES];
-    [[Logger sharedLogger] info:@"HistoryVC push chat done, calling loadConversation"];
     [chat loadConversation:c];
-    [[Logger sharedLogger] info:@"HistoryVC loadConversation returned"];
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    [[Logger sharedLogger] info:@"HistoryVC didSelect exit"];
+    [[Logger sharedLogger] info:@"HistoryVC didSelect — push+load OK"];
 }
 
 - (void)tableView:(UITableView *)tableView
@@ -369,14 +347,16 @@ commitEditingStyle:(UITableViewCellEditingStyle)editingStyle
 forRowAtIndexPath:(NSIndexPath *)indexPath
 {
     if (editingStyle == UITableViewCellEditingStyleDelete) {
-        if (indexPath.row < (NSInteger)[[ConversationStore sharedStore].conversations count]) {
-            Conversation *c = [[ConversationStore sharedStore].conversations
-                                objectAtIndex:indexPath.row];
-            [[ConversationStore sharedStore] deleteConversationWithID:c.conversationID];
-            [tableView deleteRowsAtIndexPaths:[NSArray arrayWithObject:indexPath]
-                             withRowAnimation:UITableViewRowAnimationLeft];
-            [[Logger sharedLogger] info:[NSString stringWithFormat:@"Deleted conversation %@", c.conversationID]];
-        }
+        // v261025-1: resolve through the SAME filter-aware resolver the
+        // table displays (was: raw unfiltered index — wrong-conversation
+        // delete + deleteRows count-mismatch crash while searching).
+        Conversation *c = [self _conversationAtRow:indexPath.row];
+        if (!c) return;
+        [[ConversationStore sharedStore] deleteConversationWithID:c.conversationID];
+        // reloadData (not deleteRows) — safe against any index drift when
+        // a search filter is active.
+        [_tableView reloadData];
+        [[Logger sharedLogger] info:[NSString stringWithFormat:@"Deleted conversation %@", c.conversationID]];
     }
 }
 

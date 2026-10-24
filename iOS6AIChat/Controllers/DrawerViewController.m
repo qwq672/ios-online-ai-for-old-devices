@@ -74,6 +74,7 @@ static CGFloat const kDimAlpha     = 0.45f;
     UIView      *_headerHairline;
     UIView      *_edgeHighlight; // 1px light line on the sidebar's right edge
     NSArray     *_menuIcons;     // re-built on theme change (icon tint)
+    UIViewController *_pendingPushVC;  // v261025-1: deferred menu push
     BOOL         _open;
     CGFloat      _sidebarW;
 }
@@ -109,6 +110,9 @@ static CGFloat const kDimAlpha     = 0.45f;
 - (void)dealloc
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    // Cancel the deferred push if the drawer is being torn down mid-delay.
+    [NSObject cancelPreviousPerformRequestsWithTarget:self];
+    [_pendingPushVC release];
     [_mainNav release];
     [_sidebarView release];
     [_dimOverlay release];
@@ -418,12 +422,43 @@ static CGFloat const kDimAlpha     = 0.45f;
 
 - (void)_pushNow:(UIViewController *)vc
 {
-    // Defensive: if something is already pushed (shouldn't happen — the
-    // hamburger only lives on the chat root), snap to root first.
+    // v261025-1: iOS 6 UINavigationController BUG — popToRootViewControllerAnimated:
+    // followed by pushViewController:animated: in the SAME runloop tick
+    // corrupts the container's transition state ("nested pop animation"
+    // / bar never appears / SIGSEGV inside UINavigationItem layout). The
+    // old code did exactly that. Fix: pop without animation AND defer the
+    // push to the next runloop turn so the container completes its layout
+    // pass in between.
+    if (!vc) return;
+    if ([_mainNav.viewControllers count] > 1) {
+        [_mainNav popToRootViewControllerAnimated:NO];
+    }
+    // Hold the VC ourselves; the afterDelay retains self, not the VC.
+    if (_pendingPushVC != vc) {
+        [_pendingPushVC release];
+        _pendingPushVC = [vc retain];
+    }
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                              selector:@selector(_deferredPushNow)
+                                                object:nil];
+    [self performSelector:@selector(_deferredPushNow)
+               withObject:nil
+               afterDelay:0.05];
+}
+
+- (void)_deferredPushNow
+{
+    UIViewController *vc = _pendingPushVC;
+    if (!vc) return;
+    // Defensive: the menu only ever pushes from the chat root. If the
+    // stack somehow grew in between, collapse it first (no animation,
+    // then push animated on THIS tick — never pop+push same tick).
     if ([_mainNav.viewControllers count] > 1) {
         [_mainNav popToRootViewControllerAnimated:NO];
     }
     [_mainNav pushViewController:vc animated:YES];
+    [_pendingPushVC release];
+    _pendingPushVC = nil;
 }
 
 - (void)_newChatAfterClose

@@ -45,6 +45,11 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 @property (nonatomic, assign) CGFloat lastKeyboardHeight;
 @property (nonatomic, retain) UIView *searchStatusView;
 @property (nonatomic, retain) UILabel *searchStatusLabel;
+// v261025-1: instance-level refresh throttle. It used to be a `static`
+// inside the method — one variable SHARED by every ChatVC instance
+// (root + pushed), so two visible chats starved each other's streaming
+// refreshes.
+@property (nonatomic, assign) NSTimeInterval lastRowReloadTime;
 @end
 
 @implementation ChatViewController
@@ -68,6 +73,15 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                                                    object:nil];
     }
     return self;
+}
+
+- (void)didReceiveMemoryWarning
+{
+    [super didReceiveMemoryWarning];
+    // v261025-1: iOS 6 devices have very little RAM. Drop the render/
+    // height caches (they rebuild lazily) instead of getting jetsammed.
+    [ChatMessageCell flushCaches];
+    [[Logger sharedLogger] warn:@"ChatVC didReceiveMemoryWarning — caches flushed"];
 }
 
 - (void)dealloc
@@ -245,18 +259,40 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
 - (void)loadConversation:(Conversation *)conversation
 {
+    // v261025-1: switching conversations must tear down any in-flight
+    // stream FIRST. The old code left the stream running with the OLD
+    // conversationID; its didFinish was then filtered out by the ID
+    // guard in the delegate callbacks — so `_composer.isStreaming = NO`
+    // never ran and the send button stayed disabled FOREVER (the
+    // "composer dead after browsing history" bug).
+    if (_conversation != conversation) {
+        [self _teardownActiveStream];
+    }
     self.conversation = conversation;
     [self _reload];
     [self _scrollToBottomAnimated:NO];
 }
 
+// Cancel the in-flight stream (if any) and put the composer back into
+// the interactive state. Safe to call any time.
+- (void)_teardownActiveStream
+{
+    if (_networkService) {
+        [_networkService cancelStream];
+    }
+    _composer.isStreaming = NO;
+    [self _hideSearchStatus];
+}
+
 - (void)startNewConversation
 {
     // Plan 1 (v261024-18): ChatVC IS the nav root — a "new chat" simply
-    // swaps the conversation in place. No pop/push gymnastics (that was
-    // Plan-2-only; the pop-then-delayed-push dance was also a suspect
-    // in the crash reports).
+    // swaps the conversation in place.
+    // v261025-1: also tear down any active stream — otherwise the old
+    // stream's didFinish gets filtered by the conversationID guard and
+    // the composer stays stuck in the disabled/streaming state.
     [[Logger sharedLogger] info:@"ChatVC startNewConversation (in-place)"];
+    [self _teardownActiveStream];
     if ([_conversation.messages count] > 0) {
         self.conversation = [[ConversationStore sharedStore] createNewConversation];
         [self _reload];
@@ -446,7 +482,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
         BOOL capturedUseTransit = useTransit;
         NSString *capturedTransitURL = [transitURL copy];
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            // v261024-19: NO @try — nil-guards on results instead.
+            // v261025-1: @autoreleasepool — GCD worker threads have NO pool;
+            // the autoreleased NetworkService + result objects leaked per search.
+            @autoreleasepool {
             NetworkService *svc = [[[NetworkService alloc] init] autorelease];
             NSError *err = nil;
             NSArray *results = [svc tavilySearchWithQuery:capturedText
@@ -456,6 +494,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                                                  transitURL:capturedTransitURL
                                                      error:&err];
             NSArray *resultsCopy = [results retain];
+            NSError *errCopy = [err retain];
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self _hideSearchStatus];
                 if (resultsCopy && [resultsCopy count] > 0) {
@@ -488,7 +527,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                                        preSearchResults:ctx];
                 } else {
                     // Pre-search failed — proceed without search context.
-                    [self _showSearchStatus:[NSString stringWithFormat:@"⚠️ 搜索失败: %@", err.localizedDescription ?: @"无结果"]];
+                    [self _showSearchStatus:[NSString stringWithFormat:@"⚠️ 搜索失败: %@", [errCopy localizedDescription] ?: @"无结果"]];
                     // Hide the warning after 2 seconds.
                     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                         [self _hideSearchStatus];
@@ -511,7 +550,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                                        preSearchResults:nil];
                 }
                 [resultsCopy release];
+                [errCopy release];
             });
+            } // @autoreleasepool
         });
         [capturedText release];
         return;
@@ -689,6 +730,13 @@ didFinishForConversationID:(NSString *)conversationID
                 fullText:(NSString *)fullText
 {
     if (![conversationID isEqualToString:_conversation.conversationID]) return;
+    // v261025-1: EMPTY-REPLY guard — a 200 OK with zero content chars is
+    // NOT a usable answer. Surface it clearly in the bubble (NetworkService
+    // already logged the raw body head for diagnosis) instead of silently
+    // showing a blank/“…” bubble.
+    if (fullText.length == 0) {
+        fullText = NSLocalizedString(@"⚠️ 服务器返回了空回复（详见日志——可能为中转/上游异常）", nil);
+    }
     [_conversation updateLastAssistantMessageContent:fullText ?: @""];
     // Attach accumulated thinking text to the message — preserves it
     // across launches / conversation switches.
@@ -731,17 +779,15 @@ didFailForConversationID:(NSString *)conversationID
 {
     if ([_conversation.messages count] == 0) return;
     // Throttle: only reload every 0.4s to reduce CPU usage during streaming.
-    // Was 0.25s but for long AI responses the Markdown re-render +
-    // boundingRect was still too slow on iOS 6 hardware. 0.4s gives the
-    // CPU more headroom while keeping the streaming feel responsive.
-    static NSTimeInterval lastReload = 0;
+    // v261025-1: was a `static` (one variable shared across ALL ChatVC
+    // instances — the root chat AND any pushed history chat starved each
+    // other's refreshes); now per-instance.
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-    if (!force && now - lastReload < 0.4) return; // skip if less than 400ms
-    lastReload = now;
+    if (!force && now - self.lastRowReloadTime < 0.4) return;
+    self.lastRowReloadTime = now;
 
     NSIndexPath *lastIdx = [NSIndexPath indexPathForRow:[_conversation.messages count] - 1
                                               inSection:0];
-    // v261024-19: NO @try — bounds-check instead of catching exception.
     if (!lastIdx || lastIdx.row < 0 ||
         lastIdx.row >= (NSInteger)[_tableView numberOfRowsInSection:0]) {
         [_tableView reloadData];
@@ -802,6 +848,13 @@ didFailForConversationID:(NSString *)conversationID
 - (void)chatCell:(ChatMessageCell *)cell didTapRegenerate:(Message *)message
 {
     if (!message || !message.isAssistant) return;
+    // v261025-1: regenerating on top of a running stream would launch a
+    // second connection and mutate the message list under the first
+    // stream's feet. Ignore while streaming.
+    if (_composer.isStreaming) {
+        [[Logger sharedLogger] warn:@"ChatVC regenerate ignored — still streaming"];
+        return;
+    }
     // Find the user message that preceded this AI reply.
     NSInteger idx = [_conversation.messages indexOfObject:message];
     if (idx == NSNotFound || idx == 0) return;
@@ -835,6 +888,9 @@ didFailForConversationID:(NSString *)conversationID
     kbRect = [self.view convertRect:kbRect fromView:nil];
     CGFloat kbH = kbRect.size.height;
     self.lastKeyboardHeight = kbH;
+    // v261025-1: account for the search-status banner — with the banner
+    // visible the old math dropped it behind the keyboard.
+    CGFloat statusH = _searchStatusView.hidden ? 0 : _searchStatusView.frame.size.height;
 
     [UIView animateWithDuration:0.25 animations:^{
         _composer.frame = CGRectMake(0,
@@ -842,22 +898,30 @@ didFailForConversationID:(NSString *)conversationID
                                      self.view.bounds.size.width,
                                      _composer.bounds.size.height);
         CGRect f = _tableView.frame;
-        f.size.height = self.view.bounds.size.height - kbH - _composer.bounds.size.height;
+        f.size.height = self.view.bounds.size.height - kbH - _composer.bounds.size.height - statusH;
         _tableView.frame = f;
+        CGRect sf = _searchStatusView.frame;
+        sf.origin.y = self.view.bounds.size.height - kbH - _composer.bounds.size.height - statusH;
+        _searchStatusView.frame = sf;
     }];
     [self _scrollToBottomAnimated:YES];
 }
 
 - (void)_keyboardWillHide:(NSNotification *)note
 {
+    // v261025-1: keep the status banner above the composer on hide too.
+    CGFloat statusH = _searchStatusView.hidden ? 0 : _searchStatusView.frame.size.height;
     [UIView animateWithDuration:0.25 animations:^{
         _composer.frame = CGRectMake(0,
                                      self.view.bounds.size.height - _composer.bounds.size.height,
                                      self.view.bounds.size.width,
                                      _composer.bounds.size.height);
         CGRect f = _tableView.frame;
-        f.size.height = self.view.bounds.size.height - _composer.bounds.size.height;
+        f.size.height = self.view.bounds.size.height - _composer.bounds.size.height - statusH;
         _tableView.frame = f;
+        CGRect sf = _searchStatusView.frame;
+        sf.origin.y = self.view.bounds.size.height - _composer.bounds.size.height - statusH;
+        _searchStatusView.frame = sf;
     }];
 }
 

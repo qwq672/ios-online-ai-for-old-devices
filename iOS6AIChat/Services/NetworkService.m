@@ -31,6 +31,7 @@
 #import "NetworkService.h"
 #import "SettingsViewController.h"
 #import "NSDataBase64.h"
+#import "Logger.h"
 #import <UIKit/UIKit.h>
 #import <sys/sysctl.h>
 
@@ -68,6 +69,8 @@
 @property (nonatomic, assign) NSInteger tavilyMaxResults;
 @property (nonatomic, assign) NSInteger toolCallTurn;  // counts how many tool turns we've done
 @property (nonatomic, assign) NSInteger maxToolTurns;  // hard cap (avoid infinite loops)
+// v261025-1: stream launch timestamp — for duration logging at finish.
+@property (nonatomic, assign) NSTimeInterval streamStartTs;
 @end
 
 @implementation NetworkService
@@ -85,7 +88,8 @@
             model=_model, temperature=_temperature,
             baseMessages=_baseMessages, enableWebSearchTools=_enableWebSearchTools,
             tavilyKey=_tavilyKey, tavilyMaxResults=_tavilyMaxResults,
-            toolCallTurn=_toolCallTurn, maxToolTurns=_maxToolTurns;
+            toolCallTurn=_toolCallTurn, maxToolTurns=_maxToolTurns,
+            streamStartTs=_streamStartTs;
 @dynamic accumulatedThinking;
 
 - (id)init
@@ -393,6 +397,18 @@
     // corrupting state. This was audit finding #8.
     [_connection cancel];
 
+    // v261025-1: REQUEST log — the user needs to see exactly what was sent
+    // to diagnose transit issues (endpoint / provider / model / stream /
+    // body size / message count).
+    self.streamStartTs = [NSDate timeIntervalSinceReferenceDate];
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"NET → POST %@ | provider=%@ model=%@ stream=%d think=%d tools=%d msgs=%lu bytes=%lu",
+        url.absoluteString ?: @"?",
+        self.useTransit ? (self.provider ?: @"?") : @"(direct)",
+        (self.model ?: @"(server-default)"),
+        (int)doStream, (int)doThink, (int)[toolsArray count],
+        (unsigned long)[msgs count], (unsigned long)[bodyData length]]];
+
     self.connection = [[[NSURLConnection alloc] initWithRequest:req delegate:self
                                              startImmediately:YES] autorelease];
     return (self.connection != nil);
@@ -406,6 +422,24 @@
     [_connection cancel];
 }
 
+// v261025-1: cancel the stream, keep the delegate. Also mark the service
+// as not-streaming so the connection's (already-scheduled) final
+// callbacks are ignored: NSURLConnection may still deliver a final
+// didFail/didFinish to this runloop turn even after -cancel, and we
+// don't want a cancelled stream to fire didFinish into the NEW
+// conversation's UI.
+- (void)cancelStream
+{
+    [_connection cancel];
+    self.connection = nil;
+    [_rawBuffer setData:nil];
+    self.conversationID = nil;   // invalidates all late callbacks (ID guards)
+    [_accumulated setString:@""];
+    [_thinkingAccumulated setString:@""];
+    [_toolCallAccumulators removeAllObjects];
+    self.toolCallPending = NO;
+}
+
 #pragma mark - NSURLConnectionDataDelegate
 
 - (void)connection:(NSURLConnection *)connection didReceiveResponse:(NSURLResponse *)response
@@ -415,6 +449,9 @@
     if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
         self.httpStatus = [(NSHTTPURLResponse *)response statusCode];
     }
+    // v261025-1: RESPONSE log — first thing the server said.
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"NET ← HTTP %ld", (long)self.httpStatus]];
 }
 
 - (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data
@@ -428,6 +465,7 @@
 
 - (void)connectionDidFinishLoading:(NSURLConnection *)connection
 {
+    NSTimeInterval dur = [NSDate timeIntervalSinceReferenceDate] - self.streamStartTs;
     // Non-2xx HTTP status → surface the REAL error instead of an empty
     // reply. Extract the upstream error message from the JSON body when
     // possible so the user sees WHY (404 route, 401 key, 502 upstream…).
@@ -441,6 +479,9 @@
         NSString *msg = [NSString stringWithFormat:@"HTTP %d: %@",
                          (int)self.httpStatus,
                          detail.length > 0 ? detail : @"请求失败（中转或上游返回错误）"];
+        [[Logger sharedLogger] error:[NSString stringWithFormat:
+            @"NET ✗ HTTP %ld after %.1fs — %@", (long)self.httpStatus, dur,
+            detail.length > 0 ? detail : @"(no body detail)"]];
         if ([_delegate respondsToSelector:@selector(networkService:didFailForConversationID:error:)]) {
             NSError *err = [NSError errorWithDomain:@"iOS6AIChat"
                                                code:(NSInteger)self.httpStatus
@@ -450,14 +491,37 @@
         return;
     }
 
-    // v261024-19: NO @try — direct call.
     [self _parseBufferedChunksForce:YES];
 
     // Check if AI emitted tool_calls → multi-turn tool use flow.
     if ([_toolCallAccumulators count] > 0 && _toolCallTurn < _maxToolTurns) {
         _toolCallTurn++;
+        [[Logger sharedLogger] info:[NSString stringWithFormat:
+            @"NET ⟳ tool-call turn %ld (%lu calls) — executing",
+            (long)_toolCallTurn, (unsigned long)[_toolCallAccumulators count]]];
         [self _runPendingToolCalls];
         return;
+    }
+
+    // v261025-1: FINISH log — the full anatomy of the reply. When the
+    // answer is EMPTY we also dump the head of the raw response body so
+    // the user can SEE whether it was an SSE stream, a JSON body, or
+    // something the parser didn't understand (this is the "空回复"
+    // diagnostic the user asked for).
+    if (_accumulated.length == 0) {
+        NSString *bodyHead = [[[NSString alloc] initWithData:_rawBuffer
+                                                    encoding:NSUTF8StringEncoding] autorelease];
+        if (bodyHead.length > 200) bodyHead = [bodyHead substringToIndex:200];
+        [[Logger sharedLogger] error:[NSString stringWithFormat:
+            @"NET ✗ EMPTY reply after %.1fs — body head: %@",
+            dur, bodyHead.length > 0 ? bodyHead : @"(zero bytes)"]];
+    } else {
+        [[Logger sharedLogger] info:[NSString stringWithFormat:
+            @"NET ✓ done in %.1fs — %lu chars, %lu thinking-chars, %ld tool turns",
+            dur,
+            (unsigned long)_accumulated.length,
+            (unsigned long)_thinkingAccumulated.length,
+            (long)_toolCallTurn]];
     }
 
     // Normal completion.
@@ -470,6 +534,12 @@
 
 - (void)connection:(NSURLConnection *)connection didFailWithError:(NSError *)error
 {
+    NSTimeInterval dur = [NSDate timeIntervalSinceReferenceDate] - self.streamStartTs;
+    // v261025-1: FAIL log with duration + OS-level error.
+    [[Logger sharedLogger] error:[NSString stringWithFormat:
+        @"NET ✗ connection failed after %.1fs — code=%ld domain=%@ desc=%@",
+        dur, (long)error.code, error.domain,
+        error.localizedDescription ?: @"(no desc)"]];
     if ([_delegate respondsToSelector:@selector(networkService:didFailForConversationID:error:)]) {
         [_delegate networkService:self
               didFailForConversationID:_conversationID
@@ -831,17 +901,36 @@
     NSString *text = [[[NSString alloc] initWithData:data
                                              encoding:NSUTF8StringEncoding] autorelease];
     if (!text) {
+        // Incomplete multi-byte UTF-8 at a chunk boundary — wait for the
+        // rest UNLESS this is the final flush.
         if (!force) return;
         text = @"";
     }
 
-    NSArray *components = [text componentsSeparatedByString:@"\n\n"];
-    NSUInteger count   = [components count];
+    // v261025-1 REWRITE. Two defects in the old parser:
+    //
+    //  1) CRLF streams never split. We split on "\n\n", but SSE servers
+    //     that emit \r\n line endings separate events with "\r\n\r\n"
+    //     which contains NO "\n\n" — so the whole response stayed glued
+    //     into one block until the final force-parse: no live streaming
+    //     AND stray \r characters polluting the JSON payloads. Now we
+    //     normalize \r\n → \n (and lone \r → \n) FIRST.
+    //
+    //  2) The leftover buffer was recomputed with hand-rolled BYTE
+    //     arithmetic (sum of component UTF-8 lengths + 2 bytes per
+    //     separator). With any \r normalization or mixed content that
+    //     arithmetic drifts from reality and the buffer corrupts itself.
+    //     Now we keep the leftover as a plain STRING suffix and convert
+    //     it back to data — no byte math at all.
+    if ([text rangeOfString:@"\r"].location != NSNotFound) {
+        text = [text stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"];
+        text = [text stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];
+    }
 
-    // Bug fix: when count == 1 (no complete event block yet), the
-    // original `count - 2` would underflow NSUIntegerMax — crashing
-    // later in the loop. Guard: skip processing entirely until we have
-    // at least one complete block.
+    NSArray *components = [text componentsSeparatedByString:@"\n\n"];
+    NSUInteger count = [components count];
+
+    // No complete event block yet — hold everything for the next chunk.
     if (count < 2 && !force) return;
 
     NSUInteger lastCompleteIdx = (force ? count - 1 : count - 2);
@@ -851,17 +940,17 @@
         [self _processEventBlock:eventBlock];
     }
 
+    // Keep the trailing (incomplete) part as a string suffix.
     NSUInteger remainingStart = lastCompleteIdx + 1;
     if (remainingStart < count) {
-        NSUInteger consumedBytes = 0;
-        for (NSUInteger i = 0; i < remainingStart; i++) {
-            consumedBytes += [[components objectAtIndex:i] lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
-            consumedBytes += 2;
+        NSMutableString *leftover = [NSMutableString string];
+        for (NSUInteger i = remainingStart; i < count; i++) {
+            if (i > remainingStart) [leftover appendString:@"\n\n"];
+            [leftover appendString:[components objectAtIndex:i]];
         }
-        if (consumedBytes < [_rawBuffer length]) {
-            NSData *leftover = [_rawBuffer subdataWithRange:NSMakeRange(consumedBytes,
-                                                                         [_rawBuffer length] - consumedBytes)];
-            [_rawBuffer setData:leftover];
+        if (leftover.length > 0) {
+            NSData *leftoverData = [leftover dataUsingEncoding:NSUTF8StringEncoding];
+            [_rawBuffer setData:leftoverData];
         } else {
             [_rawBuffer setData:nil];
         }
@@ -1118,25 +1207,54 @@
     if (transitWebSearch) [req setValue:@"tavily" forHTTPHeaderField:@"X-Provider"];
     [req setHTTPBody:bodyData];
 
+    // v261025-1: search request log (the user asked for deep search-
+    // failure diagnosis — is it network or app logic? This line shows
+    // exactly which endpoint was tried.)
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"SEARCH → POST %@ | q=%@… max=%ld", endpoint,
+        ([query length] > 40 ? [NSString stringWithFormat:@"%@…", [query substringToIndex:40]] : query),
+        (long)maxResults]];
+
+    NSDate *t0 = [NSDate date];
     NSURLResponse *resp = nil;
     NSError *netErr = nil;
     NSData *data = [NSURLConnection sendSynchronousRequest:req
                                           returningResponse:&resp
                                                       error:&netErr];
+    NSTimeInterval dur = [NSDate timeIntervalSinceDate:t0];
     if (netErr) {
+        [[Logger sharedLogger] error:[NSString stringWithFormat:
+            @"SEARCH ✗ %.1fs net code=%ld — %@", dur, (long)netErr.code,
+            netErr.localizedDescription ?: @"(no desc)"]];
         if (error) *error = netErr;
         return nil;
     }
-    // Surface HTTP errors (404 wrong transit route, 401 bad key, 5xx…) —
-    // previously these silently produced "no results".
+    // Surface HTTP errors (404 wrong transit route, 401 bad key, 5xx…).
     if ([self _checkHTTPError:resp data:data error:error]) {
+        [[Logger sharedLogger] error:[NSString stringWithFormat:
+            @"SEARCH ✗ %.1fs HTTP error — see bubble for detail", dur]];
         return nil;
     }
-    if (!data || data.length == 0) return nil;
+    if (!data || data.length == 0) {
+        [[Logger sharedLogger] error:[NSString stringWithFormat:
+            @"SEARCH ✗ %.1fs — zero-byte response", dur]];
+        return nil;
+    }
 
     NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
     NSArray *results = [json objectForKey:@"results"];
-    if (![results isKindOfClass:[NSArray class]]) return nil;
+    if (![results isKindOfClass:[NSArray class]]) {
+        NSString *bodyHead = [[[NSString alloc] initWithData:data
+                                                    encoding:NSUTF8StringEncoding] autorelease];
+        if (bodyHead.length > 160) bodyHead = [bodyHead substringToIndex:160];
+        [[Logger sharedLogger] error:[NSString stringWithFormat:
+            @"SEARCH ✗ %.1fs — 200 OK but no 'results' array (body head: %@)",
+            dur, bodyHead.length > 0 ? bodyHead : @"(empty)"]];
+        return nil;
+    }
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"SEARCH ✓ %.1fs — %lu results, %lu bytes", dur,
+        (unsigned long)[results count], (unsigned long)[data length]]];
     NSMutableArray *out = [NSMutableArray arrayWithCapacity:[results count]];
     for (NSDictionary *r in results) {
         if (![r isKindOfClass:[NSDictionary class]]) continue;
@@ -1181,23 +1299,41 @@
         [req setValue:provider forHTTPHeaderField:@"X-Provider"];
     }
 
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"MODELS → GET %@", endpoint]];
+    NSDate *t0 = [NSDate date];
+
     NSURLResponse *resp = nil;
     NSError *netErr = nil;
     NSData *data = [NSURLConnection sendSynchronousRequest:req
                                           returningResponse:&resp
                                                       error:&netErr];
+    NSTimeInterval dur = [NSDate timeIntervalSinceDate:t0];
     if (netErr) {
+        [[Logger sharedLogger] error:[NSString stringWithFormat:
+            @"MODELS ✗ %.1fs net code=%ld — %@", dur, (long)netErr.code,
+            netErr.localizedDescription ?: @"(no desc)"]];
         if (error) *error = netErr;
         return nil;
     }
     // Surface HTTP errors for /v1/models too.
     if ([self _checkHTTPError:resp data:data error:error]) {
+        [[Logger sharedLogger] error:[NSString stringWithFormat:
+            @"MODELS ✗ %.1fs HTTP error", dur]];
         return nil;
     }
-    if (!data || data.length == 0) return nil;
+    if (!data || data.length == 0) {
+        [[Logger sharedLogger] error:@"MODELS ✗ zero-byte response"];
+        return nil;
+    }
     NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
     NSArray *models = [json objectForKey:@"data"];
-    if (![models isKindOfClass:[NSArray class]]) return nil;
+    if (![models isKindOfClass:[NSArray class]]) {
+        [[Logger sharedLogger] error:@"MODELS ✗ 200 OK but no 'data' array"];
+        return nil;
+    }
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"MODELS ✓ %.1fs — %lu models", dur, (unsigned long)[models count]]];
     NSMutableArray *out = [NSMutableArray arrayWithCapacity:[models count]];
     for (NSDictionary *m in models) {
         if (![m isKindOfClass:[NSDictionary class]]) continue;

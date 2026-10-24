@@ -201,29 +201,32 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         return;
     }
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // v261024-19: NO @try — nil-guards instead.
-        // Strip the data: URL prefix safely. Support multiple formats:
-        //   data:image/jpeg;base64,XXXX
-        //   data:image/png;base64,XXXX
-        //   data:image/webp;base64,XXXX
-        NSString *base64 = dataURL;
-        NSRange comma = [dataURL rangeOfString:@","];
-        if (comma.location != NSNotFound) {
-            base64 = [dataURL substringFromIndex:comma.location + comma.length];
+        // v261025-1: @autoreleasepool — GCD worker threads have NO pool;
+        // the autoreleased NSData/UIImage below leaked per decode.
+        @autoreleasepool {
+            // Strip the data: URL prefix safely. Support multiple formats:
+            //   data:image/jpeg;base64,XXXX
+            //   data:image/png;base64,XXXX
+            //   data:image/webp;base64,XXXX
+            NSString *base64 = dataURL;
+            NSRange comma = [dataURL rangeOfString:@","];
+            if (comma.location != NSNotFound) {
+                base64 = [dataURL substringFromIndex:comma.location + comma.length];
+            }
+            NSData *imgData = [NSData dataFromBase64String:base64];
+            if (!imgData || [imgData length] == 0) {
+                dispatch_async(dispatch_get_main_queue(), ^{ callback(nil); });
+                return;
+            }
+            UIImage *img = [UIImage imageWithData:imgData];
+            if (img) {
+                NSUInteger cost = [imgData length];
+                [gImageCache setObject:img forKey:key cost:cost];
+            }
+            dispatch_async(dispatch_get_main_queue(), ^{
+                callback(img);
+            });
         }
-        NSData *imgData = [NSData dataFromBase64String:base64];
-        if (!imgData || [imgData length] == 0) {
-            dispatch_async(dispatch_get_main_queue(), ^{ callback(nil); });
-            return;
-        }
-        UIImage *img = [UIImage imageWithData:imgData];
-        if (img) {
-            NSUInteger cost = [imgData length];
-            [gImageCache setObject:img forKey:key cost:cost];
-        }
-        dispatch_async(dispatch_get_main_queue(), ^{
-            callback(img);
-        });
     });
 }
 

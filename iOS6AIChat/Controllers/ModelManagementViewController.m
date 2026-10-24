@@ -40,17 +40,20 @@ enum {
 
 #pragma mark - Model list persistence (class helpers)
 
-// Pull the saved list from NSUserDefaults. Returns the JSON array, or the
-// provider defaults on first launch / corrupt storage.
+// Pull the saved list from NSUserDefaults. Returns the JSON array.
+// v261025-1: seeding only happens when the key is MISSING (first
+// launch) or the stored JSON is CORRUPT. An intentionally-emptied list
+// (user deleted every model) is now respected — the old code re-seeded
+// the provider defaults on every empty read, which made "delete the
+// last model" look like it did nothing.
 + (NSArray *)savedModelList
 {
-    NSString *json = [[NSUserDefaults standardUserDefaults]
-                       stringForKey:SettingsKeyModelList];
-    NSString *provider = [[NSUserDefaults standardUserDefaults]
-                            stringForKey:SettingsKeyProvider] ?: ProviderIDOpenAI;
-    NSArray *seed = [SettingsViewController _defaultModelListForProvider:provider];
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    NSString *json = [d stringForKey:SettingsKeyModelList];
     if (!json || json.length == 0) {
-        // Seed.
+        // Key missing → first launch: seed provider defaults.
+        NSString *provider = [d stringForKey:SettingsKeyProvider] ?: ProviderIDOpenAI;
+        NSArray *seed = [SettingsViewController _defaultModelListForProvider:provider];
         [self saveModelList:seed];
         return seed;
     }
@@ -59,7 +62,10 @@ enum {
     NSArray *arr = [NSJSONSerialization JSONObjectWithData:data
                                                    options:0
                                                      error:&err];
-    if (err || ![arr isKindOfClass:[NSArray class]] || [arr count] == 0) {
+    if (err || ![arr isKindOfClass:[NSArray class]]) {
+        // Corrupt storage → re-seed so the app stays usable.
+        NSString *provider = [d stringForKey:SettingsKeyProvider] ?: ProviderIDOpenAI;
+        NSArray *seed = [SettingsViewController _defaultModelListForProvider:provider];
         [self saveModelList:seed];
         return seed;
     }
@@ -69,10 +75,7 @@ enum {
             [out addObject:e];
         }
     }
-    if ([out count] == 0) {
-        [self saveModelList:seed];
-        return seed;
-    }
+    // Intentionally EMPTY list is valid — return it as-is.
     return out;
 }
 
@@ -411,32 +414,18 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
             [_tableView reloadData];
         }
     } else if (alertView.tag == 700 && buttonIndex == 1) {
-        // v261024-19: per-step logging — the "delete model" path is a
-        // 90% crash hotspot. Each call gets its own log line so the next
-        // crash log shows the exact last-reached step before SIGSEGV.
-        [[Logger sharedLogger] info:@"ModelMgmt delete-confirm: enter"];
-        // Confirm delete.
+        // v261025-1: lean logging — entry + outcome only (v19's 10-line
+        // firehose drowned the log; the Logger is crash-safe now).
         NSString *m = _pendingDeleteModel;
-        if (!m || m.length == 0) {
-            [[Logger sharedLogger] info:@"ModelMgmt delete-confirm: pending model nil/empty — abort"];
+        if (!m || ![m isKindOfClass:[NSString class]] || m.length == 0) {
             self.pendingDeleteModel = nil;
             return;
         }
-        [[Logger sharedLogger] info:[NSString stringWithFormat:@"ModelMgmt delete-confirm: target=%@", m]];
-        // Defensive type-check (defensive against corrupt storage where a
-        // non-string snuck into the pending slot).
-        if (![m isKindOfClass:[NSString class]]) {
-            [[Logger sharedLogger] error:@"ModelMgmt delete-confirm: pending model is not NSString"];
-            self.pendingDeleteModel = nil;
-            return;
-        }
-        [[Logger sharedLogger] info:@"ModelMgmt delete-confirm: calling removeModel"];
+        [[Logger sharedLogger] info:[NSString stringWithFormat:@"ModelMgmt delete '%@' — start", m]];
         [ModelManagementViewController removeModel:m];
-        [[Logger sharedLogger] info:@"ModelMgmt delete-confirm: removeModel returned"];
         // If deleted was the current default, fall back to first item.
         NSString *cur = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyModel];
         if (cur && [cur isEqualToString:m]) {
-            [[Logger sharedLogger] info:@"ModelMgmt delete-confirm: deleted was default, fallback"];
             NSArray *list = [ModelManagementViewController savedModelList];
             NSString *fallback = nil;
             if ([list count] > 0 && [(id)[list objectAtIndex:0] isKindOfClass:[NSString class]]) {
@@ -446,26 +435,21 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                 if (!prov) prov = ProviderIDOpenAI;
                 fallback = [SettingsViewController defaultModelForProvider:prov];
             }
-            if (fallback && [fallback isKindOfClass:[NSString class]] && fallback.length > 0) {
+            if ([fallback isKindOfClass:[NSString class]] && fallback.length > 0) {
                 [[NSUserDefaults standardUserDefaults] setObject:fallback
                                                           forKey:SettingsKeyModel];
-                [[NSUserDefaults standardUserDefaults] synchronize];
-                [[Logger sharedLogger] info:[NSString stringWithFormat:@"ModelMgmt delete-confirm: fallback set to %@", fallback]];
+                [[Logger sharedLogger] info:[NSString stringWithFormat:@"ModelMgmt default fell back to '%@'", fallback]];
             } else {
-                // Last-resort: don't leave SettingsKeyModel pointing at a deleted
-                // model. Remove the key entirely.
+                // List now empty and no provider default — clear the key so
+                // we never point at a deleted model.
                 [[NSUserDefaults standardUserDefaults] removeObjectForKey:SettingsKeyModel];
-                [[NSUserDefaults standardUserDefaults] synchronize];
-                [[Logger sharedLogger] warn:@"ModelMgmt delete-confirm: no fallback available, removed SettingsKeyModel"];
+                [[Logger sharedLogger] warn:@"ModelMgmt default cleared — model list empty"];
             }
+            [[NSUserDefaults standardUserDefaults] synchronize];
         }
-        [[Logger sharedLogger] info:[NSString stringWithFormat:@"Removed model %@", m]];
-        if (_tableView) {
-            [_tableView reloadData];
-            [[Logger sharedLogger] info:@"ModelMgmt delete-confirm: reload done"];
-        }
+        [[Logger sharedLogger] info:[NSString stringWithFormat:@"ModelMgmt delete '%@' — done", m]];
+        if (_tableView) [_tableView reloadData];
         self.pendingDeleteModel = nil;
-        [[Logger sharedLogger] info:@"ModelMgmt delete-confirm: exit OK"];
     }
 }
 
@@ -498,6 +482,9 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     NSString *provider = [settings objectForKey:SettingsKeyProvider];
     NSString *apiKey = [settings objectForKey:SettingsKeyAPIKey];
 
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"ModelMgmt search models — transit=%d provider=%@", (int)useTransit, provider ?: @"?"]];
+
     UIAlertView *loading = [[[UIAlertView alloc]
         initWithTitle:NSLocalizedString(@"搜索中…", nil)
               message:NSLocalizedString(@"正在从 /v1/models 拉取", nil)
@@ -507,48 +494,83 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     [loading show];
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NetworkService *svc = [[[NetworkService alloc] init] autorelease];
-        NSError *err = nil;
-        NSArray *models = [svc listModelsWithUseTransit:useTransit
-                                              transitURL:transitURL
-                                                baseURL:baseURL
-                                                provider:provider
-                                                 apiKey:apiKey
-                                                   error:&err];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [loading dismissWithClickedButtonIndex:0 animated:YES];
-            if (err || !models || [models count] == 0) {
-                UIAlertView *fail = [[[UIAlertView alloc]
-                    initWithTitle:NSLocalizedString(@"未拉到模型", nil)
-                          message:err.localizedDescription ?: NSLocalizedString(@"服务器无返回,请检查 BaseURL / API Key", nil)
-                         delegate:nil
-                cancelButtonTitle:NSLocalizedString(@"好", nil)
-                otherButtonTitles:nil] autorelease];
-                [fail show];
-                return;
-            }
-            UIActionSheet *sheet = [[UIActionSheet alloc]
-                initWithTitle:NSLocalizedString(@"选模型 → 加入列表", nil)
-                     delegate:self
-            cancelButtonTitle:NSLocalizedString(@"取消", nil)
-       destructiveButtonTitle:nil
-            otherButtonTitles:nil];
-            if ([iOS6Theme isDarkMode]) {
-                sheet.actionSheetStyle = UIActionSheetStyleBlackOpaque;
-            } else {
-                sheet.actionSheetStyle = UIActionSheetStyleAutomatic;
-            }
-            NSInteger limit = MIN([models count], (NSUInteger)8);
-            for (NSInteger i = 0; i < limit; i++) {
-                NSString *mid = [models objectAtIndex:i];
-                [sheet addButtonWithTitle:mid];
-            }
-            [sheet setTag:400];
-            [sheet showInView:self.view];
-            [sheet release];
-            self.availableModels = [NSMutableArray arrayWithArray:[models subarrayWithRange:NSMakeRange(0, limit)]];
-        });
+        // v261025-1: @autoreleasepool — GCD worker threads have NO pool;
+        // the autoreleased NetworkService below leaked per search.
+        @autoreleasepool {
+            NetworkService *svc = [[[NetworkService alloc] init] autorelease];
+            NSError *err = nil;
+            NSArray *models = [svc listModelsWithUseTransit:useTransit
+                                                  transitURL:transitURL
+                                                    baseURL:baseURL
+                                                    provider:provider
+                                                     apiKey:apiKey
+                                                       error:&err];
+            NSArray *resultsCopy = [models retain];
+            NSError *errCopy = [err retain];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [resultsCopy release];
+                [loading dismissWithClickedButtonIndex:-1 animated:NO];
+                if (errCopy || !resultsCopy || [resultsCopy count] == 0) {
+                    // Capture the description BEFORE releasing errCopy.
+                    NSString *errDesc = [errCopy localizedDescription];
+                    [[Logger sharedLogger] error:[NSString stringWithFormat:
+                        @"ModelMgmt search failed — %@",
+                        errDesc ?: @"no models / empty response"]];
+                    UIAlertView *fail = [[[UIAlertView alloc]
+                        initWithTitle:NSLocalizedString(@"未拉到模型", nil)
+                              message:errDesc ?: NSLocalizedString(@"服务器无返回,请检查 BaseURL / API Key", nil)
+                             delegate:nil
+                    cancelButtonTitle:NSLocalizedString(@"好", nil)
+                    otherButtonTitles:nil] autorelease];
+                    [errCopy release];
+                    [fail show];
+                    return;
+                }
+                [errCopy release];
+                // v261025-1: NEVER show a new alert/sheet in the same tick
+                // that a previous one is dismissing — on iOS 6 the
+                // dismiss-then-show-same-tick pattern corrupts the alert
+                ///sheet window stack (the "tap cancel → crash" report).
+                // Dismiss above is animated:NO and the sheet is deferred
+                // to the next runloop turn.
+                NSInteger limit = MIN([resultsCopy count], (NSUInteger)8);
+                NSMutableArray *picked = [NSMutableArray array];
+                for (NSInteger i = 0; i < limit; i++) {
+                    NSString *mid = [resultsCopy objectAtIndex:i];
+                    if ([mid isKindOfClass:[NSString class]]) [picked addObject:mid];
+                }
+                self.availableModels = [NSMutableArray arrayWithArray:picked];
+                [[Logger sharedLogger] info:[NSString stringWithFormat:
+                    @"ModelMgmt search OK — %lu models", (unsigned long)[picked count]]];
+                [self performSelector:@selector(_presentModelSheet)
+                           withObject:nil
+                           afterDelay:0.1];
+            });
+        }
     });
+}
+
+- (void)_presentModelSheet
+{
+    // Runs on main, one runloop turn AFTER the loading alert was dismissed.
+    if ([_availableModels count] == 0) return;
+    UIActionSheet *sheet = [[[UIActionSheet alloc]
+        initWithTitle:NSLocalizedString(@"选模型 → 加入列表", nil)
+             delegate:self
+    cancelButtonTitle:NSLocalizedString(@"取消", nil)
+destructiveButtonTitle:nil
+        otherButtonTitles:nil] autorelease];
+    if ([iOS6Theme isDarkMode]) {
+        sheet.actionSheetStyle = UIActionSheetBlackOpaque;
+    } else {
+        sheet.actionSheetStyle = UIActionSheetStyleAutomatic;
+    }
+    NSInteger limit = MIN([_availableModels count], (NSUInteger)8);
+    for (NSInteger i = 0; i < limit; i++) {
+        [sheet addButtonWithTitle:[_availableModels objectAtIndex:i]];
+    }
+    [sheet setTag:400];
+    [sheet showInView:self.view];
 }
 
 - (void)actionSheet:(UIActionSheet *)actionSheet

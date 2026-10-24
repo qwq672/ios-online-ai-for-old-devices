@@ -24,6 +24,7 @@
 #import "SettingsViewController.h"
 #import "iOS6Theme.h"
 #import "NetworkService.h"
+#import "Logger.h"
 #import <QuartzCore/QuartzCore.h>
 
 NSString *const SettingsKeyDarkMode           = @"darkMode";
@@ -933,6 +934,9 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     NSString *provider = [settings objectForKey:SettingsKeyProvider];
     NSString *apiKey = [settings objectForKey:SettingsKeyAPIKey];
 
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"Settings search models — transit=%d provider=%@", (int)useTransit, provider ?: @"?"]];
+
     UIAlertView *loading = [[[UIAlertView alloc]
         initWithTitle:NSLocalizedString(@"搜索中…", nil)
               message:NSLocalizedString(@"正在从 /v1/models 拉取", nil)
@@ -942,50 +946,79 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     [loading show];
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NetworkService *svc = [[[NetworkService alloc] init] autorelease];
-        NSError *err = nil;
-        NSArray *models = [svc listModelsWithUseTransit:useTransit
-                                              transitURL:transitURL
-                                                baseURL:baseURL
-                                                provider:provider
-                                                 apiKey:apiKey
-                                                   error:&err];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [loading dismissWithClickedButtonIndex:0 animated:YES];
-            if (err || !models || [models count] == 0) {
-                UIAlertView *fail = [[[UIAlertView alloc]
-                    initWithTitle:NSLocalizedString(@"未拉到模型", nil)
-                          message:err.localizedDescription ?: NSLocalizedString(@"服务器无返回，请检查 BaseURL / API Key", nil)
-                         delegate:nil
-                cancelButtonTitle:NSLocalizedString(@"好", nil)
-                otherButtonTitles:nil] autorelease];
-                [fail show];
-                return;
-            }
-            // Use UIActionSheet (slides up from bottom, like WiFi picker).
-            // actionSheetStyle — BlackOpaque is the dark style on iOS 6.
-            UIActionSheet *sheet = [[UIActionSheet alloc]
-                initWithTitle:NSLocalizedString(@"选择模型", nil)
-                     delegate:self
-            cancelButtonTitle:NSLocalizedString(@"取消", nil)
-       destructiveButtonTitle:nil
-            otherButtonTitles:nil];
-            if ([iOS6Theme isDarkMode]) {
-                sheet.actionSheetStyle = UIActionSheetStyleBlackOpaque;
-            } else {
-                sheet.actionSheetStyle = UIActionSheetStyleAutomatic;
-            }
-            NSInteger limit = MIN([models count], (NSUInteger)8);
-            for (NSInteger i = 0; i < limit; i++) {
-                NSString *mid = [models objectAtIndex:i];
-                [sheet addButtonWithTitle:mid];
-            }
-            [sheet setTag:400];
-            [sheet showInView:self.view];
-            [sheet release];
-            self.availableModels = [NSMutableArray arrayWithArray:[models subarrayWithRange:NSMakeRange(0, limit)]];
-        });
+        // v261025-1: @autoreleasepool — no pool on GCD worker threads.
+        @autoreleasepool {
+            NetworkService *svc = [[[NetworkService alloc] init] autorelease];
+            NSError *err = nil;
+            NSArray *models = [svc listModelsWithUseTransit:useTransit
+                                                  transitURL:transitURL
+                                                    baseURL:baseURL
+                                                    provider:provider
+                                                     apiKey:apiKey
+                                                       error:&err];
+            NSArray *resultsCopy = [models retain];
+            NSError *errCopy = [err retain];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [loading dismissWithClickedButtonIndex:-1 animated:NO];
+                if (errCopy || !resultsCopy || [resultsCopy count] == 0) {
+                    NSString *errDesc = [errCopy localizedDescription];
+                    [[Logger sharedLogger] error:[NSString stringWithFormat:
+                        @"Settings search failed — %@",
+                        errDesc ?: @"no models / empty response"]];
+                    UIAlertView *fail = [[[UIAlertView alloc]
+                        initWithTitle:NSLocalizedString(@"未拉到模型", nil)
+                              message:errDesc ?: NSLocalizedString(@"服务器无返回，请检查 BaseURL / API Key", nil)
+                             delegate:nil
+                    cancelButtonTitle:NSLocalizedString(@"好", nil)
+                    otherButtonTitles:nil] autorelease];
+                    [errCopy release];
+                    [resultsCopy release];
+                    [fail show];
+                    return;
+                }
+                [errCopy release];
+                // v261025-1: type-filter + defer sheet to the next runloop
+                // turn (dismiss-then-show-same-tick is the iOS 6 alert/
+                // sheet window-stack corruptor).
+                NSInteger limit = MIN([resultsCopy count], (NSUInteger)8);
+                NSMutableArray *picked = [NSMutableArray array];
+                for (NSInteger i = 0; i < limit; i++) {
+                    NSString *mid = [resultsCopy objectAtIndex:i];
+                    if ([mid isKindOfClass:[NSString class]]) [picked addObject:mid];
+                }
+                self.availableModels = [NSMutableArray arrayWithArray:picked];
+                [[Logger sharedLogger] info:[NSString stringWithFormat:
+                    @"Settings search OK — %lu models", (unsigned long)[picked count]]];
+                [resultsCopy release];
+                [self performSelector:@selector(_presentModelSheet)
+                           withObject:nil
+                           afterDelay:0.1];
+            });
+        }
     });
+}
+
+- (void)_presentModelSheet
+{
+    // Runs on main, one runloop turn AFTER the loading alert was dismissed.
+    if ([_availableModels count] == 0) return;
+    UIActionSheet *sheet = [[[UIActionSheet alloc]
+        initWithTitle:NSLocalizedString(@"选择模型", nil)
+             delegate:self
+    cancelButtonTitle:NSLocalizedString(@"取消", nil)
+destructiveButtonTitle:nil
+        otherButtonTitles:nil] autorelease];
+    if ([iOS6Theme isDarkMode]) {
+        sheet.actionSheetStyle = UIActionSheetStyleBlackOpaque;
+    } else {
+        sheet.actionSheetStyle = UIActionSheetStyleAutomatic;
+    }
+    NSInteger limit = MIN([_availableModels count], (NSUInteger)8);
+    for (NSInteger i = 0; i < limit; i++) {
+        [sheet addButtonWithTitle:[_availableModels objectAtIndex:i]];
+    }
+    [sheet setTag:400];
+    [sheet showInView:self.view];
 }
 
 // Handle UIActionSheet for /v1/models search (tag 400).

@@ -62,8 +62,17 @@
                       tavilyKey:(NSString *)tavilyKey
                 tavilyMaxResults:(NSInteger)tavilyMaxResults;
 
-// Cancel an in-flight stream.
+// Cancel an in-flight stream AND detach the delegate (used when the
+// owning view controller is being destroyed).
 - (void)cancel;
+
+// v261025-1: Cancel the in-flight stream but KEEP the delegate attached.
+// Used when the user switches conversation mid-stream — the service is
+// reused for the next send, so the delegate must survive. (The old flow
+// either left the stream running with a mismatched conversationID —
+// freezing the composer — or used -cancel, which permanently detached
+// the delegate and made every later send silent.)
+- (void)cancelStream;
 
 // Read the accumulated reasoning/thinking text after the stream finishes
 // (or any time during the stream). The delegate can call this to attach
