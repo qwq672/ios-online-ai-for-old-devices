@@ -42,6 +42,7 @@
 //
 
 #import "Logger.h"
+#import <stdio.h>
 #import <fcntl.h>
 #import <unistd.h>
 #import <string.h>

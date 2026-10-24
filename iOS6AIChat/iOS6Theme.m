@@ -233,10 +233,18 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
 {
     if (!ctx) return;
     CGColorSpaceRef colorspace = CGColorSpaceCreateDeviceRGB();
-    NSArray *colors = [NSArray arrayWithObjects:(id)top.CGColor, (id)bottom.CGColor, nil];
+    // v261025-1: CFArrayCreate + explicit CFRetain — never cast CGColorRef
+    // through (id) into NSArray (matches the hardened pattern used by
+    // barBackgroundImageWithHeight; on the cctools-port/iOS6 runtime the
+    // (id)-cast array is a known fragility).
+    CGColorRef c0 = CGColorRetain(top.CGColor);
+    CGColorRef c1 = CGColorRetain(bottom.CGColor);
+    const void *vals[] = { c0, c1 };
+    CFArrayRef colors = CFArrayCreate(kCFAllocatorDefault, vals, 2,
+                                     &kCFTypeArrayCallBacks);
     CGFloat locations[] = { 0.0f, 1.0f };
     CGGradientRef gradient = CGGradientCreateWithColors(colorspace,
-                                                       (__bridge CFArrayRef)colors,
+                                                       colors,
                                                        locations);
     CGPoint startPoint = CGPointMake(CGRectGetMidX(rect), CGRectGetMinY(rect));
     CGPoint endPoint   = CGPointMake(CGRectGetMidX(rect), CGRectGetMaxY(rect));
@@ -247,8 +255,11 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
     CGContextDrawLinearGradient(ctx, gradient, startPoint, endPoint, 0);
     CGContextRestoreGState(ctx);
 
-    CGGradientRelease(gradient);
-    CGColorSpaceRelease(colorspace);
+    if (gradient) CGGradientRelease(gradient);
+    if (colors) CFRelease(colors);
+    if (c1) CGColorRelease(c1);
+    if (c0) CGColorRelease(c0);
+    if (colorspace) CGColorSpaceRelease(colorspace);
 }
 
 + (void)drawGlossInRect:(CGRect)rect context:(CGContextRef)ctx
@@ -257,12 +268,15 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
     CGRect glossRect = CGRectMake(rect.origin.x, rect.origin.y,
                                  rect.size.width, rect.size.height * 0.5f);
     CGColorSpaceRef colorspace = CGColorSpaceCreateDeviceRGB();
-    NSArray *colors = [NSArray arrayWithObjects:
-                       (id)[UIColor colorWithWhite:1.0f alpha:0.45f].CGColor,
-                       (id)[UIColor colorWithWhite:1.0f alpha:0.0f].CGColor, nil];
+    // v261025-1: CFArrayCreate pattern — no (id)CGColor casts.
+    CGColorRef c0 = CGColorRetain([UIColor colorWithWhite:1.0f alpha:0.45f].CGColor);
+    CGColorRef c1 = CGColorRetain([UIColor colorWithWhite:1.0f alpha:0.0f].CGColor);
+    const void *vals[] = { c0, c1 };
+    CFArrayRef colors = CFArrayCreate(kCFAllocatorDefault, vals, 2,
+                                     &kCFTypeArrayCallBacks);
     CGFloat locations[] = { 0.0f, 1.0f };
     CGGradientRef gradient = CGGradientCreateWithColors(colorspace,
-                                                       (__bridge CFArrayRef)colors,
+                                                       colors,
                                                        locations);
     CGPoint start = CGPointMake(CGRectGetMidX(glossRect), CGRectGetMinY(glossRect));
     CGPoint end   = CGPointMake(CGRectGetMidX(glossRect), CGRectGetMaxY(glossRect));
@@ -271,8 +285,11 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
     CGContextClip(ctx);
     CGContextDrawLinearGradient(ctx, gradient, start, end, 0);
     CGContextRestoreGState(ctx);
-    CGGradientRelease(gradient);
-    CGColorSpaceRelease(colorspace);
+    if (gradient) CGGradientRelease(gradient);
+    if (colors) CFRelease(colors);
+    if (c1) CGColorRelease(c1);
+    if (c0) CGColorRelease(c0);
+    if (colorspace) CGColorSpaceRelease(colorspace);
 }
 
 + (void)drawInnerHighlightInRect:(CGRect)rect context:(CGContextRef)ctx
@@ -589,16 +606,22 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
         topHex = dark ? @"#3A3A3E" : @"#FDFDFD";      // neutral bar glass
         botHex = dark ? @"#232326" : @"#D8D8DC";
     }
-    NSArray *colors = [NSArray arrayWithObjects:
-                       (id)[self colorWithHex:topHex].CGColor,
-                       (id)[self colorWithHex:botHex].CGColor, nil];
+    // v261025-1: CFArrayCreate pattern — no (id)CGColor casts into NSArray.
+    CGColorRef c0 = CGColorRetain([self colorWithHex:topHex].CGColor);
+    CGColorRef c1 = CGColorRetain([self colorWithHex:botHex].CGColor);
+    const void *vals[] = { c0, c1 };
+    CFArrayRef colors = CFArrayCreate(kCFAllocatorDefault, vals, 2,
+                                     &kCFTypeArrayCallBacks);
     CGFloat locations[] = { 0.0f, 1.0f };
     CGGradientRef grad = CGGradientCreateWithColors(space,
-                                                    (__bridge CFArrayRef)colors,
+                                                    colors,
                                                     locations);
     CGContextDrawLinearGradient(ctx, grad,
                                 CGPointMake(0, 0), CGPointMake(0, size.height), 0);
-    CGGradientRelease(grad);
+    if (grad) CGGradientRelease(grad);
+    if (colors) CFRelease(colors);
+    if (c1) CGColorRelease(c1);
+    if (c0) CGColorRelease(c0);
 
     // Glossy top half.
     [self drawGlossInRect:CGRectMake(0, 0, size.width, size.height * 0.5f)

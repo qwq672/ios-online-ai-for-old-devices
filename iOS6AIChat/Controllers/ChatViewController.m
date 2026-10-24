@@ -57,7 +57,8 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 @synthesize tableView=_tableView, conversation=_conversation,
             networkService=_networkService, composer=_composer,
             lastKeyboardHeight=_lastKeyboardHeight,
-            searchStatusView=_searchStatusView, searchStatusLabel=_searchStatusLabel;
+            searchStatusView=_searchStatusView, searchStatusLabel=_searchStatusLabel,
+            lastRowReloadTime=_lastRowReloadTime;
 
 - (id)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil
 {

@@ -29,6 +29,7 @@
 #import "DrawerViewController.h"
 #import "iOS6Theme.h"
 #import "IconDrawing.h"
+#import "Logger.h"
 #import "ChatViewController.h"
 #import "HistoryViewController.h"
 #import "SettingsViewController.h"
@@ -547,6 +548,12 @@ static CGFloat const kDimAlpha     = 0.45f;
 didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    // v261025-1: one log line per menu navigation — every jump traceable.
+    NSInteger flat = indexPath.section == kMenuSectionChat
+        ? indexPath.row
+        : kMenuRowChatCount + indexPath.row;
+    [[Logger sharedLogger] info:[NSString stringWithFormat:@"Drawer menu → %@",
+                                  [self _titleForFlatIndex:flat]]];
     if (indexPath.section == kMenuSectionChat) {
         switch (indexPath.row) {
             case kMenuRowNewChat:

@@ -136,6 +136,16 @@ enum {
 
 - (void)dealloc
 {
+    // v261025-1 CRITICAL: this dealloc was MISSING removeObserver — the
+    // theme-change observer registered in viewDidLoad stayed in the
+    // notification center as a ZOMBIE after the page was popped. The
+    // next iOS6ThemeDidChangeNotification (dark mode / font size / the
+    // image-support toggle on THIS VERY PAGE posts it!) messaged freed
+    // memory → SIGSEGV with NOTHING in the log. This explains the
+    // "searched models, tapped cancel, crashed" class of reports.
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    // v261025-1: also drop any deferred sheet presentation still pending.
+    [NSObject cancelPreviousPerformRequestsWithTarget:self];
     [_tableView release];
     [_availableModels release];
     [_pendingAddModel release];

@@ -99,6 +99,8 @@ enum {
 
 - (void)dealloc
 {
+    // v261025-1: also cancel any deferred sheet presentation still pending.
+    [NSObject cancelPreviousPerformRequestsWithTarget:self];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_tableView release];
     [_fields release];
@@ -1113,7 +1115,15 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 - (IBAction)_providerChanged:(UISegmentedControl *)seg
 {
     NSArray *providers = [SettingsViewController availableProviderIDs];
+    // v261025-1: guard against UISegmentedControlNoSegment (-1) — during
+    // cell reuse the index can transiently be -1; objectAtIndex with a
+    // wrapped huge NSUInteger is an instant crash.
+    if (seg.selectedSegmentIndex < 0 ||
+        (NSUInteger)seg.selectedSegmentIndex >= [providers count]) {
+        return;
+    }
     NSString *newProv = [providers objectAtIndex:seg.selectedSegmentIndex];
+    if (![newProv isKindOfClass:[NSString class]]) return;
     self.provider = newProv;
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
     [d setObject:newProv forKey:SettingsKeyProvider];

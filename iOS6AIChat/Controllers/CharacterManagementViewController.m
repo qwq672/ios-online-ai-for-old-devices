@@ -185,6 +185,14 @@ enum {
 
 - (void)dealloc
 {
+    // v261025-1 CRITICAL: this dealloc was MISSING removeObserver — the
+    // theme-change observer registered in viewDidLoad stayed in the
+    // notification center as a ZOMBIE after the page was popped. The
+    // next iOS6ThemeDidChangeNotification (dark mode / font size / the
+    // image-support toggle all post it) messaged freed memory → SIGSEGV
+    // with NOTHING in the log. This was one of the random post-visit
+    // crashes.
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_tableView release];
     [_characters release];
     [_pendingName release];

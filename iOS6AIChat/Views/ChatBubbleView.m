@@ -175,16 +175,25 @@
     UIColor *topCol = _fillColor;
     UIColor *botCol = [iOS6Theme darkerColor:_fillColor by:0.06f];
     CGRect gradRect = body;
+    // v261025-1: CFArrayCreate pattern — no (id)CGColor casts into NSArray
+    // (same hardening as the rest of the theme code).
     CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-    NSArray *cols = [NSArray arrayWithObjects:(id)topCol.CGColor, (id)botCol.CGColor, nil];
+    CGColorRef gc0 = CGColorRetain(topCol.CGColor);
+    CGColorRef gc1 = CGColorRetain(botCol.CGColor);
+    const void *gvals[] = { gc0, gc1 };
+    CFArrayRef cols = CFArrayCreate(kCFAllocatorDefault, gvals, 2,
+                                    &kCFTypeArrayCallBacks);
     CGFloat locs[] = {0.0f, 1.0f};
-    CGGradientRef grad = CGGradientCreateWithColors(cs, (__bridge CFArrayRef)cols, locs);
+    CGGradientRef grad = CGGradientCreateWithColors(cs, cols, locs);
     CGContextDrawLinearGradient(ctx, grad,
                                 CGPointMake(CGRectGetMidX(gradRect), CGRectGetMinY(gradRect)),
                                 CGPointMake(CGRectGetMidX(gradRect), CGRectGetMaxY(gradRect)),
                                 0);
-    CGGradientRelease(grad);
-    CGColorSpaceRelease(cs);
+    if (grad) CGGradientRelease(grad);
+    if (cols) CFRelease(cols);
+    if (gc1) CGColorRelease(gc1);
+    if (gc0) CGColorRelease(gc0);
+    if (cs) CGColorSpaceRelease(cs);
     CGContextRestoreGState(ctx);
 
     // Inner top highlight (1px white line)
