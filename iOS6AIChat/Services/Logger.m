@@ -18,6 +18,25 @@ static const NSUInteger kLogMaxBytes = 1 * 1024 * 1024;
 @property (nonatomic, retain) NSString *logPath;
 @end
 
+// C function pointer (not a block!) — NSSetUncaughtExceptionHandler
+// takes a plain C function pointer of type
+//   void (*)(NSException *exception)
+// (NOT an Obj-C block). This function calls the singleton Logger so
+// the crash info lands in the log file.
+static void iOS6AIChatUncaughtExceptionHandler(NSException *exception)
+{
+    @try {
+        NSString *msg = [NSString stringWithFormat:
+            @"\n=== UNCAUGHT EXCEPTION ===\nname: %@\nreason: %@\ncallStack:\n%@\n==========================\n",
+            exception.name ?: @"(no name)",
+            exception.reason ?: @"(no reason)",
+            [[exception callStackSymbols] componentsJoinedByString:@"\n"]];
+        [[Logger sharedLogger] logWithLevel:kLogLevelError message:msg];
+    } @catch (NSException *secondary) {
+        // Do nothing — we're already in an uncaught-exception handler.
+    }
+}
+
 @implementation Logger
 
 @synthesize queue=_queue, logPath=_logPath;
@@ -49,17 +68,7 @@ static const NSUInteger kLogMaxBytes = 1 * 1024 * 1024;
         // the exception + call stack to the log file is the closest iOS 6
         // gets to a crash reporter (no PLCrashReporter on iOS 6 without
         // extra deps, and we don't want to add a dep).
-        NSSetUncaughtExceptionHandler(^void(NSException *exception) {
-            // Use the SAME queue so we don't deadlock — dispatch_async
-            // from inside the uncaught handler is fine since the queue
-            // is its own thread context.
-            NSString *msg = [NSString stringWithFormat:
-                @"\n=== UNCAUGHT EXCEPTION ===\nname: %@\nreason: %@\ncallStack:\n%@\n==========================\n",
-                exception.name ?: @"(no name)",
-                exception.reason ?: @"(no reason)",
-                [exception.callStackSymbols componentsJoinedByString:@"\n"]];
-            [[Logger sharedLogger] logWithLevel:kLogLevelError message:msg];
-        });
+        NSSetUncaughtExceptionHandler(iOS6AIChatUncaughtExceptionHandler);
     }
     return self;
 }
