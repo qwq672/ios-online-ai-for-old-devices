@@ -40,6 +40,10 @@
 // the given message at the given width, accounting for text wrapping.
 + (CGFloat)heightForMessage:(Message *)message width:(CGFloat)width;
 
+// Flush render caches (attributed strings bake in theme colors).
+// Call when dark/light mode or font size changes.
++ (void)flushCaches;
+
 - (void)applyMessage:(Message *)message;
 
 @end
