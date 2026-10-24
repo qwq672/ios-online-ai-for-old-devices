@@ -571,7 +571,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 destructiveButtonTitle:nil
         otherButtonTitles:nil] autorelease];
     if ([iOS6Theme isDarkMode]) {
-        sheet.actionSheetStyle = UIActionSheetBlackOpaque;
+        sheet.actionSheetStyle = UIActionSheetStyleBlackOpaque;
     } else {
         sheet.actionSheetStyle = UIActionSheetStyleAutomatic;
     }
