@@ -83,6 +83,28 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     }
 }
 
+// v261024-16 fix (text overflowing bubble bottom):
+// The text-measurement width, the height-calc width and the ACTUAL
+// UITextView layout width used to be THREE DIFFERENT numbers
+// (boundsWidth-44 vs maxBubbleWidth-28 vs bubbleWidth-38), so the
+// rendered attributed string wrapped at a wider width than the text
+// container actually offers → real line count > computed line count →
+// bottom lines drawn outside the bubble. This single helper is now the
+// ONE source of truth used by applyMessage (render), layoutSubviews
+// (bubble sizing) AND heightForMessage (row height), so all three wrap
+// identically. It models the real iOS 6 text container: bubble inner
+// frame inset 4pt per side, textContainerInset 10pt per side, plus
+// lineFragmentPadding 5pt per side (NOT settable pre-iOS 7).
++ (CGFloat)unifiedTextWidthForOuterWidth:(CGFloat)outerWidth
+{
+    CGFloat pad = 12.0f;
+    CGFloat maxBubbleWidth = outerWidth - 2 * pad;
+    maxBubbleWidth = MIN(maxBubbleWidth, 280.0f);
+    CGFloat w = maxBubbleWidth - 2 * 4 - 2 * 10 - 2 * 5;  // = maxBubbleWidth - 38
+    if (w < 60) w = 60;
+    return w;
+}
+
 // Look up or compute the rendered attributed string for a message.
 // Shared by both the cell render and the height calc — saves one
 // MarkdownParser run per streaming chunk (which was the perf killer
@@ -404,14 +426,16 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     BubbleRole role = message.isUser ? BubbleRoleUser : BubbleRoleAssistant;
     _bubble.role = role;
 
-    // Compute text width. self.bounds may be 0 on first apply (cell
-    // created but not laid out yet) — fall back to screen width.
+    // Compute text width — MUST use the same unified width as
+    // heightForMessage and _layoutInternal so the Markdown re-wrap and
+    // the height calc agree (see unifiedTextWidthForOuterWidth:).
+    // self.bounds may be 0 on first apply (cell created but not laid out
+    // yet) — fall back to screen width.
     CGFloat boundsWidth = self.bounds.size.width;
     if (boundsWidth < 100) {
         boundsWidth = [UIScreen mainScreen].bounds.size.width;
     }
-    CGFloat textWidth = boundsWidth - 2 * 12 - 2 * 10 - 8;
-    if (textWidth < 100) textWidth = 200;
+    CGFloat textWidth = [ChatMessageCell unifiedTextWidthForOuterWidth:boundsWidth];
 
     // Build the attributed string. Use the shared cache so we don't
     // run MarkdownParser twice per streaming chunk (cell render + height
@@ -526,7 +550,13 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     CGFloat maxBubbleWidth = self.bounds.size.width - 2 * pad;
     maxBubbleWidth = MIN(maxBubbleWidth, 280.0f);
 
-    CGFloat availTextWidth = maxBubbleWidth - 2 * bubbleInnerHPad - 8;
+    // v261024-16: unified width — same value as heightForMessage uses,
+    // matching the UITextView's REAL line-breaking width. The old value
+    // (maxBubbleWidth - 28) was 10pt wider than the text container's
+    // actual width, so long messages wrapped into MORE lines at render
+    // time than the height calc predicted → text spilled past the bubble
+    // bottom (user-reported AGAIN after v261024-12's fix).
+    CGFloat availTextWidth = [ChatMessageCell unifiedTextWidthForOuterWidth:self.bounds.size.width];
     if (availTextWidth < 60) availTextWidth = 60;
 
     // === Thinking block sizing ===
@@ -585,20 +615,23 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // loading animation. Stretch the bubble to maxBubbleWidth in this case
     // so the streaming reasoning text has room to flow. Once the final
     // answer arrives, fall back to width-follows-text.
+    // v261024-16: short-text width uses +38 (the unified per-side insets:
+    // 4 frame + 10 container inset + 5 line fragment padding) so the text
+    // container can actually fit the measured single-line width.
     BOOL thinkingLive = [ChatMessageCell _isThinkingLive:_message];
     CGFloat bubbleWidth;
     if (thinkingLive) {
         bubbleWidth = maxBubbleWidth;
     } else {
-        bubbleWidth = MAX(textRect.size.width + 2 * bubbleInnerHPad + 8, 60);
+        bubbleWidth = MAX(textRect.size.width + 38, 60);
         bubbleWidth = MIN(bubbleWidth, maxBubbleWidth);
     }
-    // Bubble height: text + vertical padding + tail (6) + bottom safety (8).
-    // The +8 gives room so the last line of text isn't clipped by the
-    // bubble's tail drawing. (User-reported: bubble doesn't fully cover
-    // the bottom line of text.)
+    // Bubble height: text + vertical padding + tail (6) + bottom safety (12).
+    // The +12 (was +8) gives extra room so the last line of text isn't
+    // clipped by the bubble's tail drawing — iOS 6 boundingRectWithSize
+    // systematically under-reports CJK line heights by 1-3pt per line.
     CGFloat tailHeight = 6.0f;
-    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + tailHeight + 8
+    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + tailHeight + 12
                           + thinkingH + imagesH;
     if (bubbleHeight < 40) bubbleHeight = 40;
 
@@ -676,12 +709,11 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     }
 
     CGFloat pad = 12.0f;
-    CGFloat bubbleInnerHPad = 10.0f;
     CGFloat bubbleInnerVPad = 7.0f;
     CGFloat verticalPad = 6.0f;
-    CGFloat maxBubbleWidth = width - 2 * pad;
-    maxBubbleWidth = MIN(maxBubbleWidth, 280.0f);
-    CGFloat availTextWidth = maxBubbleWidth - 2 * bubbleInnerHPad - 8;
+    // v261024-16: unified width — MUST match _applyMessageInternal and
+    // _layoutInternal so the row height reflects the rendered wrap.
+    CGFloat availTextWidth = [ChatMessageCell unifiedTextWidthForOuterWidth:width];
     if (availTextWidth < 60) availTextWidth = 60;
 
     // Use the SHARED rendered-attr cache — saves a MarkdownParser run
@@ -729,11 +761,11 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         imagesH = 80 + 6;
     }
 
-    // Match layoutSubviews: text + vpad + tail(6) + safety(8) + thinking + images.
+    // Match layoutSubviews: text + vpad + tail(6) + safety(12) + thinking + images.
     // Plus 2*verticalPad for cell padding.
     // Plus action buttons height (24+2=26) for AI assistant messages.
     CGFloat buttonH = (!message.isUser && message.content.length > 0) ? 26 : 0;
-    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + 6 + 8
+    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + 6 + 12
                           + thinkingH + imagesH;
     CGFloat result = bubbleHeight + 2 * verticalPad + buttonH;
     if (result < 50) result = 50;

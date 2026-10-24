@@ -529,6 +529,15 @@
     NSInteger tavilyMax = _tavilyMaxResults;
     BOOL useTransit = _useTransit;
     NSString *transitURL = [_transitURL copy];
+    // v261024-16 fix: generate_image needs the AI PROVIDER key, not the
+    // Tavily key. The old code passed `tavilyKey` (comment said "reuse
+    // API key" but grabbed the wrong variable) → image generation always
+    // got 401 from the upstream.
+    NSString *providerKey = [self.apiKey copy];
+    // Also copy provider — accessing self.provider inside the bg block
+    // would return an autorelease object with no autorelease pool on the
+    // GCD worker thread.
+    NSString *providerName = [self.provider copy];
 
     // Notify delegate that we're executing the tool call.
     if ([_delegate respondsToSelector:@selector(networkService:didReceiveToolCallStartedForConversationID:)]) {
@@ -538,6 +547,10 @@
 
     // Run Tavily searches on a background queue (avoid blocking main).
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        // GCD worker threads have NO autorelease pool — wrap everything
+        // so the `autorelease`d NetworkService/NSDateFormatter objects
+        // below don't leak per tool-call round.
+        @autoreleasepool {
         // Wrap the whole bg flow in @try — a crash anywhere here would
         // leave the chat stuck (status banner shown, composer disabled).
         // The user reported crashes during "中转搜索". This catch-all
@@ -677,7 +690,7 @@
                 // Default image gen model per provider.
                 NSString *imgModel = [[NSUserDefaults standardUserDefaults] stringForKey:@"imageGenModel"];
                 if (!imgModel || imgModel.length == 0) {
-                    if ([self.provider isEqualToString:@"zhipu"]) {
+                    if ([providerName isEqualToString:@"zhipu"]) {
                         imgModel = @"cogview-3plus";
                     } else {
                         imgModel = @"dall-e-3";
@@ -691,8 +704,8 @@
                                                                 size:size
                                                            useTransit:useTransit
                                                            transitURL:transitURL
-                                                             provider:self.provider
-                                                              apiKey:tavilyKey  // reuse API key
+                                                             provider:providerName
+                                                              apiKey:providerKey
                                                                 error:&err];
                     if (dataURL.length > 0) {
                         // Fire delegate to append image to assistant message.
@@ -846,6 +859,7 @@
                 }
             });
         }
+        } // @autoreleasepool
     });
     } @catch (NSException *e) {
         // Pre-bg crash — fire didFail on main.
