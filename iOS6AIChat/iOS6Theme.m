@@ -436,57 +436,89 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
 // so the 1px lines stay crisp at any device scale.
 + (UIImage *)barBackgroundImageWithHeight:(CGFloat)height
 {
-    CGFloat scale = [UIScreen mainScreen].scale;
-    if (scale < 1) scale = 1;
+    // v261024-17: defensive — wrap the whole drawing in @try/@catch. If
+    // anything throws (gradient creation, context access, etc.) we
+    // return nil, and the caller's `if (navBg)` check falls back to
+    // plain barStyle. This is what makes the nav bar always visible
+    // even on the rare device where CG gradient drawing falls over.
+    @try {
+        CGFloat scale = [UIScreen mainScreen].scale;
+        if (scale < 1) scale = 1;
 
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(1, height), NO, scale);
-    CGContextRef ctx = UIGraphicsGetCurrentContext();
-    if (!ctx) {
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(1, height), NO, scale);
+        CGContextRef ctx = UIGraphicsGetCurrentContext();
+        if (!ctx) {
+            UIGraphicsEndImageContext();
+            return nil;
+        }
+
+        BOOL dark = [self isDarkMode];
+        NSString *topHex    = dark ? @"#454545" : @"#FAFAFB";
+        NSString *midHex    = dark ? @"#2A2A2C" : @"#DEDEE0";
+        NSString *botHex    = dark ? @"#131313" : @"#B4B4B9";
+        CGFloat midLocation = dark ? 0.45f : 0.50f;
+
+        // --- 3-stop vertical gradient over the full height ---
+        // v261024-17: use a plain C array of CGColorRef + CFArrayCreate
+        // (NOT NSArray). The old code did `(id)[color CGColor]` casts
+        // into an NSArray; on iOS 6 with the modern Obj-C runtime this
+        // toll-free-bridge cast sometimes tripped the runtime into
+        // calling -retain on a non-NSObject (CGColor) under unusual
+        // memory states — manifesting as a crash deep inside
+        // [NSArray arrayWithObjects:]. Using CFArrayCreate with proper
+        // callbacks sidesteps the entire issue.
+        CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+        CGColorRef c0 = [self colorWithHex:topHex].CGColor;
+        CGColorRef c1 = [self colorWithHex:midHex].CGColor;
+        CGColorRef c2 = [self colorWithHex:botHex].CGColor;
+        // CFRetain each color so the CFArray's retain+release callbacks
+        // (kCFTypeArrayCallBacks) keep them alive for the gradient
+        // draw — the autoreleased UIColors above may drain at any time
+        // in the runloop.
+        c0 = CGColorRetain(c0);
+        c1 = CGColorRetain(c1);
+        c2 = CGColorRetain(c2);
+        const void *colorValues[] = { c0, c1, c2 };
+        CFArrayRef colors = CFArrayCreate(kCFAllocatorDefault,
+                                          colorValues, 3,
+                                          &kCFTypeArrayCallBacks);
+        CGFloat locations[] = { 0.0f, midLocation, 1.0f };
+        CGGradientRef grad = CGGradientCreateWithColors(space,
+                                                       colors,
+                                                       locations);
+        CGContextDrawLinearGradient(ctx, grad,
+                                    CGPointMake(0, 0),
+                                    CGPointMake(0, height), 0);
+        if (grad) CGGradientRelease(grad);
+        if (colors) CFRelease(colors);
+        if (c2) CGColorRelease(c2);
+        if (c1) CGColorRelease(c1);
+        if (c0) CGColorRelease(c0);
+        if (space) CGColorSpaceRelease(space);
+
+        // --- 1px top highlight line ---
+        CGFloat lineH = 1.0f / scale;
+        CGContextSetFillColorWithColor(ctx,
+            [UIColor colorWithWhite:1.0f alpha:(dark ? 0.65f : 0.9f)].CGColor);
+        CGContextFillRect(ctx, CGRectMake(0, 0, 1, lineH));
+
+        // --- 1px bevel line right below the highlight (App Store look) ---
+        CGContextSetFillColorWithColor(ctx,
+            [UIColor colorWithWhite:0.0f alpha:(dark ? 0.85f : 0.12f)].CGColor);
+        CGContextFillRect(ctx, CGRectMake(0, lineH, 1, lineH));
+
+        // --- 1px bottom shadow line ---
+        CGContextSetFillColorWithColor(ctx,
+            [UIColor colorWithWhite:0.0f alpha:(dark ? 1.0f : 0.35f)].CGColor);
+        CGContextFillRect(ctx, CGRectMake(0, height - lineH, 1, lineH));
+
+        UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
         UIGraphicsEndImageContext();
+        return img;  // autoreleased
+    } @catch (NSException *e) {
+        NSLog(@"[iOS6Theme] barBackgroundImageWithHeight crashed: %@ — %@", e.name, e.reason);
         return nil;
     }
-
-    BOOL dark = [self isDarkMode];
-    NSString *topHex    = dark ? @"#454545" : @"#FAFAFB";
-    NSString *midHex    = dark ? @"#2A2A2C" : @"#DEDEE0";
-    NSString *botHex    = dark ? @"#131313" : @"#B4B4B9";
-    CGFloat midLocation = dark ? 0.45f : 0.50f;
-
-    // --- 3-stop vertical gradient over the full height ---
-    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
-    NSArray *colors = [NSArray arrayWithObjects:
-                       (id)[self colorWithHex:topHex].CGColor,
-                       (id)[self colorWithHex:midHex].CGColor,
-                       (id)[self colorWithHex:botHex].CGColor, nil];
-    CGFloat locations[] = { 0.0f, midLocation, 1.0f };
-    CGGradientRef grad = CGGradientCreateWithColors(space,
-                                                    (__bridge CFArrayRef)colors,
-                                                    locations);
-    CGContextDrawLinearGradient(ctx, grad,
-                                CGPointMake(0, 0),
-                                CGPointMake(0, height), 0);
-    CGGradientRelease(grad);
-    CGColorSpaceRelease(space);
-
-    // --- 1px top highlight line ---
-    CGFloat lineH = 1.0f / scale;
-    CGContextSetFillColorWithColor(ctx,
-        [UIColor colorWithWhite:1.0f alpha:(dark ? 0.65f : 0.9f)].CGColor);
-    CGContextFillRect(ctx, CGRectMake(0, 0, 1, lineH));
-
-    // --- 1px bevel line right below the highlight (App Store look) ---
-    CGContextSetFillColorWithColor(ctx,
-        [UIColor colorWithWhite:0.0f alpha:(dark ? 0.85f : 0.12f)].CGColor);
-    CGContextFillRect(ctx, CGRectMake(0, lineH, 1, lineH));
-
-    // --- 1px bottom shadow line ---
-    CGContextSetFillColorWithColor(ctx,
-        [UIColor colorWithWhite:0.0f alpha:(dark ? 1.0f : 0.35f)].CGColor);
-    CGContextFillRect(ctx, CGRectMake(0, height - lineH, 1, lineH));
-
-    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    return img;  // autoreleased
 }
 
 // Legacy alias — kept for call sites written before the rework.

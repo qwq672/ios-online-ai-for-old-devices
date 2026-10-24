@@ -14,7 +14,18 @@ NSString *const SettingsKeyLoggingEnabled = @"loggingEnabled";
 static const NSUInteger kLogMaxBytes = 1 * 1024 * 1024;
 
 @interface Logger ()
-@property (nonatomic, retain) dispatch_queue_t queue;
+// v261024-17 fix: `queue` MUST be `assign`, NOT `retain`. On iOS 6 the
+// dispatch_queue_t is NOT an NSObject (it's `struct dispatch_queue_s *`);
+// the synthesised `(retain)` accessor would call `objc_msgSend(queue,
+// @selector(retain))` which crashes with "unrecognized selector sent to
+// instance" if anything (KVO, runtime introspection, _setFont:,
+// _setObservationInfo:, etc.) ever routes through self.queue = X. Even
+// though our own code never does the assignment via the property
+// (we use direct ivar assignment in init), the synthesised setter still
+// gets added to the class's method table, so ANY external code or
+// runtime mechanism could trip it. `assign` makes the setter a plain
+// pointer copy with no retain/release message — iOS-6-safe.
+@property (nonatomic, assign) dispatch_queue_t queue;
 @property (nonatomic, retain) NSString *logPath;
 @end
 
@@ -54,21 +65,45 @@ static void iOS6AIChatUncaughtExceptionHandler(NSException *exception)
 - (id)init
 {
     if (self = [super init]) {
-        // Serial queue — guarantees ordered writes from multiple threads.
-        _queue = dispatch_queue_create("awa.qwq672.iosonlineai.logger", NULL);
-        // <Documents>/iOS6AIChat.log. iOS 6: NSDocumentDirectory is
-        // available (NSFileManager URLsForDirectory:... is iOS 4+).
-        NSArray *dirs = NSSearchPathForDirectoriesInDomains(
-            NSDocumentDirectory, NSUserDomainMask, YES);
-        NSString *docs = [dirs count] > 0 ? [dirs objectAtIndex:0] : NSTemporaryDirectory();
-        _logPath = [[docs stringByAppendingPathComponent:@"iOS6AIChat.log"] retain];
+        // v261024-17: wrap init in @try — if dispatch_queue_create or
+        // NSSetUncaughtExceptionHandler ever throws, dispatch_once's
+        // sharedLogger would be left half-initialised AND the uncaught-
+        // exception handler would re-enter sharedLogger → deadlock. With
+        // @try here, an init failure just leaves the Logger with
+        // _queue=nil; every log call no-ops (the `if (!_queue) return;`
+        // guard below). The app still runs.
+        @try {
+            // Serial queue — guarantees ordered writes from multiple
+            // threads. dispatch_queue_create returns a queue with retain
+            // count 1 (caller owns the reference); we store it directly
+            // into the ivar. The `assign` property declared above means
+            // no setter is invoked here — we own the queue and release
+            // it in dealloc via dispatch_release.
+            _queue = dispatch_queue_create("awa.qwq672.iosonlineai.logger", NULL);
+            // <Documents>/iOS6AIChat.log. iOS 6: NSDocumentDirectory is
+            // available (NSFileManager URLsForDirectory:... is iOS 4+).
+            NSArray *dirs = NSSearchPathForDirectoriesInDomains(
+                NSDocumentDirectory, NSUserDomainMask, YES);
+            NSString *docs = [dirs count] > 0 ? [dirs objectAtIndex:0] : NSTemporaryDirectory();
+            _logPath = [[docs stringByAppendingPathComponent:@"iOS6AIChat.log"] retain];
 
-        // Hook uncaught exceptions — these are what cause "the app just
-        // vanished" without a stack trace visible to the user. Writing
-        // the exception + call stack to the log file is the closest iOS 6
-        // gets to a crash reporter (no PLCrashReporter on iOS 6 without
-        // extra deps, and we don't want to add a dep).
-        NSSetUncaughtExceptionHandler(iOS6AIChatUncaughtExceptionHandler);
+            // Hook uncaught exceptions — these are what cause "the app just
+            // vanished" without a stack trace visible to the user. Writing
+            // the exception + call stack to the log file is the closest iOS 6
+            // gets to a crash reporter (no PLCrashReporter on iOS 6 without
+            // extra deps, and we don't want to add a dep).
+            NSSetUncaughtExceptionHandler(iOS6AIChatUncaughtExceptionHandler);
+        } @catch (NSException *e) {
+            // Best-effort: log to NSLog so the failure is at least
+            // visible in Console.app on a debugger-attached device.
+            NSLog(@"[Logger] init failed: %@ — %@", e.name, e.reason);
+            // Defensive: if _queue was created but a later step threw,
+            // release it so we don't leak a queue that nothing references.
+            if (_queue) {
+                dispatch_release(_queue);
+                _queue = NULL;
+            }
+        }
     }
     return self;
 }
@@ -96,6 +131,9 @@ static void iOS6AIChatUncaughtExceptionHandler(NSException *exception)
 {
     if (![self isEnabled]) return;
     if (!msg || msg.length == 0) return;
+    // v261024-17: if init failed (_queue==nil), no-op — don't crash
+    // dispatch_async on a NULL queue.
+    if (!_queue) return;
 
     // Compose the line: timestamp [LEVEL] msg
     static NSArray *levelTags = nil;
@@ -112,39 +150,51 @@ static void iOS6AIChatUncaughtExceptionHandler(NSException *exception)
     NSString *line = [NSString stringWithFormat:@"%@ [%@] %@\n", ts, tag, msg];
 
     NSString *path = self.logPath;
+    if (!path) {
+        // Defensive: shouldn't happen but if init failed _logPath is nil.
+        return;
+    }
     dispatch_async(_queue, ^{
-        @try {
-            // Append. atomic:NO because we're on a serial queue, so no
-            // concurrent writer; NSDataWritingFileAppendWithoutTruncating
-            // (which is what dataWithContentsOfFile uses implicitly when
-            // writing back) is the iOS-safe flag.
-            if (![NSFileManager.defaultManager fileExistsAtPath:path]) {
-                // Create the file with this line as its first content.
-                [line writeToFile:path atomically:NO encoding:NSUTF8StringEncoding error:NULL];
-            } else {
-                NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
-                [fh seekToEndOfFile];
-                [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
-                [fh closeFile];
-            }
+        @autoreleasepool {
+            @try {
+                // Append. atomic:NO because we're on a serial queue, so no
+                // concurrent writer; NSDataWritingFileAppendWithoutTruncating
+                // (which is what dataWithContentsOfFile uses implicitly when
+                // writing back) is the iOS-safe flag.
+                if (![NSFileManager.defaultManager fileExistsAtPath:path]) {
+                    // Create the file with this line as its first content.
+                    [line writeToFile:path atomically:NO encoding:NSUTF8StringEncoding error:NULL];
+                } else {
+                    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+                    [fh seekToEndOfFile];
+                    [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+                    [fh closeFile];
+                }
 
-            // Rotate if too big.
-            NSDictionary *attrs = [NSFileManager.defaultManager attributesOfItemAtPath:path error:NULL];
-            NSNumber *sz = [attrs objectForKey:NSFileSize];
-            if (sz && [sz unsignedLongLongValue] > kLogMaxBytes) {
-                NSString *oldPath = [path stringByAppendingPathExtension:@"old"];
-                // Remove any pre-existing .old, then rename current → .old.
-                [NSFileManager.defaultManager removeItemAtPath:oldPath error:NULL];
-                [NSFileManager.defaultManager moveItemAtPath:path toPath:oldPath error:NULL];
-            }
+                // Rotate if too big.
+                NSDictionary *attrs = [NSFileManager.defaultManager attributesOfItemAtPath:path error:NULL];
+                NSNumber *sz = [attrs objectForKey:NSFileSize];
+                if (sz && [sz unsignedLongLongValue] > kLogMaxBytes) {
+                    NSString *oldPath = [path stringByAppendingPathExtension:@"old"];
+                    // Remove any pre-existing .old, then rename current → .old.
+                    [NSFileManager.defaultManager removeItemAtPath:oldPath error:NULL];
+                    [NSFileManager.defaultManager moveItemAtPath:path toPath:oldPath error:NULL];
+                }
 
-            // Live-notify the LogViewController.
-            [[NSNotificationCenter defaultCenter]
-                postNotificationName:iOS6LoggerDidWriteNotification object:nil];
-        } @catch (NSException *e) {
-            // Logging the logger's failure would be ironic — just no-op.
-        }
-    });
+                // Live-notify the LogViewController. (NSNotificationCenter
+                // posts synchronously on the posting thread — the LogVC's
+                // _logDidWrite observes via -performSelector:afterDelay: which
+                // reschedules onto the main runloop, so the bg-thread post
+                // here is safe.)
+                [[NSNotificationCenter defaultCenter]
+                    postNotificationName:iOS6LoggerDidWriteNotification object:nil];
+            } @catch (NSException *e) {
+                // Logging the logger's failure would be ironic — just no-op.
+            }
+        }  // @autoreleasepool — GCD worker thread has no pool of its own;
+           //  the autoreleased NSDateFormatter / NSFileHandle above
+           //  would otherwise leak per-call.
+    });  // dispatch_async
 }
 
 - (NSString *)readAllLog
