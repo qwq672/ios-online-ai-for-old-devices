@@ -53,6 +53,7 @@
         case IconTypeClock:        [self _drawClock:ctx cx:cx cy:cy w:w h:h]; break;
         case IconTypeRefresh:      [self _drawRefresh:ctx cx:cx cy:cy w:w h:h]; break;
         case IconTypeCopy:         [self _drawCopy:ctx cx:cx cy:cy w:w h:h]; break;
+        case IconTypeHamburger:    [self _drawHamburger:ctx cx:cx cy:cy w:w h:h]; break;
     }
 
     UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
@@ -397,6 +398,27 @@
     CGContextFillRect(ctx, frontRect);
     // Then stroke it.
     CGContextStrokeRect(ctx, frontRect);
+}
+
++ (void)_drawHamburger:(CGContextRef)ctx cx:(CGFloat)cx cy:(CGFloat)cy w:(CGFloat)w h:(CGFloat)h
+{
+    // Three horizontal bars with round caps (drawer "hamburger" icon).
+    // Tuned to read clearly at 22pt navbar size.
+    CGFloat lineW = MAX(2.0f, h * 0.10f);
+    CGFloat spanW = w * 0.74f;
+    CGFloat gap   = h * 0.21f;
+    CGContextSetLineWidth(ctx, lineW);
+    CGContextSetLineCap(ctx, kCGLineCapRound);
+    CGContextSetLineJoin(ctx, kCGLineJoinRound);
+
+    CGFloat x0 = cx - spanW * 0.5f;
+    CGFloat x1 = cx + spanW * 0.5f;
+    for (NSInteger i = -1; i <= 1; i++) {
+        CGFloat y = cy + gap * (CGFloat)i;
+        CGContextMoveToPoint(ctx, x0, y);
+        CGContextAddLineToPoint(ctx, x1, y);
+    }
+    CGContextStrokePath(ctx);
 }
 
 @end

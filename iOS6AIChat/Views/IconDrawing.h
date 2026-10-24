@@ -23,6 +23,7 @@ typedef enum {
     IconTypeClock,            // History
     IconTypeRefresh,          // Regenerate reply (circular arrow)
     IconTypeCopy,             // Copy (two overlapping rectangles)
+    IconTypeHamburger,        // Drawer menu (three horizontal lines)
 } IconType;
 
 @interface IconDrawing : NSObject

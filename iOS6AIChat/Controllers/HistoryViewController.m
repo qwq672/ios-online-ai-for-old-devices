@@ -3,9 +3,11 @@
 //  iOS6AIChat
 //
 //  Grouped table listing every saved Conversation in the store.
+//  Pushed onto the main nav stack by DrawerViewController (v261024-13
+//  nav restructure — no more tab bar).
 //  Tapping a row:
 //     - Posts ChatViewControllerDidLoadConversationNotification
-//     - Switches to the Chat tab (index 0)
+//     - Pops back to the chat root
 //
 
 #import "HistoryViewController.h"
@@ -216,11 +218,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
         postNotificationName:ChatViewControllerDidLoadConversationNotification
                       object:nil
                     userInfo:@{ ChatViewControllerConversationIDKey: c.conversationID }];
-    // Switch to chat tab.
-    UITabBarController *tbc = (UITabBarController *)self.tabBarController;
-    if ([tbc isKindOfClass:[UITabBarController class]]) {
-        tbc.selectedIndex = 0;
-    }
+    // Pop back to the chat root (drawer nav, no tab bar to switch).
+    [self.navigationController popToRootViewControllerAnimated:YES];
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
 }
 

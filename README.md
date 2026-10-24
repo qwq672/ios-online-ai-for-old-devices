@@ -151,9 +151,9 @@ ssh root@iphone "dpkg -i /var/mobile/iOS6AIChat_*.deb && killall SpringBoard"
 
 > AltStore 类似，但要求 iPhone 与装 AltServer 的电脑同 Wi-Fi，每 3 天自动重签。
 
-### 5.3 用 Settings 配置后端
+### 5.3 用 设置 配置后端
 
-App 装好后启动，进 Settings Tab：
+App 装好后启动，点左上角 ☰ 汉堡按钮打开菜单，进「设置」：
 
 | 字段 | 默认值 | 填什么 |
 |------|--------|--------|
@@ -164,7 +164,7 @@ App 装好后启动，进 Settings Tab：
 | Model | `gpt-4o-mini` | 不同 provider 默认模型已填好 |
 | Temperature | `0.7` | 0~1，越高回复越随机 |
 
-回 Chat Tab 输入文本，回车或点 Send 发送。
+回聊天页（菜单 →「新对话」）输入文本，回车或点 Send 发送。
 
 ---
 

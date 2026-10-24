@@ -2,75 +2,62 @@
 //  AppDelegate.m
 //  iOS6AIChat
 //
-//  Boots a 3-tab UITabBarController:
-//    1) Chat       — current conversation
-//    2) History    — list of saved conversations
-//    3) Settings   — BaseURL / API Key / Model configuration
+//  v261024-13 nav restructure — no more UITabBarController:
+//    - App opens straight into a fresh ChatViewController (new chat).
+//    - DrawerViewController wraps the chat nav; a hamburger button on
+//      the chat navbar slides in the menu (新对话 / 历史记录 / 设置).
+//    - The chat view now runs edge-to-edge under the navbar (no tab
+//      bar strip), like a modern chat app wearing an iOS 6 suit.
 //
 //  Subscribes to iOS6ThemeDidChangeNotification so dark mode / font size
-//  toggles in Settings re-style the navbar/tabbar globally.
+//  toggles in Settings re-style the navbar globally (the drawer styles
+//  its own sidebar).
 //
 
 #import "AppDelegate.h"
 #import "iOS6Theme.h"
 #import "ChatViewController.h"
-#import "HistoryViewController.h"
-#import "SettingsViewController.h"
-#import "IconDrawing.h"
+#import "DrawerViewController.h"
 
 @interface AppDelegate ()
-@property (nonatomic, retain) UITabBarController *tabBarController;
+@property (nonatomic, retain) DrawerViewController *drawerController;
 @end
 
 @implementation AppDelegate
 
-@synthesize window = _window, tabBarController=_tabBarController;
+@synthesize window = _window, drawerController = _drawerController;
 
 - (BOOL)application:(UIApplication *)application
         didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
     self.window = [[[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]] autorelease];
 
-    ChatViewController    *chatVC    = [[[ChatViewController    alloc] init] autorelease];
-    HistoryViewController *historyVC = [[[HistoryViewController alloc] init] autorelease];
-    SettingsViewController*settingsVC= [[[SettingsViewController alloc] init] autorelease];
+    // Chat is the app's home — fresh conversation on every launch.
+    ChatViewController *chatVC = [[[ChatViewController alloc] init] autorelease];
+    chatVC.title = NSLocalizedString(@"聊天", nil);
 
-    UINavigationController *chatNav    = [[[UINavigationController alloc] initWithRootViewController:chatVC]    autorelease];
-    UINavigationController *historyNav= [[[UINavigationController alloc] initWithRootViewController:historyVC] autorelease];
-    UINavigationController *settingsNav= [[[UINavigationController alloc] initWithRootViewController:settingsVC] autorelease];
+    UINavigationController *chatNav =
+        [[[UINavigationController alloc] initWithRootViewController:chatVC] autorelease];
 
-    // Apply current theme to navbars + tabbar.
-    [self _applyThemeToNavs:@[chatNav, historyNav, settingsNav]];
-
-    // Custom-drawn tab icons — 25pt with ~10pt labels matches the App
-    // Store reference proportion (icon:text ≈ 2.5:1). The tab bar uses
-    // the image ALPHA as a mask, so the drawing color is irrelevant.
-    UIImage *chatIcon = [IconDrawing imageForType:IconTypeChatBubble size:CGSizeMake(25, 25) color:[UIColor blackColor]];
-    chatNav.tabBarItem = [[[UITabBarItem alloc] initWithTitle:NSLocalizedString(@"聊天", nil) image:chatIcon tag:0] autorelease];
-    UIImage *historyIcon = [IconDrawing imageForType:IconTypeClock size:CGSizeMake(25, 25) color:[UIColor blackColor]];
-    historyNav.tabBarItem = [[[UITabBarItem alloc] initWithTitle:NSLocalizedString(@"历史", nil) image:historyIcon tag:0] autorelease];
-    UIImage *gearIcon = [IconDrawing imageForType:IconTypeGear size:CGSizeMake(25, 25) color:[UIColor blackColor]];
-    settingsNav.tabBarItem = [[[UITabBarItem alloc] initWithTitle:NSLocalizedString(@"设置", nil) image:gearIcon tag:0] autorelease];
-    chatNav.topViewController.title = NSLocalizedString(@"聊天", nil);
-    historyNav.topViewController.title = NSLocalizedString(@"历史", nil);
-    settingsNav.topViewController.title = NSLocalizedString(@"设置", nil);
-
-    UITabBarController *tbc = [[[UITabBarController alloc] init] autorelease];
-    tbc.viewControllers = [NSArray arrayWithObjects:chatNav, historyNav, settingsNav, nil];
-    [iOS6Theme styleTabBarController:tbc];
-    self.tabBarController = tbc;
+    // Rich grey bar background — 1px top highlight + 3-stop gradient
+    // + 1px bottom shadow (App Store / Music style, no blue tint).
+    [self _applyThemeToNavs:[NSArray arrayWithObject:chatNav]];
 
     // Status bar — dark bars need white glyphs, light (silver) bars need
-    // black glyphs. Switch with the theme (was always BlackOpaque, which
-    // made light-mode status text invisible against the silver navbar).
+    // black glyphs. Switch with the theme.
     application.statusBarStyle = [iOS6Theme isDarkMode]
         ? UIStatusBarStyleBlackOpaque : UIStatusBarStyleDefault;
 
-    self.window.rootViewController = tbc;
+    DrawerViewController *drawer =
+        [[[DrawerViewController alloc] initWithMainViewController:chatNav] autorelease];
+    self.drawerController = drawer;
+
+    self.window.rootViewController = drawer;
     [self.window makeKeyAndVisible];
 
-    // Re-style the navbar + tabbar whenever the theme changes (dark mode
-    // toggle, font size change, etc.).
+    // Re-style the navbar whenever the theme changes (dark mode toggle,
+    // font size change, etc.). The drawer listens for the same
+    // notification and re-styles its sidebar itself.
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(_themeChanged)
                                                  name:@"iOS6ThemeDidChangeNotification"
@@ -82,8 +69,6 @@
 {
     for (NSUInteger i = 0; i < [navs count]; i++) {
         UINavigationController *nav = [navs objectAtIndex:i];
-        // Rich grey bar background — 1px top highlight + 3-stop gradient
-        // + 1px bottom shadow (App Store / Music style, no blue tint).
         UIImage *navBg = [iOS6Theme barBackgroundImageWithHeight:44];
         if (navBg) {
             [nav.navigationBar setBackgroundImage:navBg forBarMetrics:UIBarMetricsDefault];
@@ -98,13 +83,14 @@
 
 - (void)_themeChanged
 {
-    UITabBarController *tbc = self.tabBarController;
-    [self _applyThemeToNavs:tbc.viewControllers];
-    [iOS6Theme styleTabBarController:tbc];
+    UINavigationController *nav = _drawerController.mainNavigationController;
+    if (nav) {
+        [self _applyThemeToNavs:[NSArray arrayWithObject:nav]];
+    }
     // Status bar follows the theme (white text on dark bars, black on silver).
     [UIApplication sharedApplication].statusBarStyle = [iOS6Theme isDarkMode]
         ? UIStatusBarStyleBlackOpaque : UIStatusBarStyleDefault;
-    [tbc.view setNeedsDisplay];
+    [_drawerController.view setNeedsDisplay];
 }
 
 - (void)applicationWillResignActive:(UIApplication *)application {}
@@ -116,7 +102,7 @@
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_window release];
-    [_tabBarController release];
+    [_drawerController release];
     [super dealloc];
 }
 

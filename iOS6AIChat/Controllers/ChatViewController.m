@@ -26,6 +26,8 @@
 
 #import "ChatViewController.h"
 #import "iOS6Theme.h"
+#import "IconDrawing.h"
+#import "DrawerViewController.h"
 #import "ChatMessageCell.h"
 #import "ConversationStore.h"
 #import "SettingsViewController.h"
@@ -160,6 +162,10 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                                                  target:self
                                                  action:@selector(startNewConversation)] autorelease];
 
+    // Hamburger (drawer) button — slides in the nav menu
+    // (新对话 / 历史记录 / 设置). v261024-13.
+    [self _installDrawerButton];
+
     // Keyboard observers.
     [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(_keyboardWillShow:)
@@ -206,7 +212,34 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     // black because cache still returns light-theme-colored strings).
     [ChatMessageCell flushCaches];
     [self _applyTheme];
+    [self _installDrawerButton];   // re-tint hamburger with new bar tint
     [_tableView reloadData];
+}
+
+#pragma mark - Drawer (hamburger) button
+
+- (void)_installDrawerButton
+{
+    // iOS 6 renders bar-button images as-is (no auto tint like iOS 7+),
+    // so the icon is drawn in the current bar-item tint colour and
+    // re-created whenever the theme flips.
+    UIImage *menuIcon = [IconDrawing imageForType:IconTypeHamburger
+                                            size:CGSizeMake(22, 22)
+                                           color:[iOS6Theme barItemTintColor]];
+    UIBarButtonItem *menuBtn =
+        [[[UIBarButtonItem alloc] initWithImage:menuIcon
+                                          style:UIBarButtonItemStyleBordered
+                                         target:self
+                                         action:@selector(_toggleDrawer)] autorelease];
+    self.navigationItem.leftBarButtonItem = menuBtn;
+}
+
+- (void)_toggleDrawer
+{
+    // Don't slide the drawer under an open keyboard.
+    [self _dismissKeyboard];
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:DrawerViewControllerToggleNotification object:nil];
 }
 
 #pragma mark - Conversation management
