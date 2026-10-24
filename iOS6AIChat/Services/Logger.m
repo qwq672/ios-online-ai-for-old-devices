@@ -53,11 +53,15 @@ static void iOS6AIChatUncaughtExceptionHandler(NSException *exception)
 {
     // Best-effort: format the crash line and write it. If anything here
     // fails, we lose the crash info but the app is already dying.
+    NSString *name = [exception.name isKindOfClass:[NSString class]] ? exception.name : @"(no name)";
+    if (!name || name.length == 0) name = @"(no name)";
+    NSString *reason = [exception.reason isKindOfClass:[NSString class]] ? exception.reason : @"(no reason)";
+    if (!reason || reason.length == 0) reason = @"(no reason)";
+    NSArray *symbols = [exception callStackSymbols];
+    NSString *stack = [symbols isKindOfClass:[NSArray class]] ? [symbols componentsJoinedByString:@"\n"] : @"(no stack)";
     NSString *msg = [NSString stringWithFormat:
         @"\n=== UNCAUGHT EXCEPTION ===\nname: %@\nreason: %@\ncallStack:\n%@\n==========================\n",
-        [exception.name ?: @"(no name)"] ?: @"(no name)",
-        [exception.reason ?: @"(no reason)"] ?: @"(no reason)",
-        [[exception callStackSymbols] componentsJoinedByString:@"\n"]];
+        name, reason, stack];
     [[Logger sharedLogger] logWithLevel:kLogLevelError message:msg];
 }
 
