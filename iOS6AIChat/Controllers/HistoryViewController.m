@@ -2,23 +2,25 @@
 //  HistoryViewController.m
 //  iOS6AIChat
 //
-//  Grouped table listing every saved Conversation in the store.
-//  Pushed onto the main nav stack by DrawerViewController (v261024-13
-//  nav restructure — no more tab bar).
-//  Tapping a row:
-//     - Posts ChatViewControllerDidLoadConversationNotification
-//     - Pops back to the chat root
+//  v261024-15 nav restructure (Plan 2 = iOS "Messages" app style):
+//    This is now the App's HOME. Conversation list with:
+//       - Top-left: Edit (delete-mode toggle)
+//       - Top-right: + (new chat → push ChatViewController)
+//       - Table footer: "⚙️ 管理" button → push ManagementViewController
+//    Tapping a row pushes a fresh ChatViewController and loadConversation.
+//
+//  The old notification-based loadConversation path is no longer used
+//  (Plan 2 rootVC is now the history list, not a fresh chat).
 //
 
 #import "HistoryViewController.h"
 #import "ConversationStore.h"
 #import "iOS6Theme.h"
 #import "ChatViewController.h"
+#import "ManagementViewController.h"
+#import "Logger.h"
 
 static NSString *const kCellReuseID = @"HistoryCell";
-
-@interface HistoryViewController ()
-@end
 
 @interface HistoryViewController () {
     NSString *_searchText;
@@ -32,7 +34,7 @@ static NSString *const kCellReuseID = @"HistoryCell";
 - (id)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil
 {
     if (self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil]) {
-        self.title = NSLocalizedString(@"History", nil);
+        self.title = NSLocalizedString(@"AI 聊天", nil);
     }
     return self;
 }
@@ -40,6 +42,7 @@ static NSString *const kCellReuseID = @"HistoryCell";
 - (void)viewDidLoad
 {
     [super viewDidLoad];
+    [[Logger sharedLogger] info:@"HistoryViewController viewDidLoad"];
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
 
     // Use the full bounds — the nav controller's container view already
@@ -74,7 +77,17 @@ static NSString *const kCellReuseID = @"HistoryCell";
     }
     _tableView.tableHeaderView = searchBar;
 
-    self.navigationItem.rightBarButtonItem = self.editButtonItem;
+    // Edit button on the left (iOS Messages home style), + on the right.
+    self.navigationItem.leftBarButtonItem = self.editButtonItem;
+    self.navigationItem.rightBarButtonItem = [[[UIBarButtonItem alloc]
+                                                 initWithBarButtonSystemItem:UIBarButtonSystemItemAdd
+                                                 target:self
+                                                 action:@selector(startNewConversation)] autorelease];
+
+    // Table footer: "⚙️ 管理" button — entry point into ManagementViewController
+    // (设置 / 模型管理 / 角色管理 / 日志). Stays anchored to the bottom of the
+    // table content so it scrolls with the list when the list is long.
+    [self _installManagementFooter];
 
     // Listen for theme changes.
     [[NSNotificationCenter defaultCenter] addObserver:self
@@ -83,12 +96,44 @@ static NSString *const kCellReuseID = @"HistoryCell";
                                                    object:nil];
 }
 
+- (void)_installManagementFooter
+{
+    CGFloat footerH = 56.0f;
+    UIView *footer = [[[UIView alloc] initWithFrame:CGRectMake(0, 0,
+                                                                self.view.bounds.size.width,
+                                                                footerH)] autorelease];
+    footer.backgroundColor = [UIColor clearColor];
+
+    // A sub-button styled like a grouped-table cell, centered in the footer.
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+    btn.frame = CGRectMake(12, 6, self.view.bounds.size.width - 24, footerH - 12);
+    btn.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    btn.backgroundColor = [iOS6Theme bubbleAssistantColor];
+    btn.layer.cornerRadius = 8.0f;
+    btn.layer.masksToBounds = YES;
+    [btn setTitle:NSLocalizedString(@"⚙️ 管理", nil)
+         forState:UIControlStateNormal];
+    [btn setTitleColor:[iOS6Theme textColor] forState:UIControlStateNormal];
+    btn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];
+    [btn addTarget:self action:@selector(_openManagement)
+      forControlEvents:UIControlEventTouchUpInside];
+    [footer addSubview:btn];
+    _tableView.tableFooterView = footer;
+}
+
+- (void)_openManagement
+{
+    ManagementViewController *mvc = [[[ManagementViewController alloc] initWithNibName:nil bundle:nil] autorelease];
+    [self.navigationController pushViewController:mvc animated:YES];
+}
+
 - (void)_themeChanged
 {
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
     _tableView.backgroundColor = [UIColor clearColor];
     _tableView.backgroundView = nil;
     [_tableView reloadData];
+    [self _installManagementFooter];
     // Re-style search bar.
     UISearchBar *sb = (UISearchBar *)_tableView.tableHeaderView;
     if ([sb isKindOfClass:[UISearchBar class]]) {
@@ -107,11 +152,26 @@ static NSString *const kCellReuseID = @"HistoryCell";
     // Re-apply theme in case it changed in Settings.
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
     _tableView.backgroundColor = [UIColor clearColor];
-    _tableView.backgroundView = nil;  // remove iOS 6 default striped pattern
-    // Re-style navbar with current palette (dark/light).
-    // Tab bar icons are set once at launch — do NOT re-style here
-    // (styleNavigationController resets tabBarItem to system icon)
+    _tableView.backgroundView = nil;
+    [self _installManagementFooter];
     [_tableView reloadData];
+}
+
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+    // Drop a quick log so we can trace the launch sequence in the log file.
+    NSUInteger n = [[ConversationStore sharedStore].conversations count];
+    [[Logger sharedLogger] info:[NSString stringWithFormat:@"HistoryVC viewDidAppear — %lu conversations", (unsigned long)n]];
+}
+
+#pragma mark - New chat (right-bar + button)
+
+- (void)startNewConversation
+{
+    [[Logger sharedLogger] info:@"HistoryVC startNewConversation → push new ChatVC"];
+    ChatViewController *chat = [[[ChatViewController alloc] initWithNibName:nil bundle:nil] autorelease];
+    [self.navigationController pushViewController:chat animated:YES];
 }
 
 #pragma mark - UISearchBarDelegate
@@ -156,8 +216,15 @@ static NSString *const kCellReuseID = @"HistoryCell";
                                        reuseIdentifier:kCellReuseID] autorelease];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     }
+    // Reset theme on reuse.
+    cell.backgroundColor = [iOS6Theme bubbleAssistantColor];
+    cell.textLabel.textColor = [iOS6Theme textColor];
+    cell.textLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];
+    cell.detailTextLabel.textColor = [iOS6Theme secondaryTextColor];
+    cell.detailTextLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
+
     NSArray *allConvs = [ConversationStore sharedStore].conversations;
-    Conversation *c = nil;
+    Conversation *c;
     if (_searchText && _searchText.length > 0) {
         NSMutableArray *filtered = [NSMutableArray array];
         for (Conversation *conv in allConvs) {
@@ -165,22 +232,17 @@ static NSString *const kCellReuseID = @"HistoryCell";
                 [filtered addObject:conv];
             }
         }
-        c = [[filtered objectAtIndex:indexPath.row] retain];
-    cell.textLabel.text       = [c displayTitle];
-    NSDateFormatter *df = [[[NSDateFormatter alloc] init] autorelease];
-    [df setDateFormat: @"yyyy-MM-dd HH:mm"];
-    cell.detailTextLabel.text = [df stringFromDate:c.updatedAt];
-    [c release];
-    return cell;
+        if ((NSInteger)[filtered count] <= indexPath.row) return cell;
+        c = [filtered objectAtIndex:indexPath.row];
     } else {
-    Conversation *c = [[allConvs objectAtIndex:indexPath.row] retain];
+        if ((NSInteger)[allConvs count] <= indexPath.row) return cell;
+        c = [allConvs objectAtIndex:indexPath.row];
+    }
     cell.textLabel.text = [c displayTitle];
     NSDateFormatter *df = [[[NSDateFormatter alloc] init] autorelease];
     [df setDateFormat: @"yyyy-MM-dd HH:mm"];
     cell.detailTextLabel.text = [df stringFromDate:c.updatedAt];
-    [c release];
     return cell;
-    }
 }
 
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
@@ -213,13 +275,36 @@ titleForHeaderInSection:(NSInteger)section
 - (void)tableView:(UITableView *)tableView
 didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    Conversation *c = [[ConversationStore sharedStore].conversations objectAtIndex:indexPath.row];
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:ChatViewControllerDidLoadConversationNotification
-                      object:nil
-                    userInfo:@{ ChatViewControllerConversationIDKey: c.conversationID }];
-    // Pop back to the chat root (drawer nav, no tab bar to switch).
-    [self.navigationController popToRootViewControllerAnimated:YES];
+    NSArray *allConvs = [ConversationStore sharedStore].conversations;
+    Conversation *c;
+    if (_searchText && _searchText.length > 0) {
+        NSMutableArray *filtered = [NSMutableArray array];
+        for (Conversation *conv in allConvs) {
+            if ([conv.displayTitle rangeOfString:_searchText options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                [filtered addObject:conv];
+            }
+        }
+        if ((NSInteger)[filtered count] <= indexPath.row) {
+            [tableView deselectRowAtIndexPath:indexPath animated:YES];
+            return;
+        }
+        c = [filtered objectAtIndex:indexPath.row];
+    } else {
+        if ((NSInteger)[allConvs count] <= indexPath.row) {
+            [tableView deselectRowAtIndexPath:indexPath animated:YES];
+            return;
+        }
+        c = [allConvs objectAtIndex:indexPath.row];
+    }
+    // Plan 2: push a fresh ChatViewController and tell it which conversation
+    // to load. No notification — direct call, simpler and traceable.
+    ChatViewController *chat = [[[ChatViewController alloc] initWithNibName:nil bundle:nil] autorelease];
+    [self.navigationController pushViewController:chat animated:YES];
+    @try {
+        [chat loadConversation:c];
+    } @catch (NSException *e) {
+        [[Logger sharedLogger] error:[NSString stringWithFormat:@"loadConversation crashed: %@", e]];
+    }
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
 }
 
@@ -228,11 +313,14 @@ commitEditingStyle:(UITableViewCellEditingStyle)editingStyle
 forRowAtIndexPath:(NSIndexPath *)indexPath
 {
     if (editingStyle == UITableViewCellEditingStyleDelete) {
-        Conversation *c = [[ConversationStore sharedStore].conversations
-                            objectAtIndex:indexPath.row];
-        [[ConversationStore sharedStore] deleteConversationWithID:c.conversationID];
-        [tableView deleteRowsAtIndexPaths:[NSArray arrayWithObject:indexPath]
-                         withRowAnimation:UITableViewRowAnimationLeft];
+        if (indexPath.row < (NSInteger)[[ConversationStore sharedStore].conversations count]) {
+            Conversation *c = [[ConversationStore sharedStore].conversations
+                                objectAtIndex:indexPath.row];
+            [[ConversationStore sharedStore] deleteConversationWithID:c.conversationID];
+            [tableView deleteRowsAtIndexPaths:[NSArray arrayWithObject:indexPath]
+                             withRowAnimation:UITableViewRowAnimationLeft];
+            [[Logger sharedLogger] info:[NSString stringWithFormat:@"Deleted conversation %@", c.conversationID]];
+        }
     }
 }
 

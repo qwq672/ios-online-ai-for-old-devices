@@ -27,11 +27,12 @@
 #import "ChatViewController.h"
 #import "iOS6Theme.h"
 #import "IconDrawing.h"
-#import "DrawerViewController.h"
 #import "ChatMessageCell.h"
 #import "ConversationStore.h"
 #import "SettingsViewController.h"
 #import "HistoryViewController.h"
+#import "CharacterManagementViewController.h"
+#import "Logger.h"
 
 NSString *const ChatViewControllerDidLoadConversationNotification = @"ChatViewControllerDidLoadConversation";
 NSString *const ChatViewControllerConversationIDKey               = @"conversationID";
@@ -162,10 +163,6 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                                                  target:self
                                                  action:@selector(startNewConversation)] autorelease];
 
-    // Hamburger (drawer) button — slides in the nav menu
-    // (新对话 / 历史记录 / 设置). v261024-13.
-    [self _installDrawerButton];
-
     // Keyboard observers.
     [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(_keyboardWillShow:)
@@ -212,34 +209,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     // black because cache still returns light-theme-colored strings).
     [ChatMessageCell flushCaches];
     [self _applyTheme];
-    [self _installDrawerButton];   // re-tint hamburger with new bar tint
     [_tableView reloadData];
-}
-
-#pragma mark - Drawer (hamburger) button
-
-- (void)_installDrawerButton
-{
-    // iOS 6 renders bar-button images as-is (no auto tint like iOS 7+),
-    // so the icon is drawn in the current bar-item tint colour and
-    // re-created whenever the theme flips.
-    UIImage *menuIcon = [IconDrawing imageForType:IconTypeHamburger
-                                            size:CGSizeMake(22, 22)
-                                           color:[iOS6Theme barItemTintColor]];
-    UIBarButtonItem *menuBtn =
-        [[[UIBarButtonItem alloc] initWithImage:menuIcon
-                                          style:UIBarButtonItemStyleBordered
-                                         target:self
-                                         action:@selector(_toggleDrawer)] autorelease];
-    self.navigationItem.leftBarButtonItem = menuBtn;
-}
-
-- (void)_toggleDrawer
-{
-    // Don't slide the drawer under an open keyboard.
-    [self _dismissKeyboard];
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:DrawerViewControllerToggleNotification object:nil];
 }
 
 #pragma mark - Conversation management
@@ -253,9 +223,34 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
 - (void)startNewConversation
 {
+    // Plan 2: ChatVC is pushed onto a stack whose root is HistoryViewController.
+    // To "start a new conversation" we pop back to the root VC and ask it to
+    // push a fresh ChatVC. The history list re-appears briefly during the
+    // transition — that mirrors how iOS Messages handles the same action.
+    UINavigationController *nav = self.navigationController;
+    if (!nav) {
+        // Defensive fallback: no nav stack, just clear in place.
+        if ([_conversation.messages count] > 0) {
+            self.conversation = [[ConversationStore sharedStore] createNewConversation];
+            [self _reload];
+        }
+        return;
+    }
+    for (UIViewController *vc in nav.viewControllers) {
+        if ([vc isKindOfClass:[HistoryViewController class]]) {
+            [nav popToViewController:vc animated:YES];
+            // Defer the push so the pop animation finishes first
+            // (avoid UINavigationController visual hitches when two
+            // push/pop operations run simultaneously).
+            [vc performSelector:@selector(startNewConversation)
+                     withObject:nil
+                     afterDelay:0.35];
+            return;
+        }
+    }
+    // HistoryViewController not on the stack — fallback.
     if ([_conversation.messages count] > 0) {
-        Conversation *c = [[ConversationStore sharedStore] createNewConversation];
-        self.conversation = c;
+        self.conversation = [[ConversationStore sharedStore] createNewConversation];
         [self _reload];
     }
 }
@@ -369,8 +364,21 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     NSString *apiKey      = [settings objectForKey:SettingsKeyAPIKey];
     NSString *model        = [settings objectForKey:SettingsKeyModel];
     CGFloat temperature    = [[settings objectForKey:SettingsKeyTemperature] floatValue];
-    NSString *systemPrompt = [settings objectForKey:SettingsKeySystemPrompt]
-                              ?: @"You are a helpful assistant.";
+
+    // v261024-15: log the outgoing request for crash/error diagnosis.
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"send textLen=%lu imgs=%lu think=%d search=%d transit=%d provider=%@ model=%@",
+        (unsigned long)text.length,
+        images ? (unsigned long)[images count] : 0,
+        (int)deepThinking, (int)webSearch,
+        (int)useTransit, provider, model ?: @"(unset)"]];
+
+    // v261024-15: compose effective system prompt (active character +
+    // user identity + base prompt). If no character is active and
+    // injectUserIdentity is off, this just returns `base` unchanged.
+    NSString *basePrompt = [settings objectForKey:SettingsKeySystemPrompt]
+                            ?: @"You are a helpful assistant.";
+    NSString *systemPrompt = [CharacterManagementViewController effectiveSystemPromptWithBase:basePrompt];
 
     // If deep thinking is on, augment the system prompt with a chain-of-
     // thought instruction. The model's native reasoning_content field is
@@ -712,6 +720,10 @@ didFailForConversationID:(NSString *)conversationID
     if (![conversationID isEqualToString:_conversation.conversationID]) return;
     NSString *errText = [NSString stringWithFormat:@"⚠️ %@",
                          error.localizedDescription ?: @"网络错误"];
+    [[Logger sharedLogger] error:[NSString stringWithFormat:
+        @"networkService didFail conv=%@ code=%ld desc=%@",
+        conversationID, (long)error.code,
+        error.localizedDescription ?: @"(no desc)"]];
     [_conversation updateLastAssistantMessageContent:errText];
     [[ConversationStore sharedStore] saveConversation:_conversation];
     [self _refreshLastRowForce:YES];

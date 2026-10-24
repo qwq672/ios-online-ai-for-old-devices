@@ -1,0 +1,183 @@
+//
+//  Logger.m
+//  iOS6AIChat
+//
+
+#import "Logger.h"
+
+NSString *const iOS6LoggerDidWriteNotification = @"iOS6LoggerDidWrite";
+NSString *const SettingsKeyLoggingEnabled = @"loggingEnabled";
+
+// 1 MB hard cap — past this the file is rotated (renamed to .old, fresh
+// file starts). Keeps the log readable on device without eating all
+// of the (small, on iOS 6 devices) flash storage.
+static const NSUInteger kLogMaxBytes = 1 * 1024 * 1024;
+
+@interface Logger ()
+@property (nonatomic, retain) dispatch_queue_t queue;
+@property (nonatomic, retain) NSString *logPath;
+@end
+
+@implementation Logger
+
+@synthesize queue=_queue, logPath=_logPath;
+
++ (Logger *)sharedLogger
+{
+    static Logger *instance = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        instance = [[Logger alloc] init];
+    });
+    return instance;
+}
+
+- (id)init
+{
+    if (self = [super init]) {
+        // Serial queue — guarantees ordered writes from multiple threads.
+        _queue = dispatch_queue_create("awa.qwq672.iosonlineai.logger", NULL);
+        // <Documents>/iOS6AIChat.log. iOS 6: NSDocumentDirectory is
+        // available (NSFileManager URLsForDirectory:... is iOS 4+).
+        NSArray *dirs = NSSearchPathForDirectoriesInDomains(
+            NSDocumentDirectory, NSUserDomainMask, YES);
+        NSString *docs = [dirs count] > 0 ? [dirs objectAtIndex:0] : NSTemporaryDirectory();
+        _logPath = [[docs stringByAppendingPathComponent:@"iOS6AIChat.log"] retain];
+
+        // Hook uncaught exceptions — these are what cause "the app just
+        // vanished" without a stack trace visible to the user. Writing
+        // the exception + call stack to the log file is the closest iOS 6
+        // gets to a crash reporter (no PLCrashReporter on iOS 6 without
+        // extra deps, and we don't want to add a dep).
+        NSSetUncaughtExceptionHandler(^void(NSException *exception) {
+            // Use the SAME queue so we don't deadlock — dispatch_async
+            // from inside the uncaught handler is fine since the queue
+            // is its own thread context.
+            NSString *msg = [NSString stringWithFormat:
+                @"\n=== UNCAUGHT EXCEPTION ===\nname: %@\nreason: %@\ncallStack:\n%@\n==========================\n",
+                exception.name ?: @"(no name)",
+                exception.reason ?: @"(no reason)",
+                [exception.callStackSymbols componentsJoinedByString:@"\n"]];
+            [[Logger sharedLogger] logWithLevel:kLogLevelError message:msg];
+        });
+    }
+    return self;
+}
+
+- (BOOL)isEnabled
+{
+    // Default ON unless explicitly disabled.
+    NSNumber *v = [[NSUserDefaults standardUserDefaults] objectForKey:SettingsKeyLoggingEnabled];
+    if (!v) return YES;
+    return [v boolValue];
+}
+
+- (void)setEnabled:(BOOL)enabled
+{
+    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:SettingsKeyLoggingEnabled];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+- (void)debug:(NSString *)msg { [self logWithLevel:kLogLevelDebug message:msg]; }
+- (void)info:(NSString *)msg  { [self logWithLevel:kLogLevelInfo message:msg]; }
+- (void)warn:(NSString *)msg  { [self logWithLevel:kLogLevelWarn message:msg]; }
+- (void)error:(NSString *)msg  { [self logWithLevel:kLogLevelError message:msg]; }
+
+- (void)logWithLevel:(LogLevel)level message:(NSString *)msg
+{
+    if (![self isEnabled]) return;
+    if (!msg || msg.length == 0) return;
+
+    // Compose the line: timestamp [LEVEL] msg
+    static NSArray *levelTags = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        levelTags = [NSArray arrayWithObjects:@"D", @"I", @"W", @"E", nil];
+    });
+    NSDate *now = [NSDate date];
+    NSDateFormatter *fmt = [[[NSDateFormatter alloc] init] autorelease];
+    [fmt setDateFormat:@"yyyy-MM-dd HH:mm:ss.SSS"];
+    NSString *ts = [fmt stringFromDate:now];
+    NSString *tag = (NSUInteger)level < [levelTags count]
+        ? [levelTags objectAtIndex:(NSUInteger)level] : @"?";
+    NSString *line = [NSString stringWithFormat:@"%@ [%@] %@\n", ts, tag, msg];
+
+    NSString *path = self.logPath;
+    dispatch_async(_queue, ^{
+        @try {
+            // Append. atomic:NO because we're on a serial queue, so no
+            // concurrent writer; NSDataWritingFileAppendWithoutTruncating
+            // (which is what dataWithContentsOfFile uses implicitly when
+            // writing back) is the iOS-safe flag.
+            if (![NSFileManager.defaultManager fileExistsAtPath:path]) {
+                // Create the file with this line as its first content.
+                [line writeToFile:path atomically:NO encoding:NSUTF8StringEncoding error:NULL];
+            } else {
+                NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+                [fh seekToEndOfFile];
+                [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+                [fh closeFile];
+            }
+
+            // Rotate if too big.
+            NSDictionary *attrs = [NSFileManager.defaultManager attributesOfItemAtPath:path error:NULL];
+            NSNumber *sz = [attrs objectForKey:NSFileSize];
+            if (sz && [sz unsignedLongLongValue] > kLogMaxBytes) {
+                NSString *oldPath = [path stringByAppendingPathExtension:@"old"];
+                // Remove any pre-existing .old, then rename current → .old.
+                [NSFileManager.defaultManager removeItemAtPath:oldPath error:NULL];
+                [NSFileManager.defaultManager moveItemAtPath:path toPath:oldPath error:NULL];
+            }
+
+            // Live-notify the LogViewController.
+            [[NSNotificationCenter defaultCenter]
+                postNotificationName:iOS6LoggerDidWriteNotification object:nil];
+        } @catch (NSException *e) {
+            // Logging the logger's failure would be ironic — just no-op.
+        }
+    });
+}
+
+- (NSString *)readAllLog
+{
+    NSString *current = [NSString stringWithContentsOfFile:self.logPath
+                                                  encoding:NSUTF8StringEncoding
+                                                     error:NULL];
+    NSString *oldPath = [self.logPath stringByAppendingPathExtension:@"old"];
+    NSString *old = [NSString stringWithContentsOfFile:oldPath
+                                              encoding:NSUTF8StringEncoding
+                                                 error:NULL];
+    if (old.length > 0 && current.length > 0) {
+        return [NSString stringWithFormat:@"%@\n---- (rotated) ----\n%@", old, current];
+    }
+    return old.length > 0 ? old : (current ?: @"(no log yet)");
+}
+
+- (BOOL)clearLog
+{
+    __block BOOL ok = NO;
+    dispatch_sync(_queue, ^{
+        [NSFileManager.defaultManager removeItemAtPath:_logPath error:NULL];
+        NSString *oldPath = [_logPath stringByAppendingPathExtension:@"old"];
+        [NSFileManager.defaultManager removeItemAtPath:oldPath error:NULL];
+        ok = YES;
+    });
+    return ok;
+}
+
+- (NSString *)logFilePath { return _logPath; }
+
+- (void)dealloc
+{
+    if (_queue) {
+        // Wait for pending writes to finish before tearing down.
+        dispatch_sync(_queue, ^{});
+        #if !__has_feature(objc_arc)
+        dispatch_release(_queue);
+        #endif
+    }
+    [_logPath release];
+    [super dealloc];
+}
+
+@end

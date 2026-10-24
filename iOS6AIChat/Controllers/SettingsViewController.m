@@ -76,14 +76,12 @@ enum {
 @property (nonatomic, assign) BOOL useTransit;
 @property (nonatomic, copy)   NSString *provider;
 @property (nonatomic, retain) NSMutableArray *availableModels;
-@property (nonatomic, retain) NSString *pendingDeleteModel;  // tag-700 deletion target
 @end
 
 @implementation SettingsViewController
 
 @synthesize tableView=_tableView, fields=_fields, useTransit=_useTransit,
-            provider=_provider, availableModels=_availableModels,
-            pendingDeleteModel=_pendingDeleteModel;
+            provider=_provider, availableModels=_availableModels;
 
 - (id)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil
 {
@@ -105,7 +103,6 @@ enum {
     [_fields release];
     [_provider release];
     [_availableModels release];
-    [_pendingDeleteModel release];
     [super dealloc];
 }
 
@@ -260,7 +257,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                                 SettingsKeyUseTransit, SettingsKeyTransitURL,
                                 SettingsKeyProvider, SettingsKeyBaseURL,
                                 SettingsKeyAPIKey, SettingsKeyModel,
-                                SettingsKeyModelList,    // v261024-14: reset saved model list too
+                                SettingsKeyModelList,    // also reset saved model list
                                 SettingsKeyTemperature, SettingsKeySystemPrompt,
                                 SettingsKeyWebSearchEnabled, SettingsKeyTavilyAPIKey,
                                 SettingsKeyTavilyMaxResults]) {
@@ -278,33 +275,6 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         [_fields release];
         _fields = [[NSMutableDictionary alloc] init];
         [_tableView reloadData];
-        return;
-    }
-    // Tag 700: confirm model deletion.
-    if (alertView.tag == 700 && buttonIndex == 1) {
-        NSString *m = _pendingDeleteModel;
-        if (m && m.length > 0) {
-            [self _removeModelFromList:m];
-            // If we just deleted the currently-active default, fall back
-            // to the first item in the remaining list (or the provider
-            // default if the list is now empty).
-            NSDictionary *settings = [SettingsViewController loadSettings];
-            NSString *cur = [settings objectForKey:SettingsKeyModel];
-            if ([cur isEqualToString:m]) {
-                NSArray *list = [self _modelList];
-                NSString *newDef = [list count] > 0
-                                    ? [list objectAtIndex:0]
-                                    : [SettingsViewController defaultModelForProvider:_provider];
-                NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-                [d setObject:newDef forKey:SettingsKeyModel];
-                [d synchronize];
-            }
-            [_fields release];
-            _fields = [[NSMutableDictionary alloc] init];
-            [_tableView reloadData];
-        }
-        self.pendingDeleteModel = nil;
-        return;
     }
 }
 
@@ -325,7 +295,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         case kSectionTheme:     return 3;  // dark mode, font size, image compression
         case kSectionTransit:    return 5;  // 使用中转 / Transit URL / Provider / 中转网络搜索 / 中转默认模型
         case kSectionDirect:     return 2;
-        case kSectionModel:      return 7;  // Model + 搜索 / hint / 保存到列表 / 从列表选择默认 / 删除已保存 / 支持图片识别 / 支持思考
+        case kSectionModel:      return 4;  // Model + 搜索 / hint / 支持图片识别 / 支持思考 (v261024-15: 管理 move to ModelManagementVC)
         case kSectionWebSearch:  return 3;
         case kSectionPrompt:     return 1;
         case kSectionAdvanced:   return 1;  // 流式输出
@@ -392,7 +362,7 @@ titleForFooterInSection:(NSInteger)section
         case kSectionDirect:
             return NSLocalizedString(@"直连后端配置。BaseURL 必须 OpenAI 兼容格式。API Key 作 Authorization: Bearer 发出。即使开启中转也可保留此处配置作为回退。", nil);
         case kSectionModel:
-            return NSLocalizedString(@"点「搜索」从 /v1/models 拉取模型；可手填。「保存到列表」加入常用模型，之后用「从列表选择默认」一键切换。", nil);
+            return NSLocalizedString(@"点「搜索」从 /v1/models 拉取可选模型；也可手填。已保存模型管理请进 管理页 → 模型管理。", nil);
         case kSectionWebSearch:
             return NSLocalizedString(@"开关后 AI 自主决定是否调用 Tavily 搜索（tool_calls 模式）。结果数 1-8。", nil);
         case kSectionAdvanced:
@@ -555,88 +525,6 @@ titleForFooterInSection:(NSInteger)section
         return @[@"llama3.2", @"qwen2.5", @"phi3", @"gemma2"];
     }
     return @[@"gpt-4o-mini"];
-}
-
-// Read the saved model list from NSUserDefaults. Stored as a JSON-encoded
-// NSString because iOS 6 NSUserDefaults can't directly hold NSArray of
-// NSString in some edge cases (the Apple docs say it can, but in practice
-// on iOS 6 the array sometimes loses its element type after relaunch).
-// JSON round-trip is safe and the bytes are tiny.
-- (NSArray *)_modelList
-{
-    NSString *json = [[NSUserDefaults standardUserDefaults]
-                       stringForKey:SettingsKeyModelList];
-    if (!json || json.length == 0) {
-        // First launch — seed from provider defaults.
-        NSArray *seed = [SettingsViewController _defaultModelListForProvider:_provider];
-        [self _saveModelList:seed];
-        return seed;
-    }
-    NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];
-    NSError *err = nil;
-    NSArray *arr = [NSJSONSerialization JSONObjectWithData:data
-                                                   options:0
-                                                     error:&err];
-    if (err || ![arr isKindOfClass:[NSArray class]]) {
-        // Corrupt JSON — re-seed.
-        NSArray *seed = [SettingsViewController _defaultModelListForProvider:_provider];
-        [self _saveModelList:seed];
-        return seed;
-    }
-    // Filter non-string entries defensively.
-    NSMutableArray *out = [NSMutableArray array];
-    for (id e in arr) {
-        if ([e isKindOfClass:[NSString class]] && [(NSString *)e length] > 0) {
-            [out addObject:e];
-        }
-    }
-    return out;
-}
-
-- (void)_saveModelList:(NSArray *)list
-{
-    // De-duplicate while preserving order.
-    NSMutableArray *seen = [NSMutableArray array];
-    for (NSString *m in list) {
-        if (![seen containsObject:m]) [seen addObject:m];
-    }
-    NSError *err = nil;
-    NSData *data = [NSJSONSerialization dataWithJSONObject:seen
-                                                    options:0
-                                                      error:&err];
-    if (err || !data) {
-        // Fallback: store as plain comma-separated string.
-        NSString *csv = [seen componentsJoinedByString:@","];
-        [[NSUserDefaults standardUserDefaults] setObject:csv
-                                                  forKey:SettingsKeyModelList];
-    } else {
-        NSString *json = [[[NSString alloc] initWithData:data
-                                                encoding:NSUTF8StringEncoding] autorelease];
-        [[NSUserDefaults standardUserDefaults] setObject:json
-                                                  forKey:SettingsKeyModelList];
-    }
-    [[NSUserDefaults standardUserDefaults] synchronize];
-}
-
-- (void)_addModelToList:(NSString *)model
-{
-    if (!model || model.length == 0) return;
-    NSArray *cur = [self _modelList];
-    if ([cur containsObject:model]) return;  // already saved
-    NSMutableArray *arr = [NSMutableArray arrayWithArray:cur];
-    [arr addObject:model];
-    [self _saveModelList:arr];
-}
-
-- (void)_removeModelFromList:(NSString *)model
-{
-    if (!model || model.length == 0) return;
-    NSArray *cur = [self _modelList];
-    NSMutableArray *arr = [NSMutableArray array];
-    for (NSString *m in cur) {
-        if (![m isEqualToString:model]) [arr addObject:m];
-    }
-    [self _saveModelList:arr];
 }
 
 - (IBAction)_modelListChanged:(id)sender { /* stub, never called */ }
@@ -841,37 +729,8 @@ titleForFooterInSection:(NSInteger)section
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         return cell;
     }
+    // row 2: "model supports images" toggle.
     if (row == 2) {
-        // 保存当前文本框模型到列表
-        cell.textLabel.text = NSLocalizedString(@"保存到列表", nil);
-        cell.textLabel.textColor = [iOS6Theme textColor];
-        cell.textLabel.textAlignment = NSTextAlignmentLeft;
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        cell.selectionStyle = UITableViewCellSelectionStyleBlue;
-        return cell;
-    }
-    if (row == 3) {
-        // 从列表选择默认
-        NSArray *list = [self _modelList];
-        NSString *cnt = [NSString stringWithFormat:@"（共 %lu 个）", (unsigned long)[list count]];
-        cell.textLabel.text = [NSString stringWithFormat:@"%@%@", NSLocalizedString(@"从列表选择默认", nil), cnt];
-        cell.textLabel.textColor = [iOS6Theme textColor];
-        cell.textLabel.textAlignment = NSTextAlignmentLeft;
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        cell.selectionStyle = UITableViewCellSelectionStyleBlue;
-        return cell;
-    }
-    if (row == 4) {
-        // 删除已保存模型
-        cell.textLabel.text = NSLocalizedString(@"删除已保存模型", nil);
-        cell.textLabel.textColor = [iOS6Theme tintColor];
-        cell.textLabel.textAlignment = NSTextAlignmentLeft;
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        cell.selectionStyle = UITableViewCellSelectionStyleBlue;
-        return cell;
-    }
-    // row 5: "model supports images" toggle.
-    if (row == 5) {
         [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"支持图片识别", nil)]];
         UISwitch *imgSw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
         BOOL imgSupport = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelSupportsImages];
@@ -884,7 +743,7 @@ titleForFooterInSection:(NSInteger)section
         [cell.contentView addSubview:imgSw];
         return cell;
     }
-    // row 6: "model supports thinking" toggle (moved from Advanced section).
+    // row 3: "model supports thinking" toggle (moved from Advanced section).
     [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"支持思考", nil)]];
     UISwitch *thinkSw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
     BOOL thinkSupport = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelSupportsThinking];
@@ -1061,112 +920,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     NSInteger logical = [self _logicalSectionForDisplayed:indexPath.section];
     if (logical == kSectionReset) {
         [self resetToDefaults];
-    } else if (logical == kSectionModel) {
-        [self _handleModelSectionRowTap:indexPath.row];
     }
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-}
-
-// Handle taps on the new Model-section management rows (2/3/4).
-// row 2: save current text-field model to the saved list.
-// row 3: pop an action sheet to pick the default from the saved list.
-// row 4: pop an action sheet to delete an entry from the saved list.
-- (void)_handleModelSectionRowTap:(NSInteger)row
-{
-    if (row == 2) {
-        // Read the model from the persisted settings (the text field
-        // persists on every edit, so NSUserDefaults has the latest value).
-        NSDictionary *settings = [SettingsViewController loadSettings];
-        NSString *m = [settings objectForKey:SettingsKeyModel];
-        if (!m || m.length == 0) {
-            UIAlertView *av = [[[UIAlertView alloc]
-                initWithTitle:NSLocalizedString(@"未填模型", nil)
-                      message:NSLocalizedString(@"先在 Model 行输入模型名，再点保存。", nil)
-                     delegate:nil
-            cancelButtonTitle:NSLocalizedString(@"好", nil)
-            otherButtonTitles:nil] autorelease];
-            [av show];
-            return;
-        }
-        [self _addModelToList:m];
-        UIAlertView *av = [[[UIAlertView alloc]
-            initWithTitle:NSLocalizedString(@"已保存", nil)
-                  message:[NSString stringWithFormat:@"%@ %@", m, NSLocalizedString(@"已加入常用模型列表。", nil)]
-                 delegate:nil
-        cancelButtonTitle:NSLocalizedString(@"好", nil)
-        otherButtonTitles:nil] autorelease];
-        [av show];
-        [_tableView reloadData];
-        return;
-    }
-    if (row == 3) {
-        // 从列表选择默认 — action sheet tag 500.
-        NSArray *list = [self _modelList];
-        if ([list count] == 0) {
-            UIAlertView *av = [[[UIAlertView alloc]
-                initWithTitle:NSLocalizedString(@"列表为空", nil)
-                      message:NSLocalizedString(@"还没有保存的模型。先在 Model 行输入模型名，点「保存到列表」。", nil)
-                     delegate:nil
-            cancelButtonTitle:NSLocalizedString(@"好", nil)
-            otherButtonTitles:nil] autorelease];
-            [av show];
-            return;
-        }
-        UIActionSheet *sheet = [[UIActionSheet alloc]
-            initWithTitle:NSLocalizedString(@"选择默认模型", nil)
-                 delegate:self
-        cancelButtonTitle:NSLocalizedString(@"取消", nil)
-   destructiveButtonTitle:nil
-        otherButtonTitles:nil];
-        if ([iOS6Theme isDarkMode]) {
-            sheet.actionSheetStyle = UIActionSheetStyleBlackOpaque;
-        } else {
-            sheet.actionSheetStyle = UIActionSheetStyleAutomatic;
-        }
-        for (NSString *m in list) {
-            [sheet addButtonWithTitle:m];
-        }
-        // Remember the list separately so actionSheet callback can map
-        // button index → model name (avoid stale cached list issue).
-        self.availableModels = [NSMutableArray arrayWithArray:list];
-        [sheet setTag:500];
-        [sheet showInView:self.view];
-        [sheet release];
-        return;
-    }
-    if (row == 4) {
-        // 删除已保存模型 — action sheet tag 600.
-        NSArray *list = [self _modelList];
-        if ([list count] == 0) {
-            UIAlertView *av = [[[UIAlertView alloc]
-                initWithTitle:NSLocalizedString(@"列表为空", nil)
-                      message:NSLocalizedString(@"没有可删除的模型。", nil)
-                     delegate:nil
-            cancelButtonTitle:NSLocalizedString(@"好", nil)
-            otherButtonTitles:nil] autorelease];
-            [av show];
-            return;
-        }
-        UIActionSheet *sheet = [[UIActionSheet alloc]
-            initWithTitle:NSLocalizedString(@"点要删除的模型", nil)
-                 delegate:self
-        cancelButtonTitle:NSLocalizedString(@"取消", nil)
-   destructiveButtonTitle:nil
-        otherButtonTitles:nil];
-        if ([iOS6Theme isDarkMode]) {
-            sheet.actionSheetStyle = UIActionSheetStyleBlackOpaque;
-        } else {
-            sheet.actionSheetStyle = UIActionSheetStyleAutomatic;
-        }
-        for (NSString *m in list) {
-            [sheet addButtonWithTitle:m];
-        }
-        self.availableModels = [NSMutableArray arrayWithArray:list];
-        [sheet setTag:600];
-        [sheet showInView:self.view];
-        [sheet release];
-        return;
-    }
 }
 
 - (void)_searchAvailableModels
@@ -1233,12 +988,11 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     });
 }
 
-// Handle UIActionSheet for model picker (tag 400 = /v1/models search result,
-// tag 500 = pick default from saved list, tag 600 = delete from saved list).
+// Handle UIActionSheet for /v1/models search (tag 400).
+// (v261024-15: model-list pick/delete moved to ModelManagementViewController.)
 - (void)actionSheet:(UIActionSheet *)actionSheet
 clickedButtonAtIndex:(NSInteger)buttonIndex
 {
-    // Tag 400: /v1/models search → write the chosen model as the default.
     if (actionSheet.tag == 400 && buttonIndex >= 0 && buttonIndex < (NSInteger)[_availableModels count]) {
         NSString *chosen = [_availableModels objectAtIndex:buttonIndex];
         NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
@@ -1247,37 +1001,6 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         [_fields release];
         _fields = [[NSMutableDictionary alloc] init];
         [_tableView reloadData];
-        return;
-    }
-    // Tag 500: pick default from saved list.
-    // Also auto-add to the saved list if not present (idempotent).
-    if (actionSheet.tag == 500 && buttonIndex >= 0 && buttonIndex < (NSInteger)[_availableModels count]) {
-        NSString *chosen = [_availableModels objectAtIndex:buttonIndex];
-        NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-        [d setObject:chosen forKey:SettingsKeyModel];
-        [d synchronize];
-        [_fields release];
-        _fields = [[NSMutableDictionary alloc] init];
-        [_tableView reloadData];
-        return;
-    }
-    // Tag 600: delete from saved list (with confirmation alert).
-    if (actionSheet.tag == 600 && buttonIndex >= 0 && buttonIndex < (NSInteger)[_availableModels count]) {
-        NSString *toDelete = [_availableModels objectAtIndex:buttonIndex];
-        // Confirmation alert (tag 700) — deletion is destructive, so ask first.
-        UIAlertView *av = [[[UIAlertView alloc]
-            initWithTitle:NSLocalizedString(@"删除模型?", nil)
-                  message:[NSString stringWithFormat:@"%@ \"%@\"", NSLocalizedString(@"确定从列表删除", nil), toDelete]
-                 delegate:self
-        cancelButtonTitle:NSLocalizedString(@"取消", nil)
-        otherButtonTitles:NSLocalizedString(@"删除", nil), nil] autorelease];
-        [av setTag:700];
-        // Stash the to-delete model name on a side ivar (the picker list
-        // uses availableModels; this is the per-deletion target).
-        // Use the synthesized setter so the previous value is released.
-        self.pendingDeleteModel = toDelete;
-        [av show];
-        return;
     }
 }
 

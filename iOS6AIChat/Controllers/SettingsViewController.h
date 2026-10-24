@@ -56,6 +56,10 @@ extern NSString *const ProviderIDOllama;
 + (NSString *)displayNameForProvider:(NSString *)providerID;
 + (NSString *)defaultModelForProvider:(NSString *)providerID;
 
+// Default seed list of saved models per provider (v261024-15).
+// Used by ModelManagementViewController when the user has no saved list yet.
++ (NSArray *)_defaultModelListForProvider:(NSString *)providerID;
+
 - (void)resetToDefaults;
 
 @end

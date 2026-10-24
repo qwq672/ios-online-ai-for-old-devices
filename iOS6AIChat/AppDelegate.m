@@ -2,64 +2,52 @@
 //  AppDelegate.m
 //  iOS6AIChat
 //
-//  v261024-13 nav restructure — no more UITabBarController:
-//    - App opens straight into a fresh ChatViewController (new chat).
-//    - DrawerViewController wraps the chat nav; a hamburger button on
-//      the chat navbar slides in the menu (新对话 / 历史记录 / 设置).
-//    - The chat view now runs edge-to-edge under the navbar (no tab
-//      bar strip), like a modern chat app wearing an iOS 6 suit.
+//  v261024-15 nav restructure (Plan 2 = iOS "Messages" app style):
+//    - App opens into the conversation LIST (HistoryViewController) —
+//      NOT directly into a fresh chat. Mirrors the iOS "信息" / Messages
+//      app home screen.
+//    - Top-left = settings (gear), top-right = "+" new chat.
+//    - Tapping a row pushes ChatViewController onto the stack.
+//    - No more DrawerViewController (hamburger menu); the drawer source
+//      files are kept in-tree for reference but no longer instantiated.
 //
 //  Subscribes to iOS6ThemeDidChangeNotification so dark mode / font size
-//  toggles in Settings re-style the navbar globally (the drawer styles
-//  its own sidebar).
+//  toggles in Settings re-style the navbar globally.
 //
 
 #import "AppDelegate.h"
 #import "iOS6Theme.h"
-#import "ChatViewController.h"
-#import "DrawerViewController.h"
-
-@interface AppDelegate ()
-@property (nonatomic, retain) DrawerViewController *drawerController;
-@end
+#import "HistoryViewController.h"
 
 @implementation AppDelegate
 
-@synthesize window = _window, drawerController = _drawerController;
+@synthesize window = _window;
 
 - (BOOL)application:(UIApplication *)application
         didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
     self.window = [[[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]] autorelease];
 
-    // Chat is the app's home — fresh conversation on every launch.
-    ChatViewController *chatVC = [[[ChatViewController alloc] init] autorelease];
-    chatVC.title = NSLocalizedString(@"聊天", nil);
+    // Plan 2: home is the conversation list (HistoryViewController).
+    HistoryViewController *historyVC =
+        [[[HistoryViewController alloc] initWithNibName:nil bundle:nil] autorelease];
 
-    UINavigationController *chatNav =
-        [[[UINavigationController alloc] initWithRootViewController:chatVC] autorelease];
-
-    // Rich grey bar background — 1px top highlight + 3-stop gradient
-    // + 1px bottom shadow (App Store / Music style, no blue tint).
-    [self _applyThemeToNavs:[NSArray arrayWithObject:chatNav]];
+    UINavigationController *nav =
+        [[[UINavigationController alloc] initWithRootViewController:historyVC] autorelease];
+    [self _applyThemeToNavs:[NSArray arrayWithObject:nav]];
 
     // Status bar — dark bars need white glyphs, light (silver) bars need
     // black glyphs. Switch with the theme.
     application.statusBarStyle = [iOS6Theme isDarkMode]
         ? UIStatusBarStyleBlackOpaque : UIStatusBarStyleDefault;
 
-    DrawerViewController *drawer =
-        [[[DrawerViewController alloc] initWithMainViewController:chatNav] autorelease];
-    self.drawerController = drawer;
-
-    self.window.rootViewController = drawer;
+    self.window.rootViewController = nav;
     [self.window makeKeyAndVisible];
 
     // Re-style the navbar whenever the theme changes (dark mode toggle,
-    // font size change, etc.). The drawer listens for the same
-    // notification and re-styles its sidebar itself.
+    // font size change, etc.).
     [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(_themeChanged)
+                                             selector:@selector(_themeChanged:)
                                                  name:@"iOS6ThemeDidChangeNotification"
                                                object:nil];
     return YES;
@@ -81,16 +69,21 @@
     }
 }
 
-- (void)_themeChanged
+- (void)_themeChanged:(NSNotification *)note
 {
-    UINavigationController *nav = _drawerController.mainNavigationController;
-    if (nav) {
+    UIWindow *win = self.window;
+    UINavigationController *nav = (UINavigationController *)win.rootViewController;
+    if ([nav isKindOfClass:[UINavigationController class]]) {
         [self _applyThemeToNavs:[NSArray arrayWithObject:nav]];
+        // Tell the visible VC to re-style itself — most VCs listen to the
+        // same notification, but we also re-style the navbar here so the
+        // bar chrome updates synchronously.
+        for (UIViewController *vc in nav.viewControllers) {
+            [vc.view setNeedsDisplay];
+        }
     }
-    // Status bar follows the theme (white text on dark bars, black on silver).
     [UIApplication sharedApplication].statusBarStyle = [iOS6Theme isDarkMode]
         ? UIStatusBarStyleBlackOpaque : UIStatusBarStyleDefault;
-    [_drawerController.view setNeedsDisplay];
 }
 
 - (void)applicationWillResignActive:(UIApplication *)application {}
@@ -102,7 +95,6 @@
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_window release];
-    [_drawerController release];
     [super dealloc];
 }
 
