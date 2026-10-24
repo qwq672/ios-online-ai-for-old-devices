@@ -74,6 +74,39 @@ typedef enum {
 + (UIColor *)thinkingBackgroundColor;          // reasoning block bg (subtle)
 + (UIColor *)thinkingBorderColor;              // reasoning block border
 
+// === iOS 6 bar system (App Store / Music style) ========================
+
+// Rich bar background image: 1px top highlight line + 1px bevel dark line
+// + 3-stop vertical gradient + 1px bottom shadow line.
+// Dark (App Store black metal): #454545 → #2A2A2C → #131313
+// Light (Music silver):         #FAFAFB → #DEDEE0 → #B4B4B9
++ (UIImage *)barBackgroundImageWithHeight:(CGFloat)height;
+
+// Composer (input toolbar) bar colors — slightly darker/flatter than the
+// tab bar so the two bands read as distinct chrome pieces (iOS 6 Messages
+// style). Dark: #333335 → #202022; light: #E4E4E6 → #CDCDD1.
++ (UIColor *)composerBarTopColor;
++ (UIColor *)composerBarBottomColor;
+
+// Composer input field — "inset black glass" look (darker than the bar).
++ (UIColor *)composerFieldBackgroundColor;
++ (UIColor *)composerFieldBorderColor;
+
+// Tab bar selection colors (App Store reference):
+//   selected icon  = saturated iOS blue (#3FA8E8 dark / #3E7FD0 light)
+//   selected label = white (dark) / blue (light)
+//   normal  label  = bright readable grey (NOT the murky default)
++ (UIColor *)tabBarSelectedTintColor;
++ (UIColor *)tabBarNormalTitleColor;
++ (UIColor *)tabBarSelectedTitleColor;
+
+// Style one tab item (label colors). Call after creating each UITabBarItem.
++ (void)styleTabBarItem:(UITabBarItem *)item;
+
+// Glassy button images for the composer (drawn once, reused):
+//   neutral = bar-colored bordered glass; accent = saturated blue glass.
++ (UIImage *)glassButtonImageOfSize:(CGSize)size accent:(BOOL)accent;
+
 // Internal: create a grey gradient bar background image.
 // Called by AppDelegate for navbar, iOS6Theme for tabbar.
 + (UIImage *)_barGradientImageWithHeight:(CGFloat)height;

@@ -42,6 +42,13 @@
 @property (nonatomic, copy)   NSString         *conversationID;
 @property (nonatomic, retain) NSError          *lastError;
 
+// HTTP status of the streaming response (0 = unknown / non-HTTP).
+// Previously non-200 replies (transit 404/502, upstream auth errors) were
+// silently swallowed: no SSE "data:" lines parse → empty accumulated →
+// the user saw an EMPTY reply instead of the actual error. Capturing the
+// status lets us surface the real cause.
+@property (nonatomic, assign) NSInteger httpStatus;
+
 // Tool-call state (for multi-turn web search).
 @property (nonatomic, retain) NSMutableArray *toolCallAccumulators;  // array of NSMutableDictionary
 @property (nonatomic, retain) NSMutableArray *pendingToolMessages;  // array of NSDictionary (tool role)
@@ -69,6 +76,7 @@
             accumulated=_accumulated, conversationID=_conversationID,
             lastError=_lastError, delegate=_delegate,
             thinkingAccumulated=_thinkingAccumulated,
+            httpStatus=_httpStatus,
             toolCallAccumulators=_toolCallAccumulators,
             pendingToolMessages=_pendingToolMessages,
             toolCallPending=_toolCallPending,
@@ -403,6 +411,10 @@
 - (void)connection:(NSURLConnection *)connection didReceiveResponse:(NSURLResponse *)response
 {
     [_rawBuffer setData:nil];
+    self.httpStatus = 0;
+    if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+        self.httpStatus = [(NSHTTPURLResponse *)response statusCode];
+    }
 }
 
 - (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data
@@ -418,6 +430,28 @@
 
 - (void)connectionDidFinishLoading:(NSURLConnection *)connection
 {
+    // Non-2xx HTTP status → surface the REAL error instead of an empty
+    // reply. Extract the upstream error message from the JSON body when
+    // possible so the user sees WHY (404 route, 401 key, 502 upstream…).
+    if (self.httpStatus != 0 && (self.httpStatus < 200 || self.httpStatus >= 300)) {
+        NSString *bodyText = [[[NSString alloc] initWithData:_rawBuffer
+                                                    encoding:NSUTF8StringEncoding] autorelease];
+        NSString *detail = [self _extractErrorMessageFromBody:bodyText];
+        if (detail.length == 0 && bodyText.length > 0) {
+            detail = ([bodyText length] > 200) ? [bodyText substringToIndex:200] : bodyText;
+        }
+        NSString *msg = [NSString stringWithFormat:@"HTTP %d: %@",
+                         (int)self.httpStatus,
+                         detail.length > 0 ? detail : @"请求失败（中转或上游返回错误）"];
+        if ([_delegate respondsToSelector:@selector(networkService:didFailForConversationID:error:)]) {
+            NSError *err = [NSError errorWithDomain:@"iOS6AIChat"
+                                               code:(NSInteger)self.httpStatus
+                                           userInfo:@{NSLocalizedDescriptionKey: msg}];
+            [_delegate networkService:self didFailForConversationID:_conversationID error:err];
+        }
+        return;
+    }
+
     @try {
         [self _parseBufferedChunksForce:YES];
     } @catch (NSException *e) {
@@ -1028,6 +1062,58 @@
 }
 
 
+#pragma mark - Error helpers
+
+// Pull a human-readable message out of a JSON error body. Handles the
+// common upstream shapes: {"error": "msg"}, {"error": {"message": "msg"}},
+// {"message": "msg"}, {"detail": "msg"}.
+- (NSString *)_extractErrorMessageFromBody:(NSString *)bodyText
+{
+    if (bodyText.length == 0) return nil;
+    @try {
+        NSData *jd = [bodyText dataUsingEncoding:NSUTF8StringEncoding];
+        if (!jd) return nil;
+        id obj = [NSJSONSerialization JSONObjectWithData:jd options:0 error:NULL];
+        if (![obj isKindOfClass:[NSDictionary class]]) return nil;
+        id errObj = [obj objectForKey:@"error"];
+        if ([errObj isKindOfClass:[NSString class]]) return errObj;
+        if ([errObj isKindOfClass:[NSDictionary class]]) {
+            id msg = [errObj objectForKey:@"message"];
+            if ([msg isKindOfClass:[NSString class]]) return msg;
+        }
+        for (NSString *key in @[@"message", @"detail"]) {
+            id v = [obj objectForKey:key];
+            if ([v isKindOfClass:[NSString class]]) return v;
+        }
+    } @catch (NSException *e) { }
+    return nil;
+}
+
+// Shared status-code guard for the synchronous (non-streaming) calls:
+// returns YES when the response is an HTTP error. When it is, *error is
+// filled with the status + extracted upstream detail.
+- (BOOL)_checkHTTPError:(NSURLResponse *)resp data:(NSData *)data error:(NSError **)error
+{
+    if (![resp isKindOfClass:[NSHTTPURLResponse class]]) return NO;
+    NSInteger code = [(NSHTTPURLResponse *)resp statusCode];
+    if (code >= 200 && code < 300) return NO;
+    NSString *bodyText = data ? [[[NSString alloc] initWithData:data
+                                                       encoding:NSUTF8StringEncoding] autorelease] : nil;
+    NSString *detail = [self _extractErrorMessageFromBody:bodyText];
+    if (detail.length == 0 && bodyText.length > 0) {
+        detail = ([bodyText length] > 160) ? [bodyText substringToIndex:160] : bodyText;
+    }
+    NSString *msg = [NSString stringWithFormat:@"HTTP %d: %@",
+                     (int)code,
+                     detail.length > 0 ? detail : @"请求失败"];
+    if (error) {
+        *error = [NSError errorWithDomain:@"iOS6AIChat"
+                                      code:code
+                                  userInfo:@{NSLocalizedDescriptionKey: msg}];
+    }
+    return YES;
+}
+
 #pragma mark - Tavily web search (sync)
 
 - (NSArray *)tavilySearchWithQuery:(NSString *)query
@@ -1092,6 +1178,11 @@
         if (error) *error = netErr;
         return nil;
     }
+    // Surface HTTP errors (404 wrong transit route, 401 bad key, 5xx…) —
+    // previously these silently produced "no results".
+    if ([self _checkHTTPError:resp data:data error:error]) {
+        return nil;
+    }
     if (!data || data.length == 0) return nil;
 
     NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
@@ -1148,6 +1239,10 @@
                                                       error:&netErr];
     if (netErr) {
         if (error) *error = netErr;
+        return nil;
+    }
+    // Surface HTTP errors for /v1/models too.
+    if ([self _checkHTTPError:resp data:data error:error]) {
         return nil;
     }
     if (!data || data.length == 0) return nil;
@@ -1235,6 +1330,10 @@
                                                       error:&netErr];
     if (netErr) {
         if (error) *error = netErr;
+        return nil;
+    }
+    // Surface HTTP errors from image generation.
+    if ([self _checkHTTPError:resp data:data error:error]) {
         return nil;
     }
     if (!data || data.length == 0) return nil;

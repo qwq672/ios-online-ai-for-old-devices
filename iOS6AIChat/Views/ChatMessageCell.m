@@ -149,6 +149,22 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     }
 }
 
+// "Thinking live" — the AI is STILL reasoning: reasoning_content is
+// streaming in but the final answer hasn't started yet (content is empty
+// or still the "…" placeholder). While live, the thinking block
+// auto-expands so the user can watch the reasoning stream in (user-
+// reported: bubble stayed "three dots" tall and hid the thinking).
+// Once real content arrives the block auto-collapses back to the header,
+// unless the user manually expanded it for this message.
++ (BOOL)_isThinkingLive:(Message *)message
+{
+    if (!message || message.isUser) return NO;
+    if (message.thinking.length == 0) return NO;
+    NSString *c = message.content;
+    if (c.length == 0 || [c isEqualToString:@"…"]) return YES;
+    return NO;
+}
+
 // Run base64 decode + UIImage creation on a background queue, then call
 // back on main. Uses messageID+imageIndex as cache key.
 + (void)decodeImageWithDataURL:(NSString *)dataURL
@@ -409,13 +425,22 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     if (message.thinking.length > 0 && !message.isUser) {
         _thinkingBlock.hidden = NO;
         // Restore the per-message expanded state from the static dict.
-        _thinkingCollapsed = ![ChatMessageCell _isThinkingExpanded:message.messageID];
+        // While the AI is still mid-reasoning (thinking live) force-expand
+        // so the streaming reasoning is visible in real time.
+        BOOL thinkingLive = [ChatMessageCell _isThinkingLive:message];
+        _thinkingCollapsed = !([ChatMessageCell _isThinkingExpanded:message.messageID]
+                                || thinkingLive);
         _thinkingLabel.hidden = _thinkingCollapsed;
         _thinkingSep.hidden = _thinkingCollapsed;
-        NSString *headerTitle = _thinkingCollapsed
-            ? [NSString stringWithFormat:@"💭 深度思考 (点击展开) — %lu 字",
-               (unsigned long)message.thinking.length]
-            : [NSString stringWithFormat:@"💭 深度思考 (点击收起)"];
+        NSString *headerTitle;
+        if (thinkingLive) {
+            headerTitle = @"💭 深度思考中…";
+        } else if (_thinkingCollapsed) {
+            headerTitle = [NSString stringWithFormat:@"💭 深度思考 (点击展开) — %lu 字",
+               (unsigned long)message.thinking.length];
+        } else {
+            headerTitle = @"💭 深度思考 (点击收起)";
+        }
         [_thinkingToggle setTitle:headerTitle forState:UIControlStateNormal];
 
         // Render thinking content as plain text.
@@ -481,7 +506,19 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 {
     [super layoutSubviews];
     if (!_message) return;
+    // Crash guard: boundingRectWithSize can throw NSInvalidArgumentException
+    // on malformed attributed strings mid-stream (user-reported random
+    // crashes even on SHORT chats). If layout throws, keep the previous
+    // frames rather than killing the app.
+    @try {
+    [self _layoutInternal];
+    } @catch (NSException *e) {
+        NSLog(@"[ChatMessageCell] layout crashed: %@", e);
+    }
+}
 
+- (void)_layoutInternal
+{
     CGFloat pad = 12.0f;
     CGFloat bubbleInnerHPad = 10.0f;
     CGFloat bubbleInnerVPad = 7.0f;
@@ -645,12 +682,15 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
                                          context:nil];
 
     // Thinking block height. Default: collapsed (just the toggle header).
-    // If the user has expanded this message, compute the full height.
+    // If the user has expanded this message, OR the AI is still actively
+    // thinking (streaming reasoning, no final answer yet), compute the
+    // FULL height so the bubble grows with the reasoning text.
     CGFloat thinkingH = 0;
     if (message.thinking.length > 0 && !message.isUser) {
         CGFloat thinkingToggleH = 22;
         CGFloat thinkingLabelH = 0;
-        if ([self _isThinkingExpanded:message.messageID]) {
+        if ([self _isThinkingExpanded:message.messageID] ||
+            [self _isThinkingLive:message]) {
             // Compute full thinking label height by wrapping the text
             // at availTextWidth - 4 (the label's actual content width).
             UIFont *thinkFont = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];

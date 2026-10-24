@@ -192,7 +192,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 {
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
     _tableView.backgroundColor = [UIColor clearColor];
-    _composer.backgroundColor = [iOS6Theme pinstripeBackground];
+    // Composer draws its own metal-bar chrome in drawRect — leave its
+    // backgroundColor clear or the bar gradient would be hidden.
+    _composer.backgroundColor = [UIColor clearColor];
     _searchStatusView.backgroundColor = [iOS6Theme thinkingBackgroundColor];
     _searchStatusLabel.textColor = [iOS6Theme secondaryTextColor];
 }
