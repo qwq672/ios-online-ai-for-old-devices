@@ -78,6 +78,10 @@ typedef enum {
 // Called by AppDelegate for navbar, iOS6Theme for tabbar.
 + (UIImage *)_barGradientImageWithHeight:(CGFloat)height;
 
+// Tint for bar items (navbar buttons, selected tab icon).
+// Light: steel blue (Music app). Dark: light grey (App Store/iTunes).
++ (UIColor *)barItemTintColor;
+
 // === Drawing helpers ===================================================
 
 + (void)drawLinearGradientInRect:(CGRect)rect

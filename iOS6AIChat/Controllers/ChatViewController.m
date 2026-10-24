@@ -199,8 +199,11 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
 - (void)_themeChanged
 {
+    // Flush render caches FIRST — cached attributed strings bake in the
+    // old theme's colors (user-reported: toggle dark mode → text stays
+    // black because cache still returns light-theme-colored strings).
+    [ChatMessageCell flushCaches];
     [self _applyTheme];
-    // Clear the height cache so cells recompute with new font size.
     [_tableView reloadData];
 }
 
@@ -722,8 +725,13 @@ didFailForConversationID:(NSString *)conversationID
 
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    Message *m = [_conversation.messages objectAtIndex:indexPath.row];
-    return [ChatMessageCell heightForMessage:m width:_tableView.bounds.size.width];
+    @try {
+        Message *m = [_conversation.messages objectAtIndex:indexPath.row];
+        return [ChatMessageCell heightForMessage:m width:_tableView.bounds.size.width];
+    } @catch (NSException *e) {
+        NSLog(@"[ChatVC] heightForRow crashed: %@", e);
+        return 80;  // safe default
+    }
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
@@ -735,8 +743,14 @@ didFailForConversationID:(NSString *)conversationID
                                         reuseIdentifier:kCellReuseID] autorelease];
     }
     cell.delegate = self;
-    Message *m = [_conversation.messages objectAtIndex:indexPath.row];
-    [cell applyMessage:m];
+    @try {
+        Message *m = [_conversation.messages objectAtIndex:indexPath.row];
+        [cell applyMessage:m];
+    } @catch (NSException *e) {
+        NSLog(@"[ChatVC] cellForRow crashed: %@", e);
+        // Render a plain fallback cell instead of crashing.
+        cell.textLabel.text = @"⚠️ 消息渲染出错";
+    }
     return cell;
 }
 

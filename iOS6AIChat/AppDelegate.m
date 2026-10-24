@@ -78,14 +78,14 @@
     for (NSUInteger i = 0; i < [navs count]; i++) {
         UINavigationController *nav = [navs objectAtIndex:i];
         // Use custom GREY gradient background (not system blue-tinted barStyle).
-        // iOS 6's UIBarStyleBlack/Default have a blue tint — App Store and
-        // Music app use custom grey gradients. We replicate that here.
         UIImage *navBg = [iOS6Theme _barGradientImageWithHeight:44];
         if (navBg) {
             [nav.navigationBar setBackgroundImage:navBg forBarMetrics:UIBarMetricsDefault];
         }
         nav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-        nav.navigationBar.tintColor = [iOS6Theme tintColor];
+        // Bar item tint: steel blue (light) / light grey (dark) — NOT the
+        // bright blue tintColor (user said blue navbar buttons look jarring).
+        nav.navigationBar.tintColor = [iOS6Theme barItemTintColor];
         nav.navigationBar.translucent = NO;
     }
 }

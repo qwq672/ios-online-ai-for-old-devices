@@ -67,6 +67,22 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     });
 }
 
+// Flush ALL render caches. Call when theme (dark/light) or font size
+// changes — cached attributed strings bake in colors from the theme
+// that was active when they were rendered, so switching themes without
+// flushing leaves stale-colored text (user-reported: toggle dark mode
+// → text stays black).
++ (void)flushCaches
+{
+    [self _initializeCaches];
+    [gRenderedAttrCache removeAllObjects];
+    [gHeightCache removeAllObjects];
+    // Don't flush image cache — decoded images are theme-independent.
+    @synchronized(gExpandedThinking) {
+        // Keep expanded-state (user intent), it's theme-independent too.
+    }
+}
+
 // Look up or compute the rendered attributed string for a message.
 // Shared by both the cell render and the height calc — saves one
 // MarkdownParser run per streaming chunk (which was the perf killer
@@ -271,6 +287,9 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 
 - (void)_themeChanged
 {
+    // Flush caches — the cached attributed strings have the OLD theme's
+    // colors baked in.
+    [ChatMessageCell flushCaches];
     _textView.textColor = [iOS6Theme textColor];
     _textView.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
     _thinkingBlock.backgroundColor = [iOS6Theme thinkingBackgroundColor];
@@ -347,6 +366,21 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 }
 
 - (void)applyMessage:(Message *)message
+{
+    @try {
+        [self _applyMessageInternal:message];
+    } @catch (NSException *e) {
+        NSLog(@"[ChatMessageCell] applyMessage crashed: %@", e);
+        // Fallback: plain text, no markdown, no thinking block.
+        self.message = message;
+        _textView.attributedText = nil;
+        _textView.text = message.content ?: @"⚠️ 渲染出错";
+        _textView.textColor = [iOS6Theme textColor];
+        _thinkingBlock.hidden = YES;
+    }
+}
+
+- (void)_applyMessageInternal:(Message *)message
 {
     self.message = message;
     [self _setCurrentMessageKey:message.messageID];
@@ -567,6 +601,16 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 + (CGFloat)heightForMessage:(Message *)message width:(CGFloat)width
 {
     if (!message) return 60;
+    @try {
+        return [self _heightForMessageInternal:message width:width];
+    } @catch (NSException *e) {
+        NSLog(@"[ChatMessageCell] heightForMessage crashed: %@", e);
+        return 80;  // safe default — user-reported crashes even on short chats
+    }
+}
+
++ (CGFloat)_heightForMessageInternal:(Message *)message width:(CGFloat)width
+{
     [self _initializeCaches];
 
     // Cache key — message ID + width + content hash (cheap: just length).

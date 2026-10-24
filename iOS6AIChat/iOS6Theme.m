@@ -340,7 +340,7 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
         [nav.navigationBar setBackgroundImage:navBg forBarMetrics:UIBarMetricsDefault];
     }
     nav.navigationBar.barStyle = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-    nav.navigationBar.tintColor = [self tintColor];
+    nav.navigationBar.tintColor = [self barItemTintColor];
     nav.tabBarItem = [[[UITabBarItem alloc] initWithTabBarSystemItem:systemIcon tag:0] autorelease];
     nav.tabBarItem.title = title;
     nav.navigationBar.translucent = NO;
@@ -369,26 +369,25 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
             [inv invoke];
         }
     }
-    tbc.tabBar.tintColor = [self tintColor];
+    tbc.tabBar.tintColor = [self barItemTintColor];
     [tbc.tabBar setNeedsDisplay];
     [tbc.tabBar setNeedsLayout];
 }
 
 // Create a 1px-wide vertical gradient image for bar backgrounds.
-// Dark mode: dark GREY gradient (#3D3D40 → #1C1C1E) — no blue tint.
-// Light mode: light GREY gradient (#E5E5EA → #C7C7CC) — no blue tint.
+// Light mode (Music app style): silver gradient #FAFAFB → #D6D6DA
+// Dark mode (App Store style): dark grey gradient #3A3A3C → #141416
 // iOS 6's built-in UIBarStyleBlack/Default have a blue tint — App Store
 // and Music app use custom grey gradient backgrounds instead.
 + (UIImage *)_barGradientImageWithHeight:(CGFloat)height
 {
-    NSString *topHex = [self isDarkMode] ? @"#3D3D40" : @"#E5E5EA";
-    NSString *botHex = [self isDarkMode] ? @"#1C1C1E" : @"#C7C7CC";
+    NSString *topHex = [self isDarkMode] ? @"#3A3A3C" : @"#FAFAFB";
+    NSString *botHex = [self isDarkMode] ? @"#141416" : @"#D6D6DA";
     UIColor *top = [self colorWithHex:topHex];
     UIColor *bot = [self colorWithHex:botHex];
 
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(1, height), NO, [UIScreen mainScreen].scale);
     CGContextRef ctx = UIGraphicsGetCurrentContext();
-    CGRect rect = CGRectMake(0, 0, 1, height);
 
     // Draw vertical gradient (top → bottom).
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
@@ -404,6 +403,16 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
     UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     return img;  // autoreleased
+}
+
+// Tint color for bar ITEMS (navbar buttons, selected tab icon).
+// Light mode (Music app): steel blue #49627F — softer than iOS blue.
+// Dark mode (App Store/iTunes): light grey #C8C8CC — no blue buttons
+// on dark bars (user said blue navbar buttons look jarring).
++ (UIColor *)barItemTintColor
+{
+    return [self isDarkMode] ? [self colorWithHex:@"#C8C8CC"]
+                              : [self colorWithHex:@"#49627F"];
 }
 
 @end
