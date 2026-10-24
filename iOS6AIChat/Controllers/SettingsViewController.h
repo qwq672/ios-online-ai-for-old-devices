@@ -24,6 +24,7 @@ extern NSString *const SettingsKeyProvider;
 extern NSString *const SettingsKeyBaseURL;
 extern NSString *const SettingsKeyAPIKey;
 extern NSString *const SettingsKeyModel;
+extern NSString *const SettingsKeyModelList;
 extern NSString *const SettingsKeyTemperature;
 extern NSString *const SettingsKeySystemPrompt;
 extern NSString *const SettingsKeyWebSearchEnabled;

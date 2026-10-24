@@ -578,8 +578,21 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         }
     }
 
-    CGFloat bubbleWidth  = MAX(textRect.size.width + 2 * bubbleInnerHPad + 8, 60);
-    bubbleWidth = MIN(bubbleWidth, maxBubbleWidth);
+    // Bubble width.
+    // While the AI is still mid-reasoning (thinking live, content empty or
+    // just "…"), the text width is near zero, which used to collapse the
+    // bubble to the 60pt minimum — visually identical to the three-dot
+    // loading animation. Stretch the bubble to maxBubbleWidth in this case
+    // so the streaming reasoning text has room to flow. Once the final
+    // answer arrives, fall back to width-follows-text.
+    BOOL thinkingLive = [ChatMessageCell _isThinkingLive:_message];
+    CGFloat bubbleWidth;
+    if (thinkingLive) {
+        bubbleWidth = maxBubbleWidth;
+    } else {
+        bubbleWidth = MAX(textRect.size.width + 2 * bubbleInnerHPad + 8, 60);
+        bubbleWidth = MIN(bubbleWidth, maxBubbleWidth);
+    }
     // Bubble height: text + vertical padding + tail (6) + bottom safety (8).
     // The +8 gives room so the last line of text isn't clipped by the
     // bubble's tail drawing. (User-reported: bubble doesn't fully cover
