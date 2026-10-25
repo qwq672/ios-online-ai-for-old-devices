@@ -53,6 +53,12 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 // (root + pushed), so two visible chats starved each other's streaming
 // refreshes.
 @property (nonatomic, assign) NSTimeInterval lastRowReloadTime;
+// v261025-5: empty-state placeholder shown when the conversation has no
+// messages (screenshot IMG_0452 showed the chat as a blank dark void
+// with no clue what to do — fix is a centered hint label).
+@property (nonatomic, retain) UIView *emptyPlaceholderView;
+@property (nonatomic, retain) UILabel *emptyTitleLabel;
+@property (nonatomic, retain) UILabel *emptyHintLabel;
 @end
 
 @implementation ChatViewController
@@ -61,12 +67,19 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
             networkService=_networkService, composer=_composer,
             lastKeyboardHeight=_lastKeyboardHeight,
             searchStatusView=_searchStatusView, searchStatusLabel=_searchStatusLabel,
-            lastRowReloadTime=_lastRowReloadTime;
+            lastRowReloadTime=_lastRowReloadTime,
+            emptyPlaceholderView=_emptyPlaceholderView,
+            emptyTitleLabel=_emptyTitleLabel,
+            emptyHintLabel=_emptyHintLabel;
 
 - (id)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil
 {
     if (self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil]) {
-        self.title = NSLocalizedString(@"Chat", nil);
+        // v261025-5: title was hard-coded English "Chat" — screenshot
+        // IMG_0457 showed the jarring mixed-language UI (English title
+        // over Chinese content). Switch to the localized Chinese title
+        // (matches the menu drawer title and the HistoryVC title style).
+        self.title = NSLocalizedString(@"聊天", nil);
         _networkService = [[NetworkService alloc] init];
         _networkService.delegate = self;
 
@@ -105,6 +118,10 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     [_composer release];
     [_searchStatusView release];
     [_searchStatusLabel release];
+    // v261025-5: empty-state placeholder ivars.
+    [_emptyTitleLabel release];
+    [_emptyHintLabel release];
+    [_emptyPlaceholderView release];
     [super dealloc];
 }
 
@@ -166,6 +183,11 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     _searchStatusLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [_searchStatusView addSubview:_searchStatusLabel];
 
+    // v261025-5: empty-state placeholder — centered title + hint label,
+    // shown when the conversation has no messages. Hidden by default;
+    // _reload toggles its visibility based on _conversation.messages count.
+    [self _buildEmptyPlaceholder];
+
     // New session if none set.
     if (!_conversation) {
         Conversation *c = [[ConversationStore sharedStore] createNewConversation];
@@ -224,6 +246,19 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     _composer.backgroundColor = [UIColor clearColor];
     _searchStatusView.backgroundColor = [iOS6Theme thinkingBackgroundColor];
     _searchStatusLabel.textColor = [iOS6Theme secondaryTextColor];
+    // v261025-5: refresh the empty-state placeholder colors so they match
+    // the new theme (light/dark). Nil-guarded: _themeChanged can fire
+    // before viewDidLoad on certain launch orderings, in which case
+    // _emptyTitleLabel is still nil.
+    if (_emptyTitleLabel) {
+        _emptyTitleLabel.textColor = [iOS6Theme secondaryTextColor];
+        _emptyTitleLabel.shadowColor = [iOS6Theme isDarkMode]
+            ? [UIColor colorWithWhite:0.0f alpha:0.4f]
+            : [UIColor colorWithWhite:1.0f alpha:0.7f];
+    }
+    if (_emptyHintLabel) {
+        _emptyHintLabel.textColor = [iOS6Theme secondaryTextColor];
+    }
 }
 
 - (void)_themeChanged
@@ -319,6 +354,69 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 {
     [_tableView reloadData];
     [self _scrollToBottomAnimated:NO];
+    [self _updateEmptyPlaceholder];
+}
+
+// v261025-5: empty-state placeholder. The chat view used to show a blank
+// dark void when there were no messages (screenshot IMG_0452). Now it
+// shows a centered title + hint label so the user knows what to do.
+- (void)_buildEmptyPlaceholder
+{
+    if (_emptyPlaceholderView) return;   // already built
+    CGRect frame = self.view.bounds;
+    _emptyPlaceholderView = [[UIView alloc] initWithFrame:frame];
+    _emptyPlaceholderView.backgroundColor = [UIColor clearColor];
+    _emptyPlaceholderView.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
+                                              UIViewAutoresizingFlexibleHeight);
+    _emptyPlaceholderView.hidden = YES;
+    [self.view addSubview:_emptyPlaceholderView];
+
+    // Big muted title centered in the upper third.
+    CGFloat titleW = frame.size.width - 32;
+    _emptyTitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, frame.size.height * 0.30, titleW, 36)];
+    _emptyTitleLabel.text = NSLocalizedString(@"开始新对话", nil);
+    _emptyTitleLabel.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:22]];
+    _emptyTitleLabel.textColor = [iOS6Theme secondaryTextColor];
+    _emptyTitleLabel.textAlignment = NSTextAlignmentCenter;
+    _emptyTitleLabel.backgroundColor = [UIColor clearColor];
+    _emptyTitleLabel.shadowColor = [iOS6Theme isDarkMode]
+        ? [UIColor colorWithWhite:0.0f alpha:0.4f]
+        : [UIColor colorWithWhite:1.0f alpha:0.7f];
+    _emptyTitleLabel.shadowOffset = CGSizeMake(0, 1);
+    _emptyTitleLabel.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
+                                         UIViewAutoresizingFlexibleTopMargin |
+                                         UIViewAutoresizingFlexibleBottomMargin);
+    [_emptyPlaceholderView addSubview:_emptyTitleLabel];
+
+    // Hint line right below the title.
+    _emptyHintLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, frame.size.height * 0.30 + 38, titleW, 22)];
+    _emptyHintLabel.text = NSLocalizedString(@"在下方输入框输入消息，或点击右上角 + 新建会话", nil);
+    _emptyHintLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
+    _emptyHintLabel.textColor = [iOS6Theme secondaryTextColor];
+    _emptyHintLabel.alpha = 0.85f;
+    _emptyHintLabel.textAlignment = NSTextAlignmentCenter;
+    _emptyHintLabel.backgroundColor = [UIColor clearColor];
+    _emptyHintLabel.numberOfLines = 0;
+    _emptyHintLabel.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
+                                        UIViewAutoresizingFlexibleTopMargin |
+                                        UIViewAutoresizingFlexibleBottomMargin);
+    [_emptyPlaceholderView addSubview:_emptyHintLabel];
+}
+
+- (void)_updateEmptyPlaceholder
+{
+    BOOL hasMessages = (_conversation && [_conversation.messages count] > 0);
+    if (_emptyPlaceholderView) {
+        _emptyPlaceholderView.hidden = hasMessages;
+    }
+    // Bring the placeholder ABOVE the table view when shown (so it's
+    // tappable for the hint area), but BELOW the composer + status bar.
+    if (!hasMessages && _emptyPlaceholderView) {
+        [self.view bringSubviewToFront:_emptyPlaceholderView];
+        // Composer needs to stay above so the user can still type.
+        if (_composer) [self.view bringSubviewToFront:_composer];
+        if (_searchStatusView) [self.view bringSubviewToFront:_searchStatusView];
+    }
 }
 
 - (void)_scrollToBottomAnimated:(BOOL)animated

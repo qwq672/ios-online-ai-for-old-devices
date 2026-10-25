@@ -28,6 +28,11 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 
 @interface ComposerView () {
     NSMutableArray *_pendingImages;
+    // v261025-5: retained UIColor ivar for the text-view border. The
+    // old `layer.borderColor = [autoreleased CGColor]` pattern left a
+    // dangling CGColorRef after the autorelease pool drained — same
+    // crash class as the one we fixed in ChatMessageCell.
+    UIColor *_fieldBorderUIColor;
 }
 @end
 
@@ -63,7 +68,8 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         _textView.textColor = [iOS6Theme inputFieldTextColor];
         _textView.layer.cornerRadius = 8.0f;
         _textView.layer.borderWidth = 1.0f;
-        _textView.layer.borderColor = [[iOS6Theme composerFieldBorderColor] CGColor];
+        _fieldBorderUIColor = [[iOS6Theme composerFieldBorderColor] retain];
+        _textView.layer.borderColor = [_fieldBorderUIColor CGColor];
         if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
             [_textView performSelector:@selector(setTextContainerInset:)
                              withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(6, 8, 6, 8)]];
@@ -179,7 +185,10 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     [self setNeedsDisplay];
     _textView.backgroundColor = [iOS6Theme composerFieldBackgroundColor];
     _textView.textColor = [iOS6Theme inputFieldTextColor];
-    _textView.layer.borderColor = [[iOS6Theme composerFieldBorderColor] CGColor];
+    // v261025-5: refresh the retained border-color ivar too.
+    [_fieldBorderUIColor release];
+    _fieldBorderUIColor = [[iOS6Theme composerFieldBorderColor] retain];
+    _textView.layer.borderColor = [_fieldBorderUIColor CGColor];
     // Set keyboard appearance based on theme — alert style = dark keyboard.
     if ([iOS6Theme isDarkMode] && [_textView respondsToSelector:@selector(setKeyboardAppearance:)]) {
         [_textView setKeyboardAppearance:UIKeyboardAppearanceAlert];
@@ -520,6 +529,11 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 - (void)dealloc
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    // v261025-5: release the text view FIRST (which triggers the layer's
+    // CGColorRelease on its borderColor), and only THEN release the
+    // retained UIColor ivar that backed that CGColor. Order matters:
+    // if we drop our UIColor retain first, the CGColor is freed and the
+    // layer's later CGColorRelease hits a dangling ref → SIGSEGV.
     [_textView release];
     [_sendButton release];
     [_deepThinkingButton release];
@@ -527,6 +541,8 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     [_imageButton release];
     [_imageBadge release];
     [_pendingImages release];
+    [_fieldBorderUIColor release];
+    _fieldBorderUIColor = nil;
     [super dealloc];
 }
 

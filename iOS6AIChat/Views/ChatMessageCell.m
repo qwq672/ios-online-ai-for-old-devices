@@ -35,6 +35,19 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     BOOL _thinkingCollapsed;
     NSMutableArray *_imageViews;       // weak refs to image subviews (autoreleased on assign to subview, but we keep for layout)
     NSString *_currentMessageKey;      // for cache key generation
+    // v261025-5: retained UIColor ivar for the thinking-block border.
+    // CALayer.borderColor holds a CGColorRef. The CGColor is owned by
+    // whatever UIColor produced it; if that UIColor is autoreleased (which
+    // is what [iOS6Theme thinkingBorderColor] returns), then once the
+    // autorelease pool drains the layer's borderColor becomes a dangling
+    // pointer. When the layer is later released (cell teardown) QuartzCore
+    // tries to CGColorRelease the dangling ref → SIGSEGV inside
+    // _CFAutoreleasePoolPop → -[ChatMessageCell dealloc +758] → crash
+    // (visible in user-reported v261025-4 logs).
+    UIColor *_thinkingBorderUIColor;
+    // Same hazard for _thinkingBlock.background + _thinkingSep.
+    UIColor *_thinkingBgUIColor;
+    UIColor *_thinkingSepUIColor;
 }
 @property (nonatomic, retain) UIView *thinkingBlock;
 @property (nonatomic, retain) UIButton *thinkingToggle;
@@ -288,10 +301,18 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 
         // Thinking block — collapsible reasoning display.
         _thinkingBlock = [[UIView alloc] initWithFrame:CGRectZero];
-        _thinkingBlock.backgroundColor = [iOS6Theme thinkingBackgroundColor];
+        // v261025-5: retain the theme colors in ivars so the layer's
+        // borderColor / the view's backgroundColor hold a strong reference
+        // to a UIColor that lives for the lifetime of the cell. The
+        // previous pattern (`layer.borderColor = [autoreleased CGColor]`)
+        // left a dangling CGColorRef once the pool popped — the user's
+        // v261025-4 SIGSEGV crash family was this exact bug.
+        _thinkingBgUIColor = [[iOS6Theme thinkingBackgroundColor] retain];
+        _thinkingBlock.backgroundColor = _thinkingBgUIColor;
         _thinkingBlock.layer.cornerRadius = 6.0f;
         _thinkingBlock.layer.borderWidth = 1.0f;
-        _thinkingBlock.layer.borderColor = [[iOS6Theme thinkingBorderColor] CGColor];
+        _thinkingBorderUIColor = [[iOS6Theme thinkingBorderColor] retain];
+        _thinkingBlock.layer.borderColor = [_thinkingBorderUIColor CGColor];
         _thinkingBlock.clipsToBounds = YES;
         _thinkingBlock.hidden = YES;
         [_bubble addSubview:_thinkingBlock];
@@ -313,7 +334,8 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         _thinkingLabel.hidden = YES;  // hidden by default (collapsed)
         [_thinkingBlock addSubview:_thinkingLabel];
         _thinkingSep = [[UIView alloc] initWithFrame:CGRectZero];
-        _thinkingSep.backgroundColor = [iOS6Theme thinkingBorderColor];
+        _thinkingSepUIColor = [[iOS6Theme thinkingBorderColor] retain];
+        _thinkingSep.backgroundColor = _thinkingSepUIColor;
         _thinkingSep.hidden = YES;
         [_thinkingBlock addSubview:_thinkingSep];
 
@@ -360,9 +382,18 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     [ChatMessageCell flushCaches];
     _textView.textColor = [iOS6Theme textColor];
     _textView.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
-    _thinkingBlock.backgroundColor = [iOS6Theme thinkingBackgroundColor];
-    _thinkingBlock.layer.borderColor = [[iOS6Theme thinkingBorderColor] CGColor];
-    _thinkingSep.backgroundColor = [iOS6Theme thinkingBorderColor];
+    // v261025-5: refresh the retained UIColor ivars too so the layer
+    // borderColor keeps pointing at a live UIColor (and a live CGColor)
+    // after the theme flip.
+    [_thinkingBgUIColor release];
+    _thinkingBgUIColor = [[iOS6Theme thinkingBackgroundColor] retain];
+    _thinkingBlock.backgroundColor = _thinkingBgUIColor;
+    [_thinkingBorderUIColor release];
+    _thinkingBorderUIColor = [[iOS6Theme thinkingBorderColor] retain];
+    _thinkingBlock.layer.borderColor = [_thinkingBorderUIColor CGColor];
+    [_thinkingSepUIColor release];
+    _thinkingSepUIColor = [[iOS6Theme thinkingBorderColor] retain];
+    _thinkingSep.backgroundColor = _thinkingSepUIColor;
     _thinkingLabel.textColor = [iOS6Theme secondaryTextColor];
     _thinkingLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
     _thinkingToggle.titleLabel.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
@@ -805,19 +836,63 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 
 - (void)dealloc
 {
+    // v261025-5: snapshot-then-nil pattern across the WHOLE dealloc.
+    // The user-reported -[ChatMessageCell dealloc +758] / -[ChatBubbleView
+    // dealloc +210] SIGSEGV family was triggered by UIKit's subview
+    // teardown (during super.dealloc) hitting a CGColor / UIColor that had
+    // already been released earlier in this same dealloc pass — QuartzCore
+    // then called CFRelease on a dangling pointer → crash inside
+    // _CFAutoreleasePoolPop. Snapshotting to locals + clearing ivars first
+    // guarantees no double-release, and means a subview-teardown callback
+    // fired mid-dealloc reads nil ivars instead of dangling ones.
     [[NSNotificationCenter defaultCenter] removeObserver:self];
-    [_bubble release];
-    [_textView release];
-    [_message release];
-    [_renderedAttr release];
-    [_thinkingBlock release];
-    [_thinkingToggle release];
-    [_thinkingLabel release];
-    [_thinkingSep release];
-    [_imageViews release];
-    [_currentMessageKey release];
-    [_regenerateButton release];
-    [_clipboardButton release];
+
+    // Snapshot all ivars to locals + clear ivars FIRST so any re-entrant
+    // access (e.g. a subview's dealloc calling back into the cell) reads
+    // nil ivars instead of dangling pointers.
+    UIColor *tbBg = _thinkingBgUIColor;
+    UIColor *tbBd = _thinkingBorderUIColor;
+    UIColor *tbSp = _thinkingSepUIColor;
+    _thinkingBgUIColor = nil;
+    _thinkingBorderUIColor = nil;
+    _thinkingSepUIColor = nil;
+
+    UIView *bubble = _bubble;              _bubble = nil;
+    UITextView *tv = _textView;             _textView = nil;
+    Message *msg = _message;                _message = nil;
+    NSAttributedString *attr = _renderedAttr; _renderedAttr = nil;
+    UIView *tb = _thinkingBlock;            _thinkingBlock = nil;
+    UIButton *tt = _thinkingToggle;         _thinkingToggle = nil;
+    UILabel *tl = _thinkingLabel;           _thinkingLabel = nil;
+    UIView *ts = _thinkingSep;              _thinkingSep = nil;
+    NSMutableArray *ivs = _imageViews;      _imageViews = nil;
+    NSString *cmk = _currentMessageKey;     _currentMessageKey = nil;
+    UIButton *rb = _regenerateButton;       _regenerateButton = nil;
+    UIButton *cb = _clipboardButton;        _clipboardButton = nil;
+
+    // Release the VIEWS first (so each view's layer.dealloc can do its
+    // CGColorRelease cleanly), THEN release the retained UIColor ivars
+    // that backed those CGColors. Order matters: dropping the UIColor
+    // retain first would free the CGColor and leave the layer holding a
+    // dangling ref → SIGSEGV in QuartzCore. The layer's CGColorRelease
+    // brings RC 2→1 (we still hold one), then our release 1→0.
+    [bubble release];
+    [tv release];
+    [msg release];
+    [attr release];
+    [tb release];
+    [tt release];
+    [tl release];
+    [ts release];
+    [ivs release];
+    [cmk release];
+    [rb release];
+    [cb release];
+
+    [tbBg release];
+    [tbBd release];
+    [tbSp release];
+
     [super dealloc];
 }
 

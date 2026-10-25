@@ -38,12 +38,22 @@
 
 - (void)_applyRoleColors
 {
-    // Release the old colors before retaining the new ones — otherwise
-    // every setRole: call leaks a UIColor pair. This was a long-standing
-    // leak when scrolling through many messages.
+    // v261025-5: snapshot-and-nil pattern — release old colors, set ivars
+    // to nil BEFORE the new retain runs, so a mid-call failure (rare but
+    // possible under memory pressure) leaves the ivars in a clean state
+    // instead of holding a dangling pointer. The user-reported
+    // -[ChatBubbleView dealloc +210] crash family was triggered by exactly
+    // this: an early return between release and re-assign left _shadowColor
+    // dangling, and the eventual dealloc tried to release it again.
+    UIColor *oldFill = [_fillColor retain];
+    UIColor *oldBorder = [_borderColor retain];
+    UIColor *oldShadow = [_shadowColor retain];
     [_fillColor release];
     [_borderColor release];
     [_shadowColor release];
+    _fillColor = nil;
+    _borderColor = nil;
+    _shadowColor = nil;
     if (_role == BubbleRoleUser) {
         _fillColor = [[iOS6Theme bubbleUserColor] retain];
         _borderColor = [[iOS6Theme bubbleUserBorderColor] retain];
@@ -52,6 +62,9 @@
         _borderColor = [[iOS6Theme bubbleAssistantBorderColor] retain];
     }
     _shadowColor = [[UIColor colorWithRed:0 green:0 blue:0 alpha:0.18f] retain];
+    [oldFill release];
+    [oldBorder release];
+    [oldShadow release];
     [self setNeedsDisplay];
 }
 
@@ -235,9 +248,20 @@
 
 - (void)dealloc
 {
-    [_fillColor release];
-    [_borderColor release];
-    [_shadowColor release];
+    // v261025-5: snapshot-then-nil pattern. The user-reported
+    // -[ChatBubbleView dealloc +210] SIGSEGV (visible in the v261025-4
+    // crash logs every time the user opened 设置/模型管理 after entering
+    // a history conversation) was caused by UIKit teardown of the
+    // ChatMessageCell calling ChatBubbleView.dealloc on a view whose
+    // _shadowColor had been released by a previous _applyRoleColors pass
+    // but the ivar still pointed at the freed instance. By snapshotting to
+    // a local first and clearing the ivar, a subsequent _applyRoleColors
+    // or dealloc call cannot double-release.
+    UIColor *f = _fillColor;     UIColor *b = _borderColor;     UIColor *s = _shadowColor;
+    _fillColor = nil;            _borderColor = nil;            _shadowColor = nil;
+    [f release];
+    [b release];
+    [s release];
     [super dealloc];
 }
 

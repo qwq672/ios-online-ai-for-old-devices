@@ -51,21 +51,23 @@ static CGFloat const kSheetBarH     = 64.0f;   // status 20 + nav 44
 static CGFloat const kSearchY       = 74.0f;
 static CGFloat const kSearchH       = 36.0f;
 static CGFloat const kTableY        = 118.0f;
-static CGFloat const kStripH        = 94.0f;   // bottom recent strip zone
 static CGFloat const kRowH          = 46.0f;
+// v261025-5: removed kStripH — the bottom chips strip is gone (user said
+// "这也太丑了" + chip text truncated to "你…"); recent conversations
+// now live as proper list rows in section 1 of the table.
 
-// Menu model — two sections (search box empty).
+// Menu model — three sections (search box empty).
 enum {
-    kMenuSectionChat = 0,      // 新对话 / 历史记录
-    kMenuSectionManage,        // 模型管理 / 角色管理 / 日志 / 设置
+    kMenuSectionChat = 0,        // 新对话 (历史记录 row removed — search covers it)
+    kMenuSectionRecent,         // 最近对话 — up to kMaxRecent rows of recent convs
+    kMenuSectionManage,         // 模型管理 / 角色管理 / 日志 / 设置
     kMenuSectionCount,
-    kMenuSectionConv = 0       // search mode: conversation results
+    kMenuSectionConv = 0        // search mode: conversation results
 };
 
 enum {
     kMenuRowNewChat = 0,
-    kMenuRowHistory = 1,
-    kMenuRowChatCount = 2,
+    kMenuRowChatCount = 1,
 
     kMenuRowModels = 0,
     kMenuRowCharacters = 1,
@@ -73,6 +75,10 @@ enum {
     kMenuRowSettings = 3,
     kMenuRowManageCount = 4
 };
+
+// v261025-5: cap on recent-conv rows shown in the menu — keeps the
+// menu scroll length sane on the iPhone 3GS (320x480 screen).
+static NSInteger const kMaxRecent = 6;
 
 @interface DrawerViewController () <UITableViewDataSource, UITableViewDelegate,
                                      UITextFieldDelegate> {
@@ -93,9 +99,10 @@ enum {
     UITableView *_menuTable;
     NSArray     *_menuIcons;      // re-built on theme change
 
-    // Recent-conversations strip.
-    UIImageView *_stripSlot;
-    UIScrollView *_stripScroll;
+    // v261025-5: recent conversations displayed as list rows in
+    // section kMenuSectionRecent (replaces the bottom chip strip — the
+    // user said the chips looked unfinished and the truncated "你…" text
+    // was ugly). Snapshot-once-per-open, like the old chip list.
     NSArray     *_recentConversations;
 
     // Search state.
@@ -148,8 +155,8 @@ enum {
     [_searchSlot release];
     [_menuTable release];
     [_menuIcons release];
-    [_stripSlot release];
-    [_stripScroll release];
+    // v261025-5: removed _stripSlot / _stripScroll releases (the chip
+    // strip is gone).
     [_recentConversations release];
     [_searchQuery release];
     [_searchResults release];
@@ -288,7 +295,10 @@ enum {
     [_sheetView addSubview:_searchField];
 
     // --- Menu table (white cards on pinstripe) -----------------------------
-    CGFloat tableH = H - kTableY - kStripH;
+    // v261025-5: table now fills ALL the space below the search slot down
+    // to the sheet bottom — the bottom chips strip is gone, so there's no
+    // reserved strip zone anymore.
+    CGFloat tableH = H - kTableY;
     if (tableH < 120) tableH = 120;   // tiny-screen guard
     _menuTable = [[UITableView alloc] initWithFrame:CGRectMake(0, kTableY, W, tableH)
                                              style:UITableViewStyleGrouped];
@@ -302,21 +312,6 @@ enum {
     _menuTable.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
                                    UIViewAutoresizingFlexibleHeight);
     [_sheetView addSubview:_menuTable];
-
-    // --- Recent-conversations strip -----------------------------------------
-    _stripSlot = [[UIImageView alloc] initWithFrame:CGRectMake(10, H - kStripH + 8, W - 20, kStripH - 16)];
-    _stripSlot.image = [iOS6Theme stretchableRecessedSlotImage];
-    _stripSlot.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
-                                   UIViewAutoresizingFlexibleTopMargin);
-    [_sheetView addSubview:_stripSlot];
-
-    _stripScroll = [[UIScrollView alloc] initWithFrame:CGRectMake(14, H - kStripH + 12, W - 28, kStripH - 24)];
-    _stripScroll.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
-                                     UIViewAutoresizingFlexibleTopMargin);
-    _stripScroll.showsHorizontalScrollIndicator = NO;
-    _stripScroll.showsVerticalScrollIndicator = NO;
-    _stripScroll.alwaysBounceHorizontal = NO;
-    [_sheetView addSubview:_stripScroll];
 
     // Theme-dependent colors + icons.
     [[NSNotificationCenter defaultCenter] addObserver:self
@@ -379,21 +374,27 @@ enum {
     _sheetView.backgroundColor = [iOS6Theme pinstripeBackground];
     _sheetBar.image = [iOS6Theme menuLeatherBarImage];
     _searchSlot.image = [iOS6Theme stretchableRecessedSlotImage];
-    _stripSlot.image = [iOS6Theme stretchableRecessedSlotImage];
+    // v261025-5: _stripSlot removed (chips strip gone).
 
     _searchField.textColor = [iOS6Theme textColor];
     _searchField.placeholder = NSLocalizedString(@"搜索对话…", nil);
 
-    // Menu icons tinted with the saturated selected-blue (unchanged from
-    // the old drawer — user liked that tone on menu icons).
+    // Menu icons tinted with the saturated selected-blue.
+    // v261025-5: removed the clock icon (历史记录 menu row is gone —
+    // search + recent-conv list covers that use case). Re-added a
+    // dedicated "recent" icon (clock — now used as the section header
+    // icon for kMenuSectionRecent, NOT as a row icon) so the icon array
+    // stays 1-indexed with the manage-section rows.
     UIColor *iconColor = [iOS6Theme tabBarSelectedTintColor];
+    // Flat icon order matches the new flat title index (see
+    // _titleForFlatIndex: 0=新对话, 1=模型管理, 2=角色管理, 3=日志, 4=设置).
     NSArray *types = [NSArray arrayWithObjects:
-                      [NSNumber numberWithInt:IconTypeChatBubble],
-                      [NSNumber numberWithInt:IconTypeClock],
-                      [NSNumber numberWithInt:IconTypeLayers],
-                      [NSNumber numberWithInt:IconTypePerson],
-                      [NSNumber numberWithInt:IconTypeDoc],
-                      [NSNumber numberWithInt:IconTypeGear], nil];
+                      [NSNumber numberWithInt:IconTypeChatBubble],   // 0 新对话
+                      [NSNumber numberWithInt:IconTypeLayers],       // 1 模型管理
+                      [NSNumber numberWithInt:IconTypePerson],       // 2 角色管理
+                      [NSNumber numberWithInt:IconTypeDoc],          // 3 日志
+                      [NSNumber numberWithInt:IconTypeGear],        // 4 设置
+                      nil];
     NSMutableArray *imgs = [NSMutableArray arrayWithCapacity:[types count]];
     for (NSNumber *tn in types) {
         UIImage *img = [IconDrawing imageForType:(IconType)[tn intValue]
@@ -405,7 +406,7 @@ enum {
     _menuIcons = [imgs retain];
 
     [_menuTable reloadData];
-    [self _rebuildRecentStrip];
+    [self _rebuildRecentList];
 }
 
 #pragma mark - Theme / toggle notifications
@@ -436,9 +437,10 @@ enum {
     if (_open) return;
     _open = YES;
     _sheetView.hidden = NO;
-    // Fresh recent-conversations every open (chips are cheap views, and
-    // the list may have changed since the last open).
-    [self _rebuildRecentStrip];
+    // v261025-5: refresh the recent-conv snapshot every open + reload the
+    // table so the new snapshot shows up in section kMenuSectionRecent.
+    [self _rebuildRecentList];
+    [_menuTable reloadData];
     // White status text over the graphite leather bar (iOS 6 global
     // status style — saved so close can restore the pre-open look).
     _savedStatusBarStyle = [UIApplication sharedApplication].statusBarStyle;
@@ -565,100 +567,30 @@ enum {
     }
 }
 
-// Chip tap → close, then switch the root chat to that conversation.
-- (void)_openConversationAfterClose:(NSNumber *)convIndex
-{
-    NSInteger idx = convIndex ? [convIndex integerValue] : -1;
-    if (idx < 0 || idx >= (NSInteger)[_recentConversations count]) return;
-    Conversation *conv = [_recentConversations objectAtIndex:idx];
-    if (!conv) return;
-    ChatViewController *chat = nil;
-    if ([_mainNav.viewControllers count] > 0) {
-        chat = [_mainNav.viewControllers objectAtIndex:0];
-    }
-    if ([chat isKindOfClass:[ChatViewController class]] && conv.conversationID) {
-        [[NSNotificationCenter defaultCenter]
-            postNotificationName:ChatViewControllerDidLoadConversationNotification
-                          object:nil
-                        userInfo:@{ChatViewControllerConversationIDKey: conv.conversationID}];
-    }
-}
+// v261025-5: the chip-tap handler `_openConversationAfterClose:` is gone;
+// its replacement `_openRecentConvAfterClose:` lives in the
+// "Recent-conversations list" section below (same deferred-open behaviour).
 
-#pragma mark - Recent-conversations strip (Reminders date-strip style)
+#pragma mark - Recent-conversations list (v261025-5 — replaces chips strip)
 
-- (void)_rebuildRecentStrip
+// Rebuild the snapshot of recent conversations shown in section
+// kMenuSectionRecent. Called once per sheet open + once on theme change.
+// The list is bounded by kMaxRecent (6) to keep the menu scroll length
+// sane on a 320x480 3GS screen.
+- (void)_rebuildRecentList
 {
-    if (!_stripScroll) return;
-    // v261025-2 crash class: NEVER mutate subviews while iterating the
-    // live array — snapshot first, then tear down. (The old drawer's
-    // SIGSEGV family came from exactly this pattern.)
-    NSArray *oldChips = [[_stripScroll subviews] copy];
-    for (UIView *v in oldChips) {
-        [v removeFromSuperview];
-    }
-    [oldChips release];
     NSArray *convs = [[ConversationStore sharedStore] conversations];
-    // Skip a tail-only current conversation: the first entry is usually
-    // the just-created empty chat — no value as a chip.
     NSMutableArray *usable = [NSMutableArray arrayWithCapacity:[convs count]];
     for (Conversation *c in convs) {
         if ([c isKindOfClass:[Conversation class]] && [c.messages count] > 0) {
             [usable addObject:c];
         }
     }
-    if ([usable count] > 10) {
-        usable = [[[usable subarrayWithRange:NSMakeRange(0, 10)] copy] autorelease];
+    if ([usable count] > kMaxRecent) {
+        usable = [[[usable subarrayWithRange:NSMakeRange(0, kMaxRecent)] copy] autorelease];
     }
     [_recentConversations release];
     _recentConversations = [usable retain];
-
-    CGFloat chipW = 96.0f, chipH = 56.0f, gap = 8.0f;
-    CGFloat x = 0.0f;
-    UIImage *chipBg = [iOS6Theme stretchableGlassChipImage];
-    NSInteger idx = 0;
-    for (Conversation *c in _recentConversations) {
-        if (![c isKindOfClass:[Conversation class]]) { idx++; continue; }
-
-        UIButton *chip = [UIButton buttonWithType:UIButtonTypeCustom];
-        chip.frame = CGRectMake(x, 2.0f, chipW, chipH);
-        if (chipBg) {
-            [chip setBackgroundImage:chipBg forState:UIControlStateNormal];
-        }
-        chip.tag = 1000 + idx;
-        // Two-line attributed title: truncated title + relative date.
-        NSString *title = c.displayTitle ?: @"(无标题)";
-        if ([title length] > 12) {
-            title = [[title substringToIndex:12] stringByAppendingString:@"…"];
-        }
-        NSMutableParagraphStyle *para = [[[NSMutableParagraphStyle alloc] init] autorelease];
-        para.lineBreakMode = NSLineBreakByTruncatingTail;
-        para.alignment = NSTextAlignmentCenter;
-        NSDictionary *line1 = @{NSFontAttributeName: [UIFont boldSystemFontOfSize:11],
-                                NSForegroundColorAttributeName: [iOS6Theme textColor],
-                                NSParagraphStyleAttributeName: para};
-        NSDictionary *line2 = @{NSFontAttributeName: [UIFont systemFontOfSize:9],
-                                NSForegroundColorAttributeName: [iOS6Theme secondaryTextColor],
-                                NSParagraphStyleAttributeName: para};
-        NSString *dateStr = [self _relativeDateString:c.updatedAt];
-        NSMutableAttributedString *ts = [[[NSMutableAttributedString alloc]
-            initWithString:[NSString stringWithFormat:@"%@\n%@", title, dateStr]
-            attributes:line1] autorelease];
-        if ([dateStr length] > 0 && [dateStr length] <= [ts length]) {
-            [ts addAttributes:line2
-                        range:NSMakeRange([ts length] - [dateStr length],
-                                          [dateStr length])];
-        }
-        [chip setAttributedTitle:ts forState:UIControlStateNormal];
-        chip.titleLabel.numberOfLines = 2;
-        chip.titleLabel.textAlignment = NSTextAlignmentCenter;
-        [chip addTarget:self action:@selector(_chipTapped:)
-      forControlEvents:UIControlEventTouchUpInside];
-        [_stripScroll addSubview:chip];
-        x += chipW + gap;
-        idx++;
-    }
-    _stripScroll.contentSize = CGSizeMake(MAX(x - gap, 1.0f), chipH + 4.0f);
-    _stripScroll.contentOffset = CGPointZero;
 }
 
 - (NSString *)_relativeDateString:(NSDate *)date
@@ -674,16 +606,25 @@ enum {
     return [df stringFromDate:date];
 }
 
-- (void)_chipTapped:(UIButton *)sender
+// Tap on a recent-conv row → close the sheet, then load that conversation
+// in the root ChatVC. Same deferred-open pattern as the old chip code.
+- (void)_openRecentConvAfterClose:(NSNumber *)convIndex
 {
-    NSInteger idx = sender.tag - 1000;
+    NSInteger idx = convIndex ? [convIndex integerValue] : -1;
     if (idx < 0 || idx >= (NSInteger)[_recentConversations count]) return;
-    [[Logger sharedLogger] info:[NSString stringWithFormat:@"MenuSheet chip → conversation %d", (int)idx]];
-    [self closeSidebarAnimated:YES];
-    // Let the slide-up finish before the chat swaps content underneath.
-    [self performSelector:@selector(_openConversationAfterClose:)
-               withObject:[NSNumber numberWithInteger:idx]
-               afterDelay:kSheetAnimDuration + 0.05];
+    Conversation *conv = [_recentConversations objectAtIndex:idx];
+    if (!conv) return;
+    ChatViewController *chat = nil;
+    if ([_mainNav.viewControllers count] > 0) {
+        chat = [_mainNav.viewControllers objectAtIndex:0];
+    }
+    if ([chat isKindOfClass:[ChatViewController class]] && conv.conversationID) {
+        [[Logger sharedLogger] info:[NSString stringWithFormat:@"MenuSheet recent → conversation %d", (int)idx]];
+        [[NSNotificationCenter defaultCenter]
+            postNotificationName:ChatViewControllerDidLoadConversationNotification
+                          object:nil
+                        userInfo:@{ChatViewControllerConversationIDKey: conv.conversationID}];
+    }
 }
 
 #pragma mark - Search (filters conversations)
@@ -809,7 +750,10 @@ replacementString:(NSString *)string
     if (_searchQuery.length > 0) {
         return (NSInteger)[_searchResults count];
     }
-    if (section == kMenuSectionChat) return kMenuRowChatCount;
+    // v261025-5: three sections — chat (1 row: 新对话), recent (up to
+    // kMaxRecent conv rows), manage (4 rows: 模型 / 角色 / 日志 / 设置).
+    if (section == kMenuSectionChat)    return kMenuRowChatCount;
+    if (section == kMenuSectionRecent)  return (NSInteger)[_recentConversations count];
     return kMenuRowManageCount;
 }
 
@@ -821,13 +765,20 @@ replacementString:(NSString *)string
     if (section == kMenuSectionChat) {
         return NSLocalizedString(@"聊天", nil);
     }
+    if (section == kMenuSectionRecent) {
+        // Hide the section header entirely when there are no recent convs
+        // (otherwise we'd get an orphan "最近对话" header floating above
+        // the manage section on a fresh install).
+        if ([_recentConversations count] == 0) return @"";
+        return NSLocalizedString(@"最近对话", nil);
+    }
     return NSLocalizedString(@"管理", nil);
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
           cellForRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    // Search mode → conversation rows.
+    // Search mode → conversation rows (subtitle cell: title + last message).
     if (_searchQuery.length > 0) {
         Conversation *conv = nil;
         if (indexPath.row < (NSInteger)[_searchResults count]) {
@@ -851,7 +802,41 @@ replacementString:(NSString *)string
         return cell;
     }
 
-    // Normal menu mode.
+    // v261025-5: section kMenuSectionRecent — recent conversation row
+    // (also subtitle cell: title + relative date).
+    if (indexPath.section == kMenuSectionRecent) {
+        Conversation *conv = nil;
+        if (indexPath.row < (NSInteger)[_recentConversations count]) {
+            conv = [_recentConversations objectAtIndex:indexPath.row];
+        }
+        UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:kConvCellID];
+        if (!cell) {
+            cell = [[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
+                                       reuseIdentifier:kConvCellID] autorelease];
+            [self _installCardBackgroundOnCell:cell];
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+        }
+        [self _applyCardBackgroundOnCell:cell tableView:tableView];
+        cell.textLabel.text = conv.displayTitle ?: @"(无标题)";
+        cell.textLabel.font = [UIFont boldSystemFontOfSize:15];
+        cell.textLabel.textColor = [iOS6Theme textColor];
+        cell.textLabel.shadowColor = [iOS6Theme isDarkMode]
+            ? [UIColor colorWithWhite:0.0f alpha:0.35f]
+            : [UIColor colorWithWhite:1.0f alpha:0.9f];
+        cell.textLabel.shadowOffset = CGSizeMake(0, 1);
+        cell.detailTextLabel.text = [self _relativeDateString:conv.updatedAt];
+        cell.detailTextLabel.font = [UIFont systemFontOfSize:12];
+        cell.detailTextLabel.textColor = [iOS6Theme secondaryTextColor];
+        // Clock icon for recent rows — same tinted tone as the menu icons.
+        // Drawn per-call but IconDrawing caches internally so it's cheap.
+        cell.imageView.image = [IconDrawing imageForType:IconTypeClock
+                                                    size:CGSizeMake(26, 26)
+                                                   color:[iOS6Theme tabBarSelectedTintColor]];
+        return cell;
+    }
+
+    // Normal menu mode (chat section + manage section).
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:kMenuCellID];
     if (!cell) {
         cell = [[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
@@ -867,10 +852,15 @@ replacementString:(NSString *)string
         : [UIColor colorWithWhite:1.0f alpha:0.9f];
     cell.textLabel.shadowOffset = CGSizeMake(0, 1);
 
-    // Map (section,row) → flat icon index (chat rows 0-1, manage rows 2-5).
-    NSInteger flat = indexPath.section == kMenuSectionChat
-        ? indexPath.row
-        : kMenuRowChatCount + indexPath.row;
+    // v261025-5: flat index — chat section row 0 → flat 0 (新对话);
+    // manage section row N → flat N+1 (because chat section is just 1
+    // row now, no historical "历史记录" row).
+    NSInteger flat;
+    if (indexPath.section == kMenuSectionChat) {
+        flat = indexPath.row;            // 0 → 新对话
+    } else {
+        flat = indexPath.row + 1;        // 0 → 模型管理, 1 → 角色管理, …
+    }
     cell.textLabel.text = [self _titleForFlatIndex:flat];
     cell.textLabel.font = [UIFont boldSystemFontOfSize:16];
     if (flat >= 0 && flat < (NSInteger)[_menuIcons count]) {
@@ -887,13 +877,13 @@ heightForRowAtIndexPath:(NSIndexPath *)indexPath
 
 - (NSString *)_titleForFlatIndex:(NSInteger)flat
 {
+    // v261025-5: renumbered — 历史记录 menu row is gone (search covers it).
     switch (flat) {
         case 0:  return NSLocalizedString(@"新对话", nil);
-        case 1:  return NSLocalizedString(@"历史记录", nil);
-        case 2:  return NSLocalizedString(@"模型管理", nil);
-        case 3:  return NSLocalizedString(@"角色管理", nil);
-        case 4:  return NSLocalizedString(@"日志", nil);
-        case 5:  return NSLocalizedString(@"设置", nil);
+        case 1:  return NSLocalizedString(@"模型管理", nil);
+        case 2:  return NSLocalizedString(@"角色管理", nil);
+        case 3:  return NSLocalizedString(@"日志", nil);
+        case 4:  return NSLocalizedString(@"设置", nil);
         default: return @"";
     }
 }
@@ -921,23 +911,31 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
         return;
     }
 
+    // v261025-5: section kMenuSectionRecent → load that conversation in
+    // the root ChatVC (no separate HistoryVC push — the menu IS the
+    // history list now).
+    if (indexPath.section == kMenuSectionRecent) {
+        if (indexPath.row < 0 || indexPath.row >= (NSInteger)[_recentConversations count]) return;
+        [[Logger sharedLogger] info:[NSString stringWithFormat:@"MenuSheet recent → row %d", (int)indexPath.row]];
+        [self closeSidebarAnimated:YES];
+        [self performSelector:@selector(_openRecentConvAfterClose:)
+                   withObject:[NSNumber numberWithInteger:indexPath.row]
+                   afterDelay:kSheetAnimDuration + 0.05];
+        return;
+    }
+
     // v261025-1: one log line per menu navigation — every jump traceable.
-    NSInteger flat = indexPath.section == kMenuSectionChat
-        ? indexPath.row
-        : kMenuRowChatCount + indexPath.row;
+    NSInteger flat;
+    if (indexPath.section == kMenuSectionChat) {
+        flat = indexPath.row;
+    } else {
+        flat = indexPath.row + 1;   // manage rows start at flat 1 now
+    }
     [[Logger sharedLogger] info:[NSString stringWithFormat:@"MenuSheet → %@",
                                   [self _titleForFlatIndex:flat]]];
     if (indexPath.section == kMenuSectionChat) {
-        switch (indexPath.row) {
-            case kMenuRowNewChat:
-                [self _newChatTapped];
-                break;
-            case kMenuRowHistory: {
-                HistoryViewController *history = [[[HistoryViewController alloc] init] autorelease];
-                history.title = NSLocalizedString(@"历史", nil);
-                [self pushViewControllerAfterClose:history];
-                break;
-            }
+        if (indexPath.row == kMenuRowNewChat) {
+            [self _newChatTapped];
         }
     } else {
         switch (indexPath.row) {

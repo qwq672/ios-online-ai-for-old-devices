@@ -66,7 +66,10 @@ NSString *const iOS6ThemeDidChangeNotification = @"iOS6ThemeDidChangeNotificatio
 static NSString *const kDefaultTransitURL = @"https://ai-transit.awa.lat";
 
 // Layout constants.
-static CGFloat const kLabelWidth = 80.0f;
+// v261025-5: bumped kLabelWidth 80→96 so 4-character Chinese labels like
+// "图片压缩" and "中转搜索" don't truncate to "图片压" / "中转搜".
+// (User-reported screenshot IMG_0455 showed exactly this truncation.)
+static CGFloat const kLabelWidth = 96.0f;
 static CGFloat const kPad = 12.0f;
 static CGFloat const kRowH = 44.0f;
 
@@ -448,7 +451,14 @@ titleForFooterInSection:(NSInteger)section
     UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(kPad, 0, kLabelWidth, kRowH)];
     l.text = text;
     l.backgroundColor = [UIColor clearColor];
+    // v261025-5: shrink font for long labels so e.g. "图片压缩" at the
+    // user's bumped font-size still fits in kLabelWidth instead of
+    // truncating to "图片压". minScaleFactor does the work; numberOfLines
+    // stays 1 so a single line is enforced.
     l.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
+    l.adjustsFontSizeToFitWidth = YES;
+    l.minimumScaleFactor = 0.7f;
+    l.numberOfLines = 1;
     l.textColor = [iOS6Theme textColor];
     l.autoresizingMask = UIViewAutoresizingFlexibleRightMargin;
     return [l autorelease];
