@@ -71,6 +71,12 @@
 @property (nonatomic, assign) NSInteger maxToolTurns;  // hard cap (avoid infinite loops)
 // v261025-1: stream launch timestamp — for duration logging at finish.
 @property (nonatomic, assign) NSTimeInterval streamStartTs;
+// v261025-3: set once the current stream already attempted the https→http
+// transit fallback (guards against a fallback relaunch loop).
+@property (nonatomic, assign) BOOL httpFallbackTried;
+// v261025-3: https→http URL rewrite for the iOS 6 TLS transit fallback
+// (see the implementation comment for the full rationale).
++ (NSString *)_httpFallbackForURLString:(NSString *)s;
 @end
 
 @implementation NetworkService
@@ -89,7 +95,7 @@
             baseMessages=_baseMessages, enableWebSearchTools=_enableWebSearchTools,
             tavilyKey=_tavilyKey, tavilyMaxResults=_tavilyMaxResults,
             toolCallTurn=_toolCallTurn, maxToolTurns=_maxToolTurns,
-            streamStartTs=_streamStartTs;
+            streamStartTs=_streamStartTs, httpFallbackTried=_httpFallbackTried;
 @dynamic accumulatedThinking;
 
 - (id)init
@@ -150,6 +156,12 @@
     // Save context for multi-turn tool use.
     self.useTransit = useTransit;
     self.transitURL = transitURL;
+    // v261025-3: normalize — an empty transit URL means the default relay;
+    // materialize it so the TLS fallback in didFailWithError: can reason
+    // about the scheme (and flip it to http when iOS 6 can't handshake).
+    if (!self.transitURL || self.transitURL.length == 0) {
+        self.transitURL = @"https://ai-transit.awa.lat";
+    }
     self.baseURL = baseURL;
     self.provider = provider;
     self.apiKey = apiKey;
@@ -164,6 +176,9 @@
 
     // Reset per-stream state.
     self.conversationID = conversationID;
+    // v261025-3: each NEW user message gets a fresh TLS-fallback attempt
+    // (the flag only guards against a loop WITHIN one stream).
+    self.httpFallbackTried = NO;
     [_accumulated setString:@""];
     [_thinkingAccumulated setString:@""];
     [_toolCallAccumulators removeAllObjects];
@@ -534,6 +549,27 @@
 
 - (void)connection:(NSURLConnection *)connection didFailWithError:(NSError *)error
 {
+    // v261025-3: iOS 6 TLS transit fallback — when the STREAM dies with
+    // -1012 (NSURLErrorUserCancelledAuthentication = the TLS handshake
+    // aborted during certificate negotiation; iOS 6 SecureTransport can't
+    // negotiate Cloudflare's modern-only edge), flip the relay base to
+    // http and relaunch the WHOLE stream once. Field evidence: plain HTTP
+    // to the same worker reaches it end-to-end (a 403 upstream body came
+    // back through it), so the relay serves both schemes. Direct-mode
+    // (non-transit) requests are NEVER downgraded.
+    if (self.useTransit && !self.httpFallbackTried && error.code == -1012 &&
+        [self.transitURL isKindOfClass:[NSString class]] &&
+        [self.transitURL hasPrefix:@"https:"]) {
+        NSString *httpBase = [NetworkService _httpFallbackForURLString:self.transitURL];
+        if (httpBase) {
+            self.httpFallbackTried = YES;
+            self.transitURL = httpBase;
+            [[Logger sharedLogger] warn:[NSString stringWithFormat:
+                @"NET ⚠ https 中转 TLS -1012 (iOS6 无法与 Cloudflare 完成握手) — 整条流改用 http 重发: %@", httpBase]];
+            [self _launchStreamWithMessages:self.baseMessages];
+            return;
+        }
+    }
     NSTimeInterval dur = [NSDate timeIntervalSinceReferenceDate] - self.streamStartTs;
     // v261025-1: FAIL log with duration + OS-level error.
     [[Logger sharedLogger] error:[NSString stringWithFormat:
@@ -1152,6 +1188,26 @@
     return YES;
 }
 
+#pragma mark - iOS 6 TLS transit fallback (v261025-3)
+
+// iOS 6 SecureTransport cannot complete TLS against Cloudflare's modern
+// edge (min TLS 1.2 + modern cipher list / ECDSA-first certificates):
+// the handshake dies during certificate negotiation and NSURLConnection
+// reports -1012 (NSURLErrorUserCancelledAuthentication). The transit
+// worker ALSO serves plain HTTP, which works end-to-end (verified in the
+// field: an http transit request reached the worker and came back with
+// the upstream's response body). Since the transit is the user's OWN
+// relay carrying the user's OWN key, retrying over HTTP on a -1012 is an
+// acceptable trade. This ONLY ever applies to TRANSIT URLs — never to
+// direct third-party endpoints (their keys must stay on TLS).
++ (NSString *)_httpFallbackForURLString:(NSString *)s
+{
+    if ([s isKindOfClass:[NSString class]] && [s hasPrefix:@"https:"]) {
+        return [@"http:" stringByAppendingString:[s substringFromIndex:5]];
+    }
+    return nil;
+}
+
 #pragma mark - Tavily web search (sync)
 
 - (NSArray *)tavilySearchWithQuery:(NSString *)query
@@ -1197,16 +1253,6 @@
     NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
     if (!bodyData) return nil;
 
-    NSURL *url = [NSURL URLWithString:endpoint];
-    if (!url) return nil;
-    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
-                                                          cachePolicy:NSURLRequestReloadIgnoringCacheData
-                                                      timeoutInterval:30.0];
-    [req setHTTPMethod:@"POST"];
-    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-    if (transitWebSearch) [req setValue:@"tavily" forHTTPHeaderField:@"X-Provider"];
-    [req setHTTPBody:bodyData];
-
     // v261025-1: search request log (the user asked for deep search-
     // failure diagnosis — is it network or app logic? This line shows
     // exactly which endpoint was tried.)
@@ -1218,9 +1264,38 @@
     NSDate *t0 = [NSDate date];
     NSURLResponse *resp = nil;
     NSError *netErr = nil;
-    NSData *data = [NSURLConnection sendSynchronousRequest:req
-                                          returningResponse:&resp
-                                                      error:&netErr];
+    NSData *data = nil;
+    // v261025-3: single https→http retry when the transit TLS handshake
+    // dies with -1012 (iOS 6 vs Cloudflare). Only for the transitWebSearch
+    // branch — the direct api.tavily.com branch is never downgraded.
+    NSString *attemptEndpoint = endpoint;
+    for (NSInteger attempt = 0; attempt < 2; attempt++) {
+        NSURL *url = [NSURL URLWithString:attemptEndpoint];
+        if (!url) { resp = nil; netErr = nil; data = nil; break; }
+        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
+                                                              cachePolicy:NSURLRequestReloadIgnoringCacheData
+                                                          timeoutInterval:30.0];
+        [req setHTTPMethod:@"POST"];
+        [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+        if (transitWebSearch) [req setValue:@"tavily" forHTTPHeaderField:@"X-Provider"];
+        [req setHTTPBody:bodyData];
+        resp = nil;
+        netErr = nil;
+        data = [NSURLConnection sendSynchronousRequest:req
+                                      returningResponse:&resp
+                                                  error:&netErr];
+        if (!netErr) break;
+        if (attempt == 0 && transitWebSearch && netErr.code == -1012) {
+            NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
+            if (httpEndpoint) {
+                [[Logger sharedLogger] warn:[NSString stringWithFormat:
+                    @"SEARCH ⚠ https 中转 TLS -1012 (iOS6 握手失败) — 自动改用 http 重试: %@", httpEndpoint]];
+                attemptEndpoint = httpEndpoint;
+                continue;
+            }
+        }
+        break;
+    }
     NSTimeInterval dur = -[t0 timeIntervalSinceNow];
     if (netErr) {
         [[Logger sharedLogger] error:[NSString stringWithFormat:
@@ -1285,29 +1360,47 @@
                           [NSCharacterSet characterSetWithCharactersInString:@"/"]];
     endpoint = [endpoint stringByAppendingPathComponent:@"v1/models"];
 
-    NSURL *url = [NSURL URLWithString:endpoint];
-    if (!url) return nil;
-    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
-                                                          cachePolicy:NSURLRequestReloadIgnoringCacheData
-                                                      timeoutInterval:15.0];
-    [req setHTTPMethod:@"GET"];
-    if (apiKey.length > 0) {
-        [req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey]
-        forHTTPHeaderField:@"Authorization"];
-    }
-    if (useTransit && provider.length > 0) {
-        [req setValue:provider forHTTPHeaderField:@"X-Provider"];
-    }
-
     [[Logger sharedLogger] info:[NSString stringWithFormat:
         @"MODELS → GET %@", endpoint]];
     NSDate *t0 = [NSDate date];
 
     NSURLResponse *resp = nil;
     NSError *netErr = nil;
-    NSData *data = [NSURLConnection sendSynchronousRequest:req
-                                          returningResponse:&resp
-                                                      error:&netErr];
+    NSData *data = nil;
+    // v261025-3: single https→http retry on -1012 — transit branch only
+    // (direct baseURL is never downgraded).
+    NSString *attemptEndpoint = endpoint;
+    for (NSInteger attempt = 0; attempt < 2; attempt++) {
+        NSURL *url = [NSURL URLWithString:attemptEndpoint];
+        if (!url) { resp = nil; netErr = nil; data = nil; break; }
+        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
+                                                              cachePolicy:NSURLRequestReloadIgnoringCacheData
+                                                          timeoutInterval:15.0];
+        [req setHTTPMethod:@"GET"];
+        if (apiKey.length > 0) {
+            [req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey]
+            forHTTPHeaderField:@"Authorization"];
+        }
+        if (useTransit && provider.length > 0) {
+            [req setValue:provider forHTTPHeaderField:@"X-Provider"];
+        }
+        resp = nil;
+        netErr = nil;
+        data = [NSURLConnection sendSynchronousRequest:req
+                                      returningResponse:&resp
+                                                  error:&netErr];
+        if (!netErr) break;
+        if (attempt == 0 && useTransit && netErr.code == -1012) {
+            NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
+            if (httpEndpoint) {
+                [[Logger sharedLogger] warn:[NSString stringWithFormat:
+                    @"MODELS ⚠ https 中转 TLS -1012 (iOS6 握手失败) — 自动改用 http 重试: %@", httpEndpoint]];
+                attemptEndpoint = httpEndpoint;
+                continue;
+            }
+        }
+        break;
+    }
     NSTimeInterval dur = -[t0 timeIntervalSinceNow];
     if (netErr) {
         [[Logger sharedLogger] error:[NSString stringWithFormat:
@@ -1394,25 +1487,44 @@
     NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
     if (!bodyData) return nil;
 
-    NSURL *url = [NSURL URLWithString:endpoint];
-    if (!url) return nil;
-    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
-                                                          cachePolicy:NSURLRequestReloadIgnoringCacheData
-                                                      timeoutInterval:120.0];  // image gen can be slow
-    [req setHTTPMethod:@"POST"];
-    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-    [req setValue:provider ?: @"openai" forHTTPHeaderField:@"X-Provider"];
-    if (apiKey.length > 0) {
-        [req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey]
-        forHTTPHeaderField:@"Authorization"];
-    }
-    [req setHTTPBody:bodyData];
-
     NSURLResponse *resp = nil;
     NSError *netErr = nil;
-    NSData *data = [NSURLConnection sendSynchronousRequest:req
-                                          returningResponse:&resp
-                                                      error:&netErr];
+    NSData *data = nil;
+    // v261025-3: image generation ALWAYS goes through the transit (iOS 6
+    // TLS can't reach the image APIs directly), so the -1012 https→http
+    // retry always applies here.
+    NSString *attemptEndpoint = endpoint;
+    for (NSInteger attempt = 0; attempt < 2; attempt++) {
+        NSURL *url = [NSURL URLWithString:attemptEndpoint];
+        if (!url) { resp = nil; netErr = nil; data = nil; break; }
+        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
+                                                              cachePolicy:NSURLRequestReloadIgnoringCacheData
+                                                          timeoutInterval:120.0];  // image gen can be slow
+        [req setHTTPMethod:@"POST"];
+        [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+        [req setValue:provider ?: @"openai" forHTTPHeaderField:@"X-Provider"];
+        if (apiKey.length > 0) {
+            [req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey]
+            forHTTPHeaderField:@"Authorization"];
+        }
+        [req setHTTPBody:bodyData];
+        resp = nil;
+        netErr = nil;
+        data = [NSURLConnection sendSynchronousRequest:req
+                                      returningResponse:&resp
+                                                  error:&netErr];
+        if (!netErr) break;
+        if (attempt == 0 && netErr.code == -1012) {
+            NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
+            if (httpEndpoint) {
+                [[Logger sharedLogger] warn:[NSString stringWithFormat:
+                    @"IMG ⚠ https 中转 TLS -1012 (iOS6 握手失败) — 自动改用 http 重试: %@", httpEndpoint]];
+                attemptEndpoint = httpEndpoint;
+                continue;
+            }
+        }
+        break;
+    }
     if (netErr) {
         if (error) *error = netErr;
         return nil;
@@ -1473,18 +1585,34 @@
     NSString *encodedURL = [imageURL stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
     NSString *endpoint = [NSString stringWithFormat:@"%@/v1/fetch_image?url=%@", base, encodedURL];
 
-    NSURL *url = [NSURL URLWithString:endpoint];
-    if (!url) return nil;
-    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
-                                                          cachePolicy:NSURLRequestReloadIgnoringCacheData
-                                                      timeoutInterval:60.0];
-    [req setHTTPMethod:@"GET"];
-
     NSURLResponse *resp = nil;
     NSError *netErr = nil;
-    NSData *data = [NSURLConnection sendSynchronousRequest:req
-                                          returningResponse:&resp
-                                                      error:&netErr];
+    NSData *data = nil;
+    // v261025-3: single https→http retry on -1012 (always transit here).
+    NSString *attemptEndpoint = endpoint;
+    for (NSInteger attempt = 0; attempt < 2; attempt++) {
+        NSURL *url = [NSURL URLWithString:attemptEndpoint];
+        if (!url) { resp = nil; netErr = nil; data = nil; break; }
+        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
+                                                              cachePolicy:NSURLRequestReloadIgnoringCacheData
+                                                          timeoutInterval:60.0];
+        [req setHTTPMethod:@"GET"];
+        resp = nil;
+        netErr = nil;
+        data = [NSURLConnection sendSynchronousRequest:req
+                                      returningResponse:&resp
+                                                  error:&netErr];
+        if (!netErr) break;
+        if (attempt == 0 && netErr.code == -1012) {
+            NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
+            if (httpEndpoint) {
+                [[Logger sharedLogger] warn:@"FETCH-IMG ⚠ https 中转 TLS -1012 (iOS6 握手失败) — 自动改用 http 重试"];
+                attemptEndpoint = httpEndpoint;
+                continue;
+            }
+        }
+        break;
+    }
     if (netErr) {
         if (error) *error = netErr;
         return nil;
