@@ -410,9 +410,28 @@ enum {
     switch (indexPath.section) {
         case kMMSectionCurrent: {
             // Show current default model name + 搜索 button on the right.
+            // v261025-6: also add 测试连接 button next to 搜索 — fires off
+            // a GET /v1/models with current settings and shows the result
+            // (success / fail). Same NetworkService.listModels call as
+            // 搜索, but no model sheet at the end.
             NSString *def = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyModel];
             if (!def) def = @"(unset)";
             cell.textLabel.text = def ?: @"(unset)";
+
+            UIButton *testBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+            [testBtn setTitle:NSLocalizedString(@"测试", nil) forState:UIControlStateNormal];
+            [testBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            testBtn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
+            testBtn.backgroundColor = [iOS6Theme secondaryTextColor];
+            testBtn.layer.cornerRadius = 6.0f;
+            testBtn.layer.masksToBounds = YES;
+            testBtn.tag = 8888;  // for cleanup on cell reuse
+            CGRect f = cell.contentView.bounds;
+            testBtn.frame = CGRectMake(f.size.width - 76 - 12 - 64 - 4, (44 - 28) / 2, 60, 28);
+            testBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+            [testBtn addTarget:self action:@selector(_testConnection)
+              forControlEvents:UIControlEventTouchUpInside];
+            [cell.contentView addSubview:testBtn];
 
             UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
             [btn setTitle:NSLocalizedString(@"搜索", nil) forState:UIControlStateNormal];
@@ -421,8 +440,9 @@ enum {
             btn.backgroundColor = [iOS6Theme tintColor];
             btn.layer.cornerRadius = 6.0f;
             btn.layer.masksToBounds = YES;
-            CGRect f = cell.contentView.bounds;
-            btn.frame = CGRectMake(f.size.width - 76 - 12, (44 - 28) / 2, 76, 28);
+            btn.tag = 8889;  // for cleanup on cell reuse
+            CGRect f2 = cell.contentView.bounds;
+            btn.frame = CGRectMake(f2.size.width - 76 - 12, (44 - 28) / 2, 76, 28);
             btn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
             [btn addTarget:self action:@selector(_searchAvailableModels)
               forControlEvents:UIControlEventTouchUpInside];
@@ -789,6 +809,77 @@ destructiveButtonTitle:nil
     }
     [sheet setTag:400];
     [sheet showInView:self.view];
+}
+
+#pragma mark - v261025-6 Test connection
+
+// Same /v1/models call as _searchAvailableModels, but the result is shown
+// as an alert (not a model-picker sheet). Useful when the user just wants
+// to verify their BaseURL / API Key / Transit URL / provider config
+// without committing to adding a model.
+- (void)_testConnection
+{
+    NSDictionary *settings = [SettingsViewController loadSettings];
+    BOOL useTransit = [[settings objectForKey:SettingsKeyUseTransit] boolValue];
+    NSString *transitURL = [settings objectForKey:SettingsKeyTransitURL];
+    NSString *baseURL = [settings objectForKey:SettingsKeyBaseURL];
+    NSString *provider = [settings objectForKey:SettingsKeyProvider];
+    NSString *apiKey = [settings objectForKey:SettingsKeyAPIKey];
+
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"ModelMgmt test connection — transit=%d provider=%@", (int)useTransit, provider ?: @"?"]];
+
+    UIAlertView *loading = [[[UIAlertView alloc]
+        initWithTitle:NSLocalizedString(@"测试中…", nil)
+              message:NSLocalizedString(@"正在发起 GET /v1/models", nil)
+             delegate:nil
+    cancelButtonTitle:nil
+    otherButtonTitles:nil] autorelease];
+    [loading show];
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        @autoreleasepool {
+            NetworkService *svc = [[[NetworkService alloc] init] autorelease];
+            NSError *err = nil;
+            NSArray *models = [svc listModelsWithUseTransit:useTransit
+                                                  transitURL:transitURL
+                                                    baseURL:baseURL
+                                                    provider:provider
+                                                     apiKey:apiKey
+                                                       error:&err];
+            NSArray *resultsCopy = [models retain];
+            NSError *errCopy = [err retain];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [loading dismissWithClickedButtonIndex:-1 animated:NO];
+                if (errCopy || !resultsCopy || [resultsCopy count] == 0) {
+                    NSString *errDesc = [errCopy localizedDescription];
+                    [[Logger sharedLogger] error:[NSString stringWithFormat:
+                        @"ModelMgmt test connection FAIL — %@", errDesc ?: @"(no response)"]];
+                    UIAlertView *fail = [[[UIAlertView alloc]
+                        initWithTitle:NSLocalizedString(@"连接失败", nil)
+                              message:errDesc ?: NSLocalizedString(@"无返回,请检查 BaseURL / API Key / 中转 URL", nil)
+                             delegate:nil
+                    cancelButtonTitle:NSLocalizedString(@"好", nil)
+                    otherButtonTitles:nil] autorelease];
+                    [fail show];
+                } else {
+                    [[Logger sharedLogger] info:[NSString stringWithFormat:
+                        @"ModelMgmt test connection OK — %lu models", (unsigned long)[resultsCopy count]]];
+                    UIAlertView *ok = [[[UIAlertView alloc]
+                        initWithTitle:NSLocalizedString(@"连接成功", nil)
+                              message:[NSString stringWithFormat:
+                                  NSLocalizedString(@"服务器返回 %d 个可用模型。", nil),
+                                  (int)[resultsCopy count]]
+                             delegate:nil
+                    cancelButtonTitle:NSLocalizedString(@"好", nil)
+                    otherButtonTitles:nil] autorelease];
+                    [ok show];
+                }
+                [errCopy release];
+                [resultsCopy release];
+            });
+        }
+    });
 }
 
 - (void)actionSheet:(UIActionSheet *)actionSheet
