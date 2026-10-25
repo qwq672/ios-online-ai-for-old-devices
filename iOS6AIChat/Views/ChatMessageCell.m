@@ -141,6 +141,36 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         }
     }
     if (attr) {
+        // v261025-4: USER messages sit on the saturated green glass
+        // bubble (classic iOS 6 Messages) → remap the baked base text
+        // colors to white so they stay readable. Only runs for user
+        // messages and only on the MISS path (the remapped string is
+        // what lands in the cache, so hits stay free).
+        if (message.isUser) {
+            NSMutableAttributedString *m = [[attr mutableCopy] autorelease];
+            if (m) {
+                UIColor *base = [iOS6Theme textColor];
+                UIColor *sec  = [iOS6Theme secondaryTextColor];
+                [m enumerateAttribute:NSForegroundColorAttributeName
+                              inRange:NSMakeRange(0, [m length])
+                              options:0
+                         usingBlock:^(id value, NSRange range, BOOL *stop) {
+                    if (![(NSObject *)value isKindOfClass:[UIColor class]]) return;
+                    UIColor *c = (UIColor *)value;
+                    // Exact-component matches only — code blocks, links
+                    // and syntax colors keep their own palette.
+                    if ([c isEqual:base]) {
+                        [m addAttribute:NSForegroundColorAttributeName
+                                  value:[UIColor whiteColor] range:range];
+                    } else if ([c isEqual:sec]) {
+                        [m addAttribute:NSForegroundColorAttributeName
+                                  value:[UIColor colorWithWhite:1.0f alpha:0.82f]
+                                          range:range];
+                    }
+                }];
+                attr = m;
+            }
+        }
         [gRenderedAttrCache setObject:attr forKey:cacheKey
                               cost:(NSInteger)[message.content length]];
     }
@@ -425,6 +455,13 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     BubbleRole role = message.isUser ? BubbleRoleUser : BubbleRoleAssistant;
     _bubble.role = role;
 
+    // v261025-4: base text color follows the bubble — white on the
+    // green user glass, theme color on the silver/charcoal AI glass.
+    // (Only affects plain-text fallbacks; the attributed string above
+    // is the real render path.)
+    _textView.textColor = message.isUser ? [UIColor whiteColor]
+                                          : [iOS6Theme textColor];
+
     // Compute text width — MUST use the same unified width as
     // heightForMessage and _layoutInternal so the Markdown re-wrap and
     // the height calc agree (see unifiedTextWidthForOuterWidth:).
@@ -481,12 +518,16 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 
     if (message.images && [message.images count] > 0) {
         // Append "X images" indicator below the text.
+        // v261025-4: translucent white on the green user bubble.
         NSMutableAttributedString *withImages = [NSMutableAttributedString new];
         [withImages appendAttributedString:_renderedAttr];
+        UIColor *imgNoteColor = message.isUser
+            ? [UIColor colorWithWhite:1.0f alpha:0.82f]
+            : [iOS6Theme secondaryTextColor];
         [withImages appendAttributedString:[[[NSAttributedString alloc]
             initWithString:[NSString stringWithFormat:@"\n📎 %lu 张图片", (unsigned long)[message.images count]]
             attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12],
-                          NSForegroundColorAttributeName: [iOS6Theme secondaryTextColor]}] autorelease]];
+                          NSForegroundColorAttributeName: imgNoteColor}] autorelease]];
         self.renderedAttr = [withImages autorelease];
 
         // Build image views lazily — decode on background.

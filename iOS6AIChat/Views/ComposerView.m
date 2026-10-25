@@ -218,14 +218,22 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         // Reuse the title color slot for an orange/red tint.
         [_sendButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     } else {
-        // Restore send arrow + accent background.
+        // Restore send arrow + Messages-green glass background
+        // (v261025-4 — matches the green user bubbles; classic iOS 6
+        // Messages send button, reference IMG_0446).
         UIImage *arrow = [IconDrawing imageForType:IconTypeSendArrow
                                               size:CGSizeMake(18, 18)
                                               color:[UIColor whiteColor]];
         [_sendButton setImage:arrow forState:UIControlStateNormal];
-        UIImage *accentS = [iOS6Theme glassButtonImageOfSize:CGSizeMake(40, 30)
-                                                        accent:YES];
-        [_sendButton setBackgroundImage:accentS forState:UIControlStateNormal];
+        UIImage *greenS = [iOS6Theme greenGlassButtonImageOfSize:CGSizeMake(40, 30)];
+        if (greenS) {
+            [_sendButton setBackgroundImage:greenS forState:UIControlStateNormal];
+        } else {
+            // Fallback: the blue accent glass (green draw failed).
+            UIImage *accentS = [iOS6Theme glassButtonImageOfSize:CGSizeMake(40, 30)
+                                                            accent:YES];
+            [_sendButton setBackgroundImage:accentS forState:UIControlStateNormal];
+        }
         [_sendButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     }
 }

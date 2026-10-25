@@ -105,6 +105,11 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
 {
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kUDKeyDarkMode];
     [[NSUserDefaults standardUserDefaults] synchronize];
+    // v261025-4: drop every cached texture FIRST — pattern colors and
+    // stretchable images bake in the palette that was active when they
+    // were drawn. Without this flush the menu sheet / bubbles / chat
+    // backdrop would keep the pre-flip colors until relaunch.
+    [self flushThemeImageCache];
     // Notify all subscribers (AppDelegate, all VCs) so they can re-style
     // navbar / tabbar / table views with the new palette.
     [[NSNotificationCenter defaultCenter]
@@ -657,6 +662,625 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
 {
     return [self isDarkMode] ? [self colorWithHex:@"#C8C8CC"]
                               : [self colorWithHex:@"#49627F"];
+}
+
+#pragma mark - v261025-4 Skeuomorphic texture factories
+// All textures are drawn ONCE and parked in gThemeImageCache. During
+// scrolling the views just blit stretchable UIImages — no per-frame
+// gradients, no per-frame shadows. That is the whole iPhone 3GS
+// strategy (600 MHz / 256 MB): pay once at draw time, never during
+// scroll or streaming.
+
+// Static texture cache (never released — lives for the app lifetime,
+// flushed on theme change). MRC: retain on create, no release needed.
+static NSMutableDictionary *gThemeImageCache = nil;
+
++ (NSMutableDictionary *)_themeImageCache
+{
+    if (!gThemeImageCache) {
+        gThemeImageCache = [[NSMutableDictionary alloc] init];
+    }
+    return gThemeImageCache;
+}
+
++ (void)flushThemeImageCache
+{
+    // Also drop the pattern COLORS — they reference baked-in images.
+    if (gThemeImageCache) {
+        [gThemeImageCache removeAllObjects];
+    }
+}
+
+// Deterministic noise offsets for texture tiles. Random per call would
+// make the texture "jump" whenever the tile is re-drawn (theme flip);
+// a fixed table keeps the grain pixel-stable across rebuilds.
+static const uint8_t kNoiseCells[24] = {
+     2,  5,   7,  2,   13, 9,  5, 14,
+     9, 12,  3, 15,   6,  1, 11,  4,
+    15,  8,  1, 10,   3, 13,  0,  7
+};
+
+// --- Messages-style chat backdrop ---------------------------------------
+// A 16x16pt paper tile: flat base + 4 hairline pinstripes + sparse grain
+// dots. Repeats via colorWithPatternImage. Light = dove-blue paper
+// (IMG_0446 reference), dark = charcoal grain.
++ (UIColor *)chatBackgroundPatternColor
+{
+    NSString *key = [self isDarkMode] ? @"chatbg_pattern_dark"
+                                      : @"chatbg_pattern_light";
+    NSMutableDictionary *cache = [self _themeImageCache];
+    UIColor *cached = [cache objectForKey:key];
+    if (cached) return cached;
+
+    CGFloat tile = 16.0f;
+    CGFloat scale = [UIScreen mainScreen].scale;
+    if (scale < 1) scale = 1;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(tile, tile), NO, scale);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (!ctx) {
+        UIGraphicsEndImageContext();
+        return [self pinstripeBackground];   // graceful fallback
+    }
+    BOOL dark = [self isDarkMode];
+
+    // Base fill.
+    CGContextSetFillColorWithColor(ctx, [self colorWithHex:
+        (dark ? @"#17171A" : @"#D7DEE6")].CGColor);
+    CGContextFillRect(ctx, CGRectMake(0, 0, tile, tile));
+
+    // Fine horizontal pinstripes every 4pt — reads as laid paper fibres.
+    CGContextSetFillColorWithColor(ctx, [UIColor colorWithWhite:1.0f
+        alpha:(dark ? 0.02f : 0.28f)].CGColor);
+    for (CGFloat y = 0.5f; y < tile; y += 4.0f) {
+        CGContextFillRect(ctx, CGRectMake(0, y, tile, 0.5f));
+    }
+
+    // Sparse grain dots (deterministic table above).
+    CGContextSetFillColorWithColor(ctx, [UIColor colorWithWhite:0.0f
+        alpha:(dark ? 0.10f : 0.035f)].CGColor);
+    for (int i = 0; i < 24; i += 2) {
+        CGFloat px = (CGFloat)kNoiseCells[i] * (tile / 16.0f);
+        CGFloat py = (CGFloat)kNoiseCells[i + 1] * (tile / 16.0f);
+        CGContextFillRect(ctx, CGRectMake(px, py, 1.0f / scale, 1.0f / scale));
+    }
+
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    if (!img) return [self pinstripeBackground];
+    UIColor *pattern = [UIColor colorWithPatternImage:img];
+    [cache setObject:pattern forKey:key];
+    return pattern;
+}
+
+// --- Pre-rendered stretchable chat bubble -------------------------------
+// Template geometry (MATCHES ChatBubbleView's legacy drawRect metrics so
+// the layout math in ChatMessageCell does not change):
+//
+//   image 64 x 72 pt
+//     2pt transparent margin on top/left/right
+//     body  = (2, 2, 60, 62)   corner radius 14
+//     tail  = 6pt tall, bottom zone y 64..71
+//       user      → right side (x 38..58)
+//       assistant → left  side (x 6..22)
+//
+//   stretch caps: left 30 / top 40
+//     → horizontal stretch column at x=30 (1pt)
+//     → vertical   stretch row    at y=40 (1pt)
+//   The tail and all four corners live OUTSIDE the stretch zones, so
+//   they stay pixel-crisp at every bubble size. The gloss band occupies
+//   y 2..26 (inside the top cap) → fixed 24pt gloss on any height,
+//   exactly like real iOS 6 bubbles.
++ (UIImage *)stretchableBubbleImageForUser:(BOOL)isUser
+{
+    NSString *key = [self isDarkMode]
+        ? (isUser ? @"bubble_user_dark" : @"bubble_ai_dark")
+        : (isUser ? @"bubble_user_light" : @"bubble_ai_light");
+    NSMutableDictionary *cache = [self _themeImageCache];
+    UIImage *cached = [cache objectForKey:key];
+    if (cached) return cached;
+
+    CGFloat scale = [UIScreen mainScreen].scale;
+    if (scale < 1) scale = 1;
+    const CGFloat W = 64.0f, H = 72.0f;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(W, H), NO, scale);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (!ctx) {
+        UIGraphicsEndImageContext();
+        return nil;
+    }
+    BOOL dark = [self isDarkMode];
+
+    // Palette — classic iOS 6 Messages:
+    //   user: saturated green glass (white text goes on top)
+    //   assistant: silver-white glass (light) / charcoal (dark)
+    NSString *topHex, *botHex, *borderHex;
+    if (isUser) {
+        topHex    = dark ? @"#4F9C36" : @"#A3E86C";
+        botHex    = dark ? @"#2C6B1E" : @"#56C130";
+        borderHex = dark ? @"#1E4A12" : @"#3E8A22";
+    } else {
+        topHex    = dark ? @"#3C3C42" : @"#FFFFFF";
+        botHex    = dark ? @"#242428" : @"#E3E3E8";
+        borderHex = dark ? @"#141418" : @"#B9B9C0";
+    }
+
+    // Build body+tail path (same construction as the legacy drawRect).
+    CGFloat r = 14.0f;
+    CGRect body = CGRectMake(2.0f, 2.0f, 60.0f, 62.0f);
+    CGFloat tailH = 6.0f;
+    UIBezierPath *path = [UIBezierPath bezierPath];
+    [path moveToPoint:CGPointMake(body.origin.x + r, body.origin.y)];
+    [path addLineToPoint:CGPointMake(body.origin.x + body.size.width - r,
+                                     body.origin.y)];
+    [path addArcWithCenter:CGPointMake(body.origin.x + body.size.width - r,
+                                       body.origin.y + r)
+                     radius:r startAngle:-M_PI_2 endAngle:0 clockwise:YES];
+    [path addLineToPoint:CGPointMake(body.origin.x + body.size.width,
+                                     body.origin.y + body.size.height - r)];
+    [path addArcWithCenter:CGPointMake(body.origin.x + body.size.width - r,
+                                       body.origin.y + body.size.height - r)
+                     radius:r startAngle:0 endAngle:M_PI_2 clockwise:YES];
+    if (isUser) {
+        // Tail bottom-right: base 38..52, tip x 58.
+        [path addLineToPoint:CGPointMake(body.origin.x + body.size.width - 10.0f,
+                                         body.origin.y + body.size.height)];
+        [path addLineToPoint:CGPointMake(body.origin.x + body.size.width - 2.0f,
+                                         body.origin.y + body.size.height + tailH)];
+        [path addLineToPoint:CGPointMake(body.origin.x + body.size.width - 22.0f,
+                                         body.origin.y + body.size.height)];
+    } else {
+        // Tail bottom-left: base 6..22, tip x 2 — MIRRORED direction so
+        // it reads as "coming from the left speaker".
+        [path addLineToPoint:CGPointMake(body.origin.x + 22.0f,
+                                         body.origin.y + body.size.height)];
+        [path addLineToPoint:CGPointMake(body.origin.x + 2.0f,
+                                         body.origin.y + body.size.height + tailH)];
+        [path addLineToPoint:CGPointMake(body.origin.x + 10.0f,
+                                         body.origin.y + body.size.height)];
+    }
+    [path addLineToPoint:CGPointMake(body.origin.x + r,
+                                     body.origin.y + body.size.height)];
+    [path addArcWithCenter:CGPointMake(body.origin.x + r,
+                                       body.origin.y + body.size.height - r)
+                     radius:r startAngle:M_PI_2 endAngle:M_PI clockwise:YES];
+    [path addLineToPoint:CGPointMake(body.origin.x, body.origin.y + r)];
+    [path addArcWithCenter:CGPointMake(body.origin.x + r, body.origin.y + r)
+                     radius:r startAngle:M_PI endAngle:-M_PI_2 clockwise:YES];
+    [path closePath];
+
+    // 1) Baked soft drop shadow — add the path, then fill while the
+    // shadow is set → the shadow lands around body AND tail in one pass.
+    CGContextSaveGState(ctx);
+    CGContextSetShadowWithColor(ctx, CGSizeMake(0.0f, 2.0f), 3.0f,
+        [UIColor colorWithWhite:0.0f alpha:0.22f].CGColor);
+    CGContextAddPath(ctx, path.CGPath);
+    CGContextFillPath(ctx);
+    CGContextRestoreGState(ctx);
+
+    // 2) Real paint: gradient body + gloss band + inner highlight,
+    //    all clipped to the same path.
+    CGContextSaveGState(ctx);
+    CGContextAddPath(ctx, path.CGPath);
+    CGContextClip(ctx);
+    {
+        CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+        if (space) {
+            CGColorRef c0 = CGColorRetain([self colorWithHex:topHex].CGColor);
+            CGColorRef c1 = CGColorRetain([self colorWithHex:botHex].CGColor);
+            if (c0 && c1) {
+                const void *vals[] = { c0, c1 };
+                CFArrayRef colors = CFArrayCreate(kCFAllocatorDefault, vals, 2,
+                                                  &kCFTypeArrayCallBacks);
+                if (colors) {
+                    CGFloat locs[] = { 0.0f, 1.0f };
+                    CGGradientRef grad = CGGradientCreateWithColors(space, colors, locs);
+                    if (grad) {
+                        CGContextDrawLinearGradient(ctx, grad,
+                            CGPointMake(W / 2.0f, 2.0f),
+                            CGPointMake(W / 2.0f, 64.0f), 0);
+                        CGGradientRelease(grad);
+                    }
+                    CFRelease(colors);
+                }
+            }
+            if (c1) CGColorRelease(c1);
+            if (c0) CGColorRelease(c0);
+            CGColorSpaceRelease(space);
+        }
+        // 2) Fixed-height gloss band (y 2..26 — inside the top cap so it
+        //    never stretches): white 0.62 → 0.
+        CGColorSpaceRef gs = CGColorSpaceCreateDeviceRGB();
+        if (gs) {
+            CGColorRef g0 = CGColorRetain([UIColor colorWithWhite:1.0f alpha:0.62f].CGColor);
+            CGColorRef g1 = CGColorRetain([UIColor colorWithWhite:1.0f alpha:0.0f].CGColor);
+            if (g0 && g1) {
+                const void *vals[] = { g0, g1 };
+                CFArrayRef colors = CFArrayCreate(kCFAllocatorDefault, vals, 2,
+                                                  &kCFTypeArrayCallBacks);
+                if (colors) {
+                    CGFloat locs[] = { 0.0f, 1.0f };
+                    CGGradientRef grad = CGGradientCreateWithColors(gs, colors, locs);
+                    if (grad) {
+                        CGContextDrawLinearGradient(ctx, grad,
+                            CGPointMake(W / 2.0f, 2.0f),
+                            CGPointMake(W / 2.0f, 26.0f), 0);
+                        CGGradientRelease(grad);
+                    }
+                    CFRelease(colors);
+                }
+            }
+            if (g1) CGColorRelease(g1);
+            if (g0) CGColorRelease(g0);
+            CGColorSpaceRelease(gs);
+        }
+        // 3) 1px inner top highlight.
+        CGContextSetStrokeColorWithColor(ctx, [UIColor colorWithWhite:1.0f
+            alpha:(isUser ? 0.55f : 0.85f)].CGColor);
+        CGContextSetLineWidth(ctx, 1.0f);
+        CGContextMoveToPoint(ctx, body.origin.x + 5.0f, body.origin.y + 1.5f);
+        CGContextAddLineToPoint(ctx, body.origin.x + body.size.width - 5.0f,
+                                 body.origin.y + 1.5f);
+        CGContextStrokePath(ctx);
+    }
+    CGContextRestoreGState(ctx);
+
+    // 4) Outer hairline border.
+    CGContextSetStrokeColorWithColor(ctx, [self colorWithHex:borderHex].CGColor);
+    CGContextSetLineWidth(ctx, 1.0f);
+    CGContextAddPath(ctx, path.CGPath);
+    CGContextStrokePath(ctx);
+
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    if (!img) return nil;
+    // Caps: tail + corners protected (see geometry comment above).
+    UIImage *stretch = [img stretchableImageWithLeftCapWidth:30 topCapHeight:40];
+    if (!stretch) stretch = img;
+    [cache setObject:stretch forKey:key];
+    return stretch;
+}
+
+// --- Stretchable white card (menu rows / grouped cards) ------------------
+// 48x48 template, radius 10, hairline border + inner top highlight.
+// Caps 20/20 → corners fixed, middle stretches.
++ (UIImage *)stretchableCardBackgroundImage
+{
+    NSString *key = [self isDarkMode] ? @"card_dark" : @"card_light";
+    NSMutableDictionary *cache = [self _themeImageCache];
+    UIImage *cached = [cache objectForKey:key];
+    if (cached) return cached;
+
+    CGFloat scale = [UIScreen mainScreen].scale;
+    if (scale < 1) scale = 1;
+    CGFloat S = 48.0f;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(S, S), NO, scale);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (!ctx) {
+        UIGraphicsEndImageContext();
+        return nil;
+    }
+    BOOL dark = [self isDarkMode];
+    CGFloat r = 10.0f;
+
+    // Baked drop shadow — thin so the 1px stretch streaks stay invisible.
+    CGContextSaveGState(ctx);
+    CGContextSetShadowWithColor(ctx, CGSizeMake(0.0f, 1.5f), 2.0f,
+        [UIColor colorWithWhite:0.0f alpha:(dark ? 0.35f : 0.18f)].CGColor);
+    CGContextSetFillColorWithColor(ctx, [self colorWithHex:
+        (dark ? @"#2A2A2E" : @"#FFFFFF")].CGColor);
+    UIBezierPath *shadowPath = [UIBezierPath bezierPathWithRoundedRect:
+        CGRectMake(1, 1, S - 2, S - 2) cornerRadius:r];
+    CGContextAddPath(ctx, shadowPath.CGPath);
+    CGContextFillPath(ctx);
+    CGContextRestoreGState(ctx);
+
+    // Body gradient (very subtle vertical shade).
+    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:
+        CGRectMake(1, 1, S - 2, S - 2) cornerRadius:r];
+    CGContextSaveGState(ctx);
+    CGContextAddPath(ctx, path.CGPath);
+    CGContextClip(ctx);
+    [self drawLinearGradientInRect:CGRectMake(1, 1, S - 2, S - 2) context:ctx
+        topColor:[self colorWithHex:(dark ? @"#33333A" : @"#FFFFFF")]
+        bottomColor:[self colorWithHex:(dark ? @"#232328" : @"#E9E9EC")]];
+    // Inner top highlight.
+    CGContextSetStrokeColorWithColor(ctx, [UIColor colorWithWhite:1.0f
+        alpha:(dark ? 0.18f : 0.9f)].CGColor);
+    CGContextSetLineWidth(ctx, 1.0f);
+    CGContextMoveToPoint(ctx, 6, 2.5f);
+    CGContextAddLineToPoint(ctx, S - 6, 2.5f);
+    CGContextStrokePath(ctx);
+    CGContextRestoreGState(ctx);
+
+    // Hairline border.
+    CGContextSetStrokeColorWithColor(ctx, [self colorWithHex:
+        (dark ? @"#3C3C42" : @"#C9C9CF")].CGColor);
+    CGContextSetLineWidth(ctx, 1.0f);
+    CGContextAddPath(ctx, path.CGPath);
+    CGContextStrokePath(ctx);
+
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    if (!img) return nil;
+    UIImage *stretch = [img stretchableImageWithLeftCapWidth:20 topCapHeight:20];
+    if (!stretch) stretch = img;
+    [cache setObject:stretch forKey:key];
+    return stretch;
+}
+
+// --- Stretchable recessed slot -------------------------------------------
+// 32x32 template, radius 8: darker fill, inner TOP shadow line + inner
+// BOTTOM light line → reads as a slot carved into the surface.
++ (UIImage *)stretchableRecessedSlotImage
+{
+    NSString *key = [self isDarkMode] ? @"slot_dark" : @"slot_light";
+    NSMutableDictionary *cache = [self _themeImageCache];
+    UIImage *cached = [cache objectForKey:key];
+    if (cached) return cached;
+
+    CGFloat scale = [UIScreen mainScreen].scale;
+    if (scale < 1) scale = 1;
+    CGFloat S = 32.0f;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(S, S), NO, scale);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (!ctx) {
+        UIGraphicsEndImageContext();
+        return nil;
+    }
+    BOOL dark = [self isDarkMode];
+    CGFloat r = 8.0f;
+    CGRect rect = CGRectMake(1, 1, S - 2, S - 2);
+    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:rect
+                                                     cornerRadius:r];
+
+    CGContextSaveGState(ctx);
+    CGContextAddPath(ctx, path.CGPath);
+    CGContextClip(ctx);
+    [self drawLinearGradientInRect:rect context:ctx
+        topColor:[self colorWithHex:(dark ? @"#101013" : @"#DCDCDF")]
+        bottomColor:[self colorWithHex:(dark ? @"#1A1A1E" : @"#ECECEF")]];
+    // Inner top shadow — the "depth" of the slot.
+    CGContextSetStrokeColorWithColor(ctx, [UIColor colorWithWhite:0.0f
+        alpha:(dark ? 0.8f : 0.30f)].CGColor);
+    CGContextSetLineWidth(ctx, 2.0f);
+    CGContextMoveToPoint(ctx, 4, 2.0f);
+    CGContextAddLineToPoint(ctx, S - 4, 2.0f);
+    CGContextStrokePath(ctx);
+    // Inner bottom light line.
+    CGContextSetStrokeColorWithColor(ctx, [UIColor colorWithWhite:1.0f
+        alpha:(dark ? 0.10f : 0.75f)].CGColor);
+    CGContextSetLineWidth(ctx, 1.0f);
+    CGContextMoveToPoint(ctx, 4, S - 2.5f);
+    CGContextAddLineToPoint(ctx, S - 4, S - 2.5f);
+    CGContextStrokePath(ctx);
+    CGContextRestoreGState(ctx);
+
+    // Outer hairline.
+    CGContextSetStrokeColorWithColor(ctx, [self colorWithHex:
+        (dark ? @"#000000" : @"#A8A8AE")].CGColor);
+    CGContextSetLineWidth(ctx, 1.0f);
+    CGContextAddPath(ctx, path.CGPath);
+    CGContextStrokePath(ctx);
+
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    if (!img) return nil;
+    UIImage *stretch = [img stretchableImageWithLeftCapWidth:16 topCapHeight:16];
+    if (!stretch) stretch = img;
+    [cache setObject:stretch forKey:key];
+    return stretch;
+}
+
+// --- Stretchable glass chip (recent-conversation strip) ------------------
+// 56x34 template, radius 9, glass gradient + gloss + hairline. Caps 24/16.
++ (UIImage *)stretchableGlassChipImage
+{
+    NSString *key = [self isDarkMode] ? @"chip_dark" : @"chip_light";
+    NSMutableDictionary *cache = [self _themeImageCache];
+    UIImage *cached = [cache objectForKey:key];
+    if (cached) return cached;
+
+    CGFloat scale = [UIScreen mainScreen].scale;
+    if (scale < 1) scale = 1;
+    CGFloat W = 56.0f, H = 34.0f;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(W, H), NO, scale);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (!ctx) {
+        UIGraphicsEndImageContext();
+        return nil;
+    }
+    BOOL dark = [self isDarkMode];
+    CGFloat r = 9.0f;
+    CGRect rect = CGRectMake(1, 1, W - 2, H - 2);
+    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:rect
+                                                     cornerRadius:r];
+
+    // Baked mini shadow.
+    CGContextSaveGState(ctx);
+    CGContextSetShadowWithColor(ctx, CGSizeMake(0.0f, 1.0f), 1.5f,
+        [UIColor colorWithWhite:0.0f alpha:0.20f].CGColor);
+    CGContextSetFillColorWithColor(ctx, [UIColor whiteColor].CGColor);
+    CGContextAddPath(ctx, path.CGPath);
+    CGContextFillPath(ctx);
+    CGContextRestoreGState(ctx);
+
+    // Glass gradient body.
+    CGContextSaveGState(ctx);
+    CGContextAddPath(ctx, path.CGPath);
+    CGContextClip(ctx);
+    [self drawLinearGradientInRect:rect context:ctx
+        topColor:[self colorWithHex:(dark ? @"#4A4A52" : @"#FFFFFF")]
+        bottomColor:[self colorWithHex:(dark ? @"#26262C" : @"#D3D3D9")]];
+    // Gloss top half.
+    [self drawGlossInRect:CGRectMake(rect.origin.x, rect.origin.y,
+                                     rect.size.width, rect.size.height * 0.5f)
+                  context:ctx];
+    CGContextRestoreGState(ctx);
+
+    // Hairline border.
+    CGContextSetStrokeColorWithColor(ctx, [self colorWithHex:
+        (dark ? @"#55555C" : @"#AAAAB0")].CGColor);
+    CGContextSetLineWidth(ctx, 1.0f);
+    CGContextAddPath(ctx, path.CGPath);
+    CGContextStrokePath(ctx);
+
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    if (!img) return nil;
+    UIImage *stretch = [img stretchableImageWithLeftCapWidth:24 topCapHeight:16];
+    if (!stretch) stretch = img;
+    [cache setObject:stretch forKey:key];
+    return stretch;
+}
+
+// --- Leather top bar for the menu sheet -----------------------------------
+// Full-width image (screen width x 64pt): 20pt status area + 44pt bar.
+// Vertical graphite gradient + deterministic grain + double stitched
+// hairline at the bottom edge. Drawn at REAL width (no horizontal
+// stretch) so the grain doesn't smear.
++ (UIImage *)menuLeatherBarImage
+{
+    CGFloat W = [UIScreen mainScreen].bounds.size.width;
+    if (W < 100) W = 320.0f;
+    NSString *key = [NSString stringWithFormat:@"leatherbar_%.0f_%@",
+                     W, [self isDarkMode] ? @"dark" : @"light"];
+    NSMutableDictionary *cache = [self _themeImageCache];
+    UIImage *cached = [cache objectForKey:key];
+    if (cached) return cached;
+
+    CGFloat scale = [UIScreen mainScreen].scale;
+    if (scale < 1) scale = 1;
+    CGFloat H = 64.0f;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(W, H), NO, scale);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (!ctx) {
+        UIGraphicsEndImageContext();
+        return nil;
+    }
+
+    // 3-stop graphite gradient (matches the app bar family, deeper).
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    if (space) {
+        CGColorRef c0 = CGColorRetain([self colorWithHex:@"#4A4A52"].CGColor);
+        CGColorRef c1 = CGColorRetain([self colorWithHex:@"#2E2E34"].CGColor);
+        CGColorRef c2 = CGColorRetain([self colorWithHex:@"#141418"].CGColor);
+        if (c0 && c1 && c2) {
+            const void *vals[] = { c0, c1, c2 };
+            CFArrayRef colors = CFArrayCreate(kCFAllocatorDefault, vals, 3,
+                                              &kCFTypeArrayCallBacks);
+            if (colors) {
+                CGFloat locs[] = { 0.0f, 0.5f, 1.0f };
+                CGGradientRef grad = CGGradientCreateWithColors(space, colors, locs);
+                if (grad) {
+                    CGContextDrawLinearGradient(ctx, grad,
+                        CGPointMake(0, 0), CGPointMake(0, H), 0);
+                    CGGradientRelease(grad);
+                }
+                CFRelease(colors);
+            }
+        }
+        if (c2) CGColorRelease(c2);
+        if (c1) CGColorRelease(c1);
+        if (c0) CGColorRelease(c0);
+        CGColorSpaceRelease(space);
+    }
+
+    // Leather grain — deterministic noise dots, denser than paper.
+    CGContextSetFillColorWithColor(ctx, [UIColor colorWithWhite:1.0f alpha:0.035f].CGColor);
+    for (int i = 0; i < 24; i += 2) {
+        CGFloat px = (CGFloat)kNoiseCells[i] * (W / 16.0f);
+        CGFloat py = (CGFloat)kNoiseCells[i + 1] * (H / 16.0f);
+        CGContextFillRect(ctx, CGRectMake(px, py, 2.0f, 2.0f));
+    }
+    CGContextSetFillColorWithColor(ctx, [UIColor colorWithWhite:0.0f alpha:0.16f].CGColor);
+    for (int i = 0; i < 24; i += 2) {
+        CGFloat px = (CGFloat)(kNoiseCells[i] + 1) * (W / 16.0f);
+        CGFloat py = (CGFloat)(15 - kNoiseCells[i + 1]) * (H / 16.0f);
+        CGContextFillRect(ctx, CGRectMake(px, py, 2.0f, 2.0f));
+    }
+
+    // Top 1px highlight + bottom stitched double hairline (light over
+    // dark) — the classic bar edge treatment.
+    CGFloat lineH = 1.0f / scale;
+    CGContextSetFillColorWithColor(ctx,
+        [UIColor colorWithWhite:1.0f alpha:0.5f].CGColor);
+    CGContextFillRect(ctx, CGRectMake(0, 0, W, lineH));
+    CGContextSetFillColorWithColor(ctx,
+        [UIColor colorWithWhite:0.0f alpha:0.85f].CGColor);
+    CGContextFillRect(ctx, CGRectMake(0, H - 2.0f * lineH, W, lineH));
+    CGContextSetFillColorWithColor(ctx,
+        [UIColor colorWithWhite:1.0f alpha:0.22f].CGColor);
+    CGContextFillRect(ctx, CGRectMake(0, H - lineH, W, lineH));
+
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    if (img) [cache setObject:img forKey:key];
+    return img;
+}
+
+// --- Messages-green glossy send button ------------------------------------
++ (UIImage *)greenGlassButtonImageOfSize:(CGSize)size
+{
+    if (size.width < 2 || size.height < 2) return nil;
+    CGFloat scale = [UIScreen mainScreen].scale;
+    if (scale < 1) scale = 1;
+    UIGraphicsBeginImageContextWithOptions(size, NO, scale);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (!ctx) {
+        UIGraphicsEndImageContext();
+        return nil;
+    }
+    CGFloat radius = 5.0f;
+    CGRect rect = CGRectMake(0.5f, 0.5f, size.width - 1.0f, size.height - 1.0f);
+    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:rect
+                                                     cornerRadius:radius];
+
+    CGContextSaveGState(ctx);
+    CGContextAddPath(ctx, path.CGPath);
+    CGContextClip(ctx);
+
+    // Green gradient body (classic iMessage send).
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    if (space) {
+        CGColorRef c0 = CGColorRetain([self colorWithHex:@"#9BE858"].CGColor);
+        CGColorRef c1 = CGColorRetain([self colorWithHex:@"#56C130"].CGColor);
+        if (c0 && c1) {
+            const void *vals[] = { c0, c1 };
+            CFArrayRef colors = CFArrayCreate(kCFAllocatorDefault, vals, 2,
+                                              &kCFTypeArrayCallBacks);
+            if (colors) {
+                CGFloat locs[] = { 0.0f, 1.0f };
+                CGGradientRef grad = CGGradientCreateWithColors(space, colors, locs);
+                if (grad) {
+                    CGContextDrawLinearGradient(ctx, grad,
+                        CGPointMake(0, 0), CGPointMake(0, size.height), 0);
+                    CGGradientRelease(grad);
+                }
+                CFRelease(colors);
+            }
+        }
+        if (c1) CGColorRelease(c1);
+        if (c0) CGColorRelease(c0);
+        CGColorSpaceRelease(space);
+    }
+    // Glossy top half.
+    [self drawGlossInRect:CGRectMake(0, 0, size.width, size.height * 0.5f)
+                  context:ctx];
+    // Inner top highlight.
+    CGContextSetFillColorWithColor(ctx,
+        [UIColor colorWithWhite:1.0f alpha:0.7f].CGColor);
+    CGContextFillRect(ctx, CGRectMake(1, 1, size.width - 2, 1.0f));
+    CGContextRestoreGState(ctx);
+
+    // Darker green hairline border.
+    CGContextSetStrokeColorWithColor(ctx, [self colorWithHex:@"#3E8A22"].CGColor);
+    CGContextSetLineWidth(ctx, 1.0f);
+    CGContextAddPath(ctx, path.CGPath);
+    CGContextStrokePath(ctx);
+
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return img;  // autoreleased (drawn at exact button size, tiny)
 }
 
 @end

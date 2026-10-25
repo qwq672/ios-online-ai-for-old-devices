@@ -107,6 +107,46 @@ typedef enum {
 //   neutral = bar-colored bordered glass; accent = saturated blue glass.
 + (UIImage *)glassButtonImageOfSize:(CGSize)size accent:(BOOL)accent;
 
+// === v261025-4 skeuomorphic texture factories ===========================
+// All images below are DRAWN ONCE and cached statically (flushed on theme
+// change via flushThemeImageCache). They are pre-rendered so no per-frame
+// CoreGraphics work happens during scrolling — this is the iPhone 3GS
+// performance strategy: pay the texture cost once, blit forever after.
+
+// Flush every cached texture (called automatically on dark-mode toggle;
+// also call manually if you change anything that affects baked colors).
++ (void)flushThemeImageCache;
+
+// Messages-style chat backdrop — fine paper texture as a repeating
+// pattern color (light: dove-blue paper; dark: charcoal grain).
++ (UIColor *)chatBackgroundPatternColor;
+
+// Pre-rendered STRETCHABLE chat bubble (iOS 6 Messages reference):
+// gradient body + fixed-height gloss band + 1px inner top highlight +
+// 1px border + baked soft drop shadow + tail (user: bottom-right,
+// assistant: bottom-left). Use drawInRect: with the full bubble frame.
++ (UIImage *)stretchableBubbleImageForUser:(BOOL)isUser;
+
+// Stretchable white "card" background for menu rows (rounded corners,
+// hairline border, inner top highlight — iOS 6 grouped-card look).
++ (UIImage *)stretchableCardBackgroundImage;
+
+// Stretchable recessed slot (dark inner shadow top, light inner line
+// bottom) — search field + bottom strip backdrop on the menu sheet.
++ (UIImage *)stretchableRecessedSlotImage;
+
+// Stretchable glass chip for the horizontally scrolling recent-
+// conversation strip (like the Reminders date strip).
++ (UIImage *)stretchableGlassChipImage;
+
+// Full-width leather top bar for the menu sheet (status bar + 44pt bar),
+// with vertical gradient + noise grain + stitched bottom hairline.
++ (UIImage *)menuLeatherBarImage;
+
+// Messages-green glossy send button (drawn at exact size like the other
+// glass buttons — green glass + gloss + darker green hairline).
++ (UIImage *)greenGlassButtonImageOfSize:(CGSize)size;
+
 // Internal: create a grey gradient bar background image.
 // Called by AppDelegate for navbar, iOS6Theme for tabbar.
 + (UIImage *)_barGradientImageWithHeight:(CGFloat)height;

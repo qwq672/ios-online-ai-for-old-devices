@@ -60,6 +60,24 @@
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     if (!ctx) return;
 
+    // v261025-4: PRE-RENDERED stretchable bubble. The gradient body,
+    // fixed-height gloss band, inner highlight, hairline border, baked
+    // drop shadow AND the tail all live in ONE cached template image
+    // (built once per role per theme in iOS6Theme, caps 30/40 so the
+    // tail and corners never stretch). drawRect is now a single blit —
+    // the old code re-ran gradient + live shadow CoreGraphics on EVERY
+    // frame of every bubble, which was the biggest scrolling cost on
+    // iPhone 3GS.
+    UIImage *tmpl = [iOS6Theme stretchableBubbleImageForUser:(self.role == BubbleRoleUser)];
+    if (tmpl) {
+        // The template's geometry mirrors the legacy drawRect: 2pt
+        // transparent margins + body + 6pt tail zone — i.e. it maps
+        // 1:1 onto the view's bounds.
+        [tmpl drawInRect:self.bounds];
+        return;
+    }
+
+    // ---- Fallback (template draw failed): legacy vector drawing -------
     BubbleRole role = _role;
     BOOL isUser = (role == BubbleRoleUser);
 

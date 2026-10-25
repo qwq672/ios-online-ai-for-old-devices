@@ -111,7 +111,10 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 - (void)viewDidLoad
 {
     [super viewDidLoad];
-    self.view.backgroundColor = [iOS6Theme pinstripeBackground];
+    // v261025-4: Messages-style paper backdrop (dove-blue pinstriped
+    // paper in light mode, charcoal grain in dark) — replaces the flat
+    // pinstripe so the chat reads as a skeuomorphic "page".
+    self.view.backgroundColor = [iOS6Theme chatBackgroundPatternColor];
 
     CGRect tableFrame = CGRectMake(0, 0,
                                     self.view.bounds.size.width,
@@ -213,7 +216,8 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
 - (void)_applyTheme
 {
-    self.view.backgroundColor = [iOS6Theme pinstripeBackground];
+    // v261025-4: paper-texture chat backdrop (cached pattern tile).
+    self.view.backgroundColor = [iOS6Theme chatBackgroundPatternColor];
     _tableView.backgroundColor = [UIColor clearColor];
     // Composer draws its own metal-bar chrome in drawRect — leave its
     // backgroundColor clear or the bar gradient would be hidden.
