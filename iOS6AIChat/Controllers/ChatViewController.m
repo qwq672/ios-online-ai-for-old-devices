@@ -477,11 +477,36 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     if (webSearch && tavilyKey.length > 0) {
         // Pre-search the user's last message.
         [self _showSearchStatus:[NSString stringWithFormat:@"🔍 搜索: \"%@\"…", text]];
+        // v261025-2: capture EVERYTHING the GCD block needs as plain
+        // values. The old code captured `systemPrompt` / `provider` /
+        // `baseURL` / `apiKey` / `model` / `temperature` / `assistantMsg`
+        // by reference (block retain is fine) but ALSO captured
+        // `_conversation.conversationID` BY IVAR READ — i.e. the block
+        // re-read self->_conversation at execution time. If the user
+        // switched conversations during the (up-to-seconds) Tavily
+        // search, the AI stream was launched against the NEW
+        // conversation's messages (which didn't contain the userMsg /
+        // assistantMsg we just appended to the OLD one) — producing
+        // corrupted / overwritten replies. Capture the ID now, then
+        // pass it down explicitly and also use it as a guard.
         NSString *capturedText = [text copy];
         NSString *capturedTavilyKey = [tavilyKey copy];
         NSInteger capturedMaxResults = maxResults;
         BOOL capturedUseTransit = useTransit;
         NSString *capturedTransitURL = [transitURL copy];
+        NSString *capturedConversationID = [_conversation.conversationID copy];
+        Conversation *capturedConversation = [_conversation retain];
+        NSString *capturedSystemPrompt = [systemPrompt copy];
+        NSString *capturedProvider = [provider copy];
+        NSString *capturedBaseURL = [baseURL copy];
+        NSString *capturedApiKey = [apiKey copy];
+        NSString *capturedModel = [model copy];
+        CGFloat capturedTemperature = temperature;
+        BOOL capturedDeepThinking = deepThinking;
+        // assistantMsg is owned by _conversation.messages; retaining it
+        // here keeps it alive even if the user deletes the conversation
+        // mid-search.
+        Message *capturedAssistantMsg = [assistantMsg retain];
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
             // v261025-1: @autoreleasepool — GCD worker threads have NO pool;
             // the autoreleased NetworkService + result objects leaked per search.
@@ -497,6 +522,17 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
             NSArray *resultsCopy = [results retain];
             NSError *errCopy = [err retain];
             dispatch_async(dispatch_get_main_queue(), ^{
+                // v261025-2: if the user switched conversations during the
+                // search, abort — the assistantMsg / userMsg we appended
+                // belong to a different conversation now and re-launching
+                // the stream would corrupt the new conversation.
+                if (![capturedConversationID isEqualToString:_conversation.conversationID]) {
+                    [[Logger sharedLogger] warn:@"ChatVC search completed after conversation switch — discarding results"];
+                    [resultsCopy release];
+                    [errCopy release];
+                    [self _hideSearchStatus];
+                    return;
+                }
                 [self _hideSearchStatus];
                 if (resultsCopy && [resultsCopy count] > 0) {
                     // Build a system message with the search results.
@@ -511,20 +547,20 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                             [r objectForKey:@"content"]];
                     }
                     [self _launchAIStreamWithMessages:nil
-                                          systemPrompt:systemPrompt
+                                          systemPrompt:capturedSystemPrompt
                                             useTransit:capturedUseTransit
                                             transitURL:capturedTransitURL
-                                              baseURL:baseURL
-                                              provider:provider
-                                               apiKey:apiKey
-                                                model:model
-                                          temperature:temperature
-                                      conversationID:_conversation.conversationID
-                                        assistantMsg:assistantMsg
+                                              baseURL:capturedBaseURL
+                                              provider:capturedProvider
+                                               apiKey:capturedApiKey
+                                                model:capturedModel
+                                          temperature:capturedTemperature
+                                      conversationID:capturedConversationID
+                                        assistantMsg:capturedAssistantMsg
                                           webSearch:YES
                                           tavilyKey:capturedTavilyKey
                                       tavilyMaxResults:capturedMaxResults
-                                        deepThinking:deepThinking
+                                        deepThinking:capturedDeepThinking
                                        preSearchResults:ctx];
                 } else {
                     // Pre-search failed — proceed without search context.
@@ -534,20 +570,20 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                         [self _hideSearchStatus];
                     });
                     [self _launchAIStreamWithMessages:nil
-                                          systemPrompt:systemPrompt
+                                          systemPrompt:capturedSystemPrompt
                                             useTransit:capturedUseTransit
                                             transitURL:capturedTransitURL
-                                              baseURL:baseURL
-                                              provider:provider
-                                               apiKey:apiKey
-                                                model:model
-                                          temperature:temperature
-                                      conversationID:_conversation.conversationID
-                                        assistantMsg:assistantMsg
+                                              baseURL:capturedBaseURL
+                                              provider:capturedProvider
+                                               apiKey:capturedApiKey
+                                                model:capturedModel
+                                          temperature:capturedTemperature
+                                      conversationID:capturedConversationID
+                                        assistantMsg:capturedAssistantMsg
                                           webSearch:YES
                                           tavilyKey:capturedTavilyKey
                                       tavilyMaxResults:capturedMaxResults
-                                        deepThinking:deepThinking
+                                        deepThinking:capturedDeepThinking
                                        preSearchResults:nil];
                 }
                 [resultsCopy release];
@@ -555,7 +591,21 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
             });
             } // @autoreleasepool
         });
+        // v261025-2: balance all the per-search retains here so the
+        // cleanup lives next to the capture site. The block retains
+        // these for the duration of the GCD work; this outer release
+        // balances the +1 from [x copy] / [x retain] above.
         [capturedText release];
+        [capturedTavilyKey release];
+        [capturedTransitURL release];
+        [capturedConversationID release];
+        [capturedConversation release];
+        [capturedSystemPrompt release];
+        [capturedProvider release];
+        [capturedBaseURL release];
+        [capturedApiKey release];
+        [capturedModel release];
+        [capturedAssistantMsg release];
         return;
     }
 

@@ -243,7 +243,12 @@ enum {
                                        reuseIdentifier:kCellReuseID] autorelease];
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     }
-    for (UIView *v in cell.contentView.subviews) [v removeFromSuperview];
+    // v261025-2: snapshot subviews — see CharacterManagementVC for the
+    // full root-cause writeup. Mutating subviews while iterating it is
+    // SIGSEGV on cctools-port armv7.
+    NSArray *oldSubviews = [cell.contentView.subviews copy];
+    for (UIView *v in oldSubviews) [v removeFromSuperview];
+    [oldSubviews release];
     cell.backgroundColor = [iOS6Theme bubbleAssistantColor];
     cell.textLabel.text = @"";
     cell.textLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];
@@ -518,7 +523,16 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
             NSArray *resultsCopy = [models retain];
             NSError *errCopy = [err retain];
             dispatch_async(dispatch_get_main_queue(), ^{
-                [resultsCopy release];
+                // v261025-2: BUG FIX — the previous code did
+                //   [resultsCopy release];
+                // as the FIRST line of this block, then proceeded to
+                // read `resultsCopy` (count check, objectAtIndex:) below.
+                // Under MRC the block retains resultsCopy (+1) so the
+                // release left it at +1 from the original [models retain]
+                // — i.e. one dangling +1 that survived only by accident
+                // of block-retain ordering. Move the release to the END
+                // of the success path (and the existing early-return
+                // releases) to match SettingsVC's correct pattern.
                 [loading dismissWithClickedButtonIndex:-1 animated:NO];
                 if (errCopy || !resultsCopy || [resultsCopy count] == 0) {
                     // Capture the description BEFORE releasing errCopy.
@@ -533,6 +547,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                     cancelButtonTitle:NSLocalizedString(@"好", nil)
                     otherButtonTitles:nil] autorelease];
                     [errCopy release];
+                    [resultsCopy release];
                     [fail show];
                     return;
                 }
@@ -552,6 +567,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                 self.availableModels = [NSMutableArray arrayWithArray:picked];
                 [[Logger sharedLogger] info:[NSString stringWithFormat:
                     @"ModelMgmt search OK — %lu models", (unsigned long)[picked count]]];
+                [resultsCopy release];
                 [self performSelector:@selector(_presentModelSheet)
                            withObject:nil
                            afterDelay:0.1];
@@ -586,15 +602,28 @@ destructiveButtonTitle:nil
 - (void)actionSheet:(UIActionSheet *)actionSheet
 clickedButtonAtIndex:(NSInteger)buttonIndex
 {
-    if (actionSheet.tag == 400 && buttonIndex >= 0 && buttonIndex < (NSInteger)[_availableModels count]) {
-        NSString *m = [_availableModels objectAtIndex:buttonIndex];
-        [ModelManagementViewController addModel:m];
-        // Also set as default (user picked it explicitly).
-        [[NSUserDefaults standardUserDefaults] setObject:m forKey:SettingsKeyModel];
-        [[NSUserDefaults standardUserDefaults] synchronize];
-        [[Logger sharedLogger] info:[NSString stringWithFormat:@"Search added+default %@", m]];
-        [_tableView reloadData];
-    }
+    // v261025-2: iOS 6 UIActionSheet cancelButton occupies buttonIndex 0
+    // (or actionSheet.cancelButtonIndex). The previous code only checked
+    // `buttonIndex >= 0 && buttonIndex < count`, which let cancel (0) flow
+    // into the "add model" branch — every "取消" tap silently added the
+    // FIRST search result to the saved list and re-set the default model.
+    // Not a direct crash, but it corrupts user data and matches the
+    // "搜索模型后弹出列表点击取消按钮闪退" report when the resulting
+    // addModel + saveModelList path raced with the next reload. Real
+    // model buttons live at buttonIndex == 1..N (cancel occupies 0).
+    if (actionSheet.tag != 400) return;
+    if (buttonIndex == actionSheet.cancelButtonIndex) return;
+    if (buttonIndex < 1) return;
+    NSInteger modelIndex = buttonIndex - 1;
+    if (modelIndex >= (NSInteger)[_availableModels count]) return;
+    NSString *m = [_availableModels objectAtIndex:modelIndex];
+    if (![m isKindOfClass:[NSString class]] || m.length == 0) return;
+    [ModelManagementViewController addModel:m];
+    // Also set as default (user picked it explicitly).
+    [[NSUserDefaults standardUserDefaults] setObject:m forKey:SettingsKeyModel];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    [[Logger sharedLogger] info:[NSString stringWithFormat:@"Search added+default %@", m]];
+    if (_tableView) [_tableView reloadData];
 }
 
 @end

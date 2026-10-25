@@ -293,7 +293,17 @@ enum {
         cell = [[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
                                        reuseIdentifier:kCellReuseID] autorelease];
     }
-    for (UIView *v in cell.contentView.subviews) [v removeFromSuperview];
+    // v261025-2: CRITICAL — iOS 6's -[UIView subviews] may return a
+    // direct reference to the internal subview array (NOT a copy on
+    // every device/orientation). Mutating it via -removeFromSuperview
+    // while iterating triggers "Collection was mutated while being
+    // enumerated" — on cctools-port armv7 with no @catch this becomes a
+    // hard SIGSEGV. This is the root cause of "tap any component on the
+    // Character Management page → crash" — every cellForRowAtIndexPath
+    // call hit this line. Fix: snapshot the array first.
+    NSArray *oldSubviews = [cell.contentView.subviews copy];
+    for (UIView *v in oldSubviews) [v removeFromSuperview];
+    [oldSubviews release];
     cell.backgroundColor = [iOS6Theme bubbleAssistantColor];
     cell.textLabel.textColor = [iOS6Theme textColor];
     cell.textLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];

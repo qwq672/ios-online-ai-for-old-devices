@@ -148,7 +148,12 @@
         cell = [[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
                                        reuseIdentifier:kID] autorelease];
     }
-    for (UIView *v in cell.contentView.subviews) [v removeFromSuperview];
+    // v261025-2: snapshot subviews — see CharacterManagementVC for the
+    // full root-cause writeup. Mutating subviews while iterating it is
+    // SIGSEGV on cctools-port armv7.
+    NSArray *oldSubviews = [cell.contentView.subviews copy];
+    for (UIView *v in oldSubviews) [v removeFromSuperview];
+    [oldSubviews release];
     cell.backgroundColor = [iOS6Theme bubbleAssistantColor];
     cell.textLabel.text = @"";
     cell.textLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];

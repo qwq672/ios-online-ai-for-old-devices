@@ -385,7 +385,12 @@ titleForFooterInSection:(NSInteger)section
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         cell.contentView.backgroundColor = [iOS6Theme bubbleAssistantColor];
     }
-    for (UIView *v in cell.contentView.subviews) [v removeFromSuperview];
+    // v261025-2: snapshot subviews — see CharacterManagementVC for the
+    // full root-cause writeup. Mutating subviews while iterating it is
+    // SIGSEGV on cctools-port armv7.
+    NSArray *oldSubviews = [cell.contentView.subviews copy];
+    for (UIView *v in oldSubviews) [v removeFromSuperview];
+    [oldSubviews release];
     // Reset cell properties to prevent reuse artifacts.
     cell.textLabel.text = @"";
     cell.textLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
@@ -1028,15 +1033,23 @@ destructiveButtonTitle:nil
 - (void)actionSheet:(UIActionSheet *)actionSheet
 clickedButtonAtIndex:(NSInteger)buttonIndex
 {
-    if (actionSheet.tag == 400 && buttonIndex >= 0 && buttonIndex < (NSInteger)[_availableModels count]) {
-        NSString *chosen = [_availableModels objectAtIndex:buttonIndex];
-        NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-        [d setObject:chosen forKey:SettingsKeyModel];
-        [d synchronize];
-        [_fields release];
-        _fields = [[NSMutableDictionary alloc] init];
-        [_tableView reloadData];
-    }
+    // v261025-2: same fix as ModelMgmt — iOS 6 cancel occupies index 0,
+    // real model buttons live at index 1..N. The old code let "取消"
+    // (buttonIndex 0) silently overwrite the default model with the
+    // first search result.
+    if (actionSheet.tag != 400) return;
+    if (buttonIndex == actionSheet.cancelButtonIndex) return;
+    if (buttonIndex < 1) return;
+    NSInteger modelIndex = buttonIndex - 1;
+    if (modelIndex >= (NSInteger)[_availableModels count]) return;
+    NSString *chosen = [_availableModels objectAtIndex:modelIndex];
+    if (![chosen isKindOfClass:[NSString class]] || chosen.length == 0) return;
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    [d setObject:chosen forKey:SettingsKeyModel];
+    [d synchronize];
+    [_fields release];
+    _fields = [[NSMutableDictionary alloc] init];
+    [_tableView reloadData];
 }
 
 #pragma mark - Toggle handlers
