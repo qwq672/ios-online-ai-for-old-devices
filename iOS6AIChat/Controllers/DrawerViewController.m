@@ -446,13 +446,16 @@ enum {
                                                 animated:NO];
     CGFloat H = _sheetView.bounds.size.height;
     if (H < 200) H = [[UIScreen mainScreen] bounds].size.height;
+    // (CI fix: the 4-arg animateWithDuration:delay:options:animations:
+    // variant does NOT exist — completion: is mandatory.)
     [UIView animateWithDuration:kSheetAnimDuration
                           delay:0.0f
                         options:(UIViewAnimationOptionCurveEaseInOut |
                                  UIViewAnimationOptionBeginFromCurrentState)
                      animations:^{
         _sheetView.frame = CGRectMake(0, 0, self.view.bounds.size.width, H);
-    }];
+    }
+                     completion:nil];
 }
 
 - (void)closeSidebarAnimated:(BOOL)animated
