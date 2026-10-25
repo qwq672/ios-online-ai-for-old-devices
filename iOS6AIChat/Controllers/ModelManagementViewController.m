@@ -31,6 +31,9 @@ enum {
     NSMutableArray *_availableModels;   // for /v1/models search action sheet
     NSString *_pendingAddModel;          // for tag-300 alert (add model)
     NSString *_pendingDeleteModel;       // for tag-700 alert (confirm delete)
+    // v261025-3: transit bundled-model search state.
+    BOOL _transitSearchInProgress;       // YES while a search is in-flight
+    BOOL _transitSearchCancelled;        // YES if user tapped 取消 on the loading alert
 }
 @end
 
@@ -40,56 +43,122 @@ enum {
 
 #pragma mark - Model list persistence (class helpers)
 
-// Pull the saved list from NSUserDefaults. Returns the JSON array.
-// v261025-1: seeding only happens when the key is MISSING (first
-// launch) or the stored JSON is CORRUPT. An intentionally-emptied list
-// (user deleted every model) is now respected — the old code re-seeded
-// the provider defaults on every empty read, which made "delete the
-// last model" look like it did nothing.
-+ (NSArray *)savedModelList
+// v261025-3 storage format: JSON array of dicts:
+//   [{"id":"gpt-4o","source":"user"}, {"id":"glm-4-flash","source":"transit"}]
+// source values: "user" (manually added) | "transit" (auto-added from the
+// transit server's bundled list — bulk-removed when the user toggles
+// "transit default model" OFF in Settings).
+//
+// Old format (pre-v261025-3) was a flat JSON array of strings — we
+// auto-migrate it to the dict format on first read, marking each
+// migrated entry as source="user" (since the user manually added them
+// or they were provider-seed defaults).
+
++ (NSArray *)savedModelEntries
 {
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
     NSString *json = [d stringForKey:SettingsKeyModelList];
     if (!json || json.length == 0) {
-        // Key missing → first launch: seed provider defaults.
+        // First launch: seed provider defaults as source="user".
         NSString *provider = [d stringForKey:SettingsKeyProvider] ?: ProviderIDOpenAI;
-        NSArray *seed = [SettingsViewController _defaultModelListForProvider:provider];
-        [self saveModelList:seed];
+        NSArray *seedIDs = [SettingsViewController _defaultModelListForProvider:provider];
+        NSMutableArray *seed = [NSMutableArray arrayWithCapacity:[seedIDs count]];
+        for (NSString *mid in seedIDs) {
+            [seed addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+                             mid, @"id",
+                             @"user", @"source", nil]];
+        }
+        [self saveModelEntries:seed];
         return seed;
     }
     NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];
     NSError *err = nil;
-    NSArray *arr = [NSJSONSerialization JSONObjectWithData:data
-                                                   options:0
-                                                     error:&err];
-    if (err || ![arr isKindOfClass:[NSArray class]]) {
-        // Corrupt storage → re-seed so the app stays usable.
+    id parsed = [NSJSONSerialization JSONObjectWithData:data options:0 error:&err];
+    if (err || ![parsed isKindOfClass:[NSArray class]]) {
+        // Corrupt → re-seed.
         NSString *provider = [d stringForKey:SettingsKeyProvider] ?: ProviderIDOpenAI;
-        NSArray *seed = [SettingsViewController _defaultModelListForProvider:provider];
-        [self saveModelList:seed];
+        NSArray *seedIDs = [SettingsViewController _defaultModelListForProvider:provider];
+        NSMutableArray *seed = [NSMutableArray arrayWithCapacity:[seedIDs count]];
+        for (NSString *mid in seedIDs) {
+            [seed addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+                             mid, @"id",
+                             @"user", @"source", nil]];
+        }
+        [self saveModelEntries:seed];
         return seed;
     }
-    NSMutableArray *out = [NSMutableArray array];
-    for (id e in arr) {
+    // Migrate: if parsed contains bare NSStrings (old format) or dicts
+    // missing source, convert to canonical {id, source} form.
+    BOOL migrated = NO;
+    NSMutableArray *entries = [NSMutableArray arrayWithCapacity:[parsed count]];
+    for (id e in parsed) {
         if ([e isKindOfClass:[NSString class]] && [(NSString *)e length] > 0) {
-            [out addObject:e];
+            [entries addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+                                e, @"id",
+                                @"user", @"source", nil]];
+            migrated = YES;
+        } else if ([e isKindOfClass:[NSDictionary class]]) {
+            NSString *mid = [e objectForKey:@"id"];
+            NSString *src = [e objectForKey:@"source"];
+            if (![mid isKindOfClass:[NSString class]] || mid.length == 0) continue;
+            if (![src isKindOfClass:[NSString class]] || src.length == 0) {
+                src = @"user";
+                migrated = YES;
+            }
+            [entries addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+                                mid, @"id",
+                                src, @"source", nil]];
         }
     }
-    // Intentionally EMPTY list is valid — return it as-is.
+    if (migrated) [self saveModelEntries:entries];
+    return entries;
+}
+
+// Back-compat shim: return only the IDs (NSStrings) — old callers
+// (e.g. SettingsVC fallback logic) expect a flat array of model-id
+// strings. New callers should use savedModelEntries directly.
++ (NSArray *)savedModelList
+{
+    NSArray *entries = [self savedModelEntries];
+    NSMutableArray *out = [NSMutableArray arrayWithCapacity:[entries count]];
+    for (NSDictionary *e in entries) {
+        NSString *mid = [e objectForKey:@"id"];
+        if ([mid isKindOfClass:[NSString class]] && mid.length > 0) {
+            [out addObject:mid];
+        }
+    }
     return out;
 }
 
-+ (void)saveModelList:(NSArray *)list
++ (void)saveModelEntries:(NSArray *)entries
 {
+    // De-duplicate by id; first occurrence wins.
     NSMutableArray *seen = [NSMutableArray array];
-    for (NSString *m in list) {
-        if (![seen containsObject:m]) [seen addObject:m];
+    NSMutableArray *clean = [NSMutableArray arrayWithCapacity:[entries count]];
+    for (id e in entries) {
+        NSString *mid = nil;
+        NSString *src = @"user";
+        if ([e isKindOfClass:[NSDictionary class]]) {
+            mid = [e objectForKey:@"id"];
+            id srcObj = [e objectForKey:@"source"];
+            if ([srcObj isKindOfClass:[NSString class]] && [(NSString *)srcObj length] > 0) {
+                src = srcObj;
+            }
+        } else if ([e isKindOfClass:[NSString class]]) {
+            mid = e;
+        }
+        if (![mid isKindOfClass:[NSString class]] || mid.length == 0) continue;
+        if ([seen containsObject:mid]) continue;
+        [seen addObject:mid];
+        [clean addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+                          mid, @"id",
+                          src, @"source", nil]];
     }
     NSError *err = nil;
-    NSData *data = [NSJSONSerialization dataWithJSONObject:seen
-                                                    options:0
-                                                      error:&err];
+    NSData *data = [NSJSONSerialization dataWithJSONObject:clean options:0 error:&err];
     if (err || !data) {
+        // Fallback: CSV of just IDs (loses source info but preserves
+        // the list across a corrupting JSON failure).
         NSString *csv = [seen componentsJoinedByString:@","];
         [[NSUserDefaults standardUserDefaults] setObject:csv
                                                   forKey:SettingsKeyModelList];
@@ -102,25 +171,106 @@ enum {
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
+// Back-compat shim: save an array of IDs (all become source="user").
++ (void)saveModelList:(NSArray *)list
+{
+    NSMutableArray *entries = [NSMutableArray arrayWithCapacity:[list count]];
+    for (NSString *mid in list) {
+        if (![mid isKindOfClass:[NSString class]] || mid.length == 0) continue;
+        [entries addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+                            mid, @"id",
+                            @"user", @"source", nil]];
+    }
+    [self saveModelEntries:entries];
+}
+
 + (void)addModel:(NSString *)model
 {
     if (!model || model.length == 0) return;
-    NSArray *cur = [self savedModelList];
-    if ([cur containsObject:model]) return;
+    NSArray *cur = [self savedModelEntries];
+    for (NSDictionary *e in cur) {
+        NSString *mid = [e objectForKey:@"id"];
+        if ([mid isKindOfClass:[NSString class]] && [mid isEqualToString:model]) return;
+    }
     NSMutableArray *arr = [NSMutableArray arrayWithArray:cur];
-    [arr addObject:model];
-    [self saveModelList:arr];
+    [arr addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+                    model, @"id",
+                    @"user", @"source", nil]];
+    [self saveModelEntries:arr];
 }
 
 + (void)removeModel:(NSString *)model
 {
     if (!model || model.length == 0) return;
-    NSArray *cur = [self savedModelList];
+    NSArray *cur = [self savedModelEntries];
     NSMutableArray *arr = [NSMutableArray array];
-    for (NSString *m in cur) {
-        if (![m isEqualToString:model]) [arr addObject:m];
+    for (NSDictionary *e in cur) {
+        NSString *mid = [e objectForKey:@"id"];
+        if (![mid isEqualToString:model]) [arr addObject:e];
     }
-    [self saveModelList:arr];
+    [self saveModelEntries:arr];
+}
+
+// v261025-3: bulk-add transit-server bundled models.
+// - Skips models that already exist (by id, regardless of source).
+// - Each new model is added with source="transit".
++ (void)addTransitModels:(NSArray *)modelIDs
+{
+    if (!modelIDs || [modelIDs count] == 0) return;
+    NSArray *cur = [self savedModelEntries];
+    NSMutableArray *arr = [NSMutableArray arrayWithArray:cur];
+    for (NSString *mid in modelIDs) {
+        if (![mid isKindOfClass:[NSString class]] || mid.length == 0) continue;
+        BOOL exists = NO;
+        for (NSDictionary *e in arr) {
+            NSString *eID = [e objectForKey:@"id"];
+            if ([eID isKindOfClass:[NSString class]] && [eID isEqualToString:mid]) {
+                exists = YES;
+                break;
+            }
+        }
+        if (exists) continue;
+        [arr addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+                        mid, @"id",
+                        @"transit", @"source", nil]];
+    }
+    [self saveModelEntries:arr];
+}
+
+// v261025-3: bulk-remove all source="transit" models.
+// Called when the user toggles "transit default model" OFF in Settings.
++ (void)removeAllTransitModels
+{
+    NSArray *cur = [self savedModelEntries];
+    NSMutableArray *arr = [NSMutableArray array];
+    NSInteger removedCount = 0;
+    for (NSDictionary *e in cur) {
+        NSString *src = [e objectForKey:@"source"];
+        if ([src isKindOfClass:[NSString class]] && [src isEqualToString:@"transit"]) {
+            removedCount++;
+            continue;
+        }
+        [arr addObject:e];
+    }
+    [self saveModelEntries:arr];
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"ModelMgmt removeAllTransitModels — %d removed", (int)removedCount]];
+}
+
+// v261025-3: get the source ("user" | "transit") for a given model id.
+// Used by ModelMgmt cell UI to show the "中转" 角标.
++ (NSString *)sourceForModel:(NSString *)model
+{
+    if (!model || model.length == 0) return @"user";
+    NSArray *cur = [self savedModelEntries];
+    for (NSDictionary *e in cur) {
+        NSString *mid = [e objectForKey:@"id"];
+        if ([mid isKindOfClass:[NSString class]] && [mid isEqualToString:model]) {
+            NSString *src = [e objectForKey:@"source"];
+            return [src isKindOfClass:[NSString class]] ? src : @"user";
+        }
+    }
+    return @"user";
 }
 
 #pragma mark - Lifecycle
@@ -284,7 +434,41 @@ enum {
             NSArray *list = [ModelManagementViewController savedModelList];
             if (indexPath.row >= (NSInteger)[list count]) return cell;
             NSString *m = [list objectAtIndex:indexPath.row];
-            cell.textLabel.text = m;
+            // v261025-3: show a small "中转" badge next to transit-sourced
+            // models. The badge is a tinted UILabel appended to the right
+            // of the model id text. Tapping the row still sets it as the
+            // default (the badge is display-only).
+            NSString *src = [ModelManagementViewController sourceForModel:m];
+            if ([src isEqualToString:@"transit"]) {
+                // Build the title as "model_id  [中转]" with the tag
+                // appended in a softer color (NSAttributedString would be
+                // ideal but iOS 6 UILabel doesn't support attributedText
+                // until iOS 6.0 — wait, actually it DOES in 6.0, but the
+                // cctools-port SDK headers may not declare it. Safer to
+                // just append to the plain text and rely on a separate
+                // badge UILabel in the cell.contentView.)
+                cell.textLabel.text = m;
+                UILabel *badge = [[[UILabel alloc]
+                    initWithFrame:CGRectMake(0, 0, 50, 18)] autorelease];
+                badge.text = NSLocalizedString(@"中转", nil);
+                badge.textColor = [UIColor whiteColor];
+                badge.backgroundColor = [iOS6Theme tintColor];
+                badge.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:10]];
+                badge.textAlignment = NSTextAlignmentCenter;
+                badge.layer.cornerRadius = 4.0f;
+                badge.layer.masksToBounds = YES;
+                badge.tag = 9001;  // for cleanup on cell reuse
+                // Position will be set in layoutSubviews — but since we
+                // don't subclass UITableViewCell here, just place it now
+                // at a fixed offset from the right edge.
+                CGRect f = cell.contentView.bounds;
+                badge.frame = CGRectMake(f.size.width - 60 - 12,
+                                         (44 - 18) / 2, 50, 18);
+                badge.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+                [cell.contentView addSubview:badge];
+            } else {
+                cell.textLabel.text = m;
+            }
             // Checkmark if this is the current default.
             NSString *def = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyModel];
             if (def && [def isEqualToString:m]) {
@@ -413,6 +597,14 @@ forRowAtIndexPath:(NSIndexPath *)indexPath
 - (void)alertView:(UIAlertView *)alertView
 clickedButtonAtIndex:(NSInteger)buttonIndex
 {
+    // v261025-3: tag 500 = transit bundled-model search loading alert.
+    // The alert has only a 取消 button (buttonIndex 0). Tapping it sets
+    // the cancel flag — the in-flight HTTP request can't be aborted, but
+    // its result will be discarded when the dispatch_async returns.
+    if (alertView.tag == 500) {
+        _transitSearchCancelled = YES;
+        return;
+    }
     if (alertView.tag == 300 && buttonIndex == 1) {
         // Add model — read the text field.
         UITextField *tf = nil;
@@ -624,6 +816,144 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     [[NSUserDefaults standardUserDefaults] synchronize];
     [[Logger sharedLogger] info:[NSString stringWithFormat:@"Search added+default %@", m]];
     if (_tableView) [_tableView reloadData];
+}
+
+#pragma mark - Transit bundled model search (v261025-3)
+
+// Search the transit server's own bundled model list via
+// GET {transitURL}/v1/transit/models. If the server's
+// TRANSIT_MODELS_ENABLED env var is 1, the returned models are
+// bulk-added to local storage with source="transit". If disabled,
+// prompt the user with "此中转服务器不含自带模型".
+//
+// Mid-search the user can tap 取消 on the loading alert. The underlying
+// sendSynchronousRequest can't be aborted, so the result is simply
+// discarded when the dispatch_async returns.
+//
+// NOTE: This method is called from TWO entry points:
+//   - SettingsViewController when the user toggles "transit default
+//     model" ON (we instantiate a fresh ModelMgmt VC, call this method,
+//     then release).
+//   - ModelMgmt's own "重新搜索" button row (under kMMSectionCurrent).
+- (void)searchTransitBundledModels
+{
+    if (_transitSearchInProgress) {
+        // Already searching — no-op (defensive; UI shouldn't allow this).
+        return;
+    }
+    NSDictionary *settings = [SettingsViewController loadSettings];
+    NSString *transitURL = [settings objectForKey:SettingsKeyTransitURL];
+    if (!transitURL || transitURL.length == 0) {
+        transitURL = @"https://ai-transit.awa.lat";
+    }
+    _transitSearchInProgress = YES;
+    _transitSearchCancelled = NO;
+
+    UIAlertView *loading = [[[UIAlertView alloc]
+        initWithTitle:NSLocalizedString(@"搜索中转自带模型…", nil)
+              message:NSLocalizedString(@"正在连接中转服务器", nil)
+             delegate:self
+    cancelButtonTitle:NSLocalizedString(@"取消", nil)
+    otherButtonTitles:nil] autorelease];
+    [loading setTag:500];
+    [loading show];
+
+    NSString *transitURLCopy = [transitURL copy];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        // v261025-1: @autoreleasepool — GCD worker threads have NO pool;
+        // the autoreleased NetworkService below leaked per search.
+        @autoreleasepool {
+            NetworkService *svc = [[[NetworkService alloc] init] autorelease];
+            NSError *err = nil;
+            NSDictionary *result = [svc transitModelsAtTransitURL:transitURLCopy
+                                                             error:&err];
+            NSDictionary *resultCopy = [result retain];
+            NSError *errCopy = [err retain];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                _transitSearchInProgress = NO;
+                [loading dismissWithClickedButtonIndex:-1 animated:NO];
+                // If user cancelled, ignore the result entirely.
+                if (_transitSearchCancelled) {
+                    _transitSearchCancelled = NO;
+                    [errCopy release];
+                    [resultCopy release];
+                    [transitURLCopy release];
+                    return;
+                }
+                if (errCopy || !resultCopy) {
+                    NSString *errDesc = [errCopy localizedDescription];
+                    [[Logger sharedLogger] error:[NSString stringWithFormat:
+                        @"Transit bundled model search failed — %@",
+                        errDesc ?: @"no response"]];
+                    UIAlertView *fail = [[[UIAlertView alloc]
+                        initWithTitle:NSLocalizedString(@"搜索失败", nil)
+                              message:errDesc ?: NSLocalizedString(@"无法连接中转服务器", nil)
+                             delegate:nil
+                    cancelButtonTitle:NSLocalizedString(@"好", nil)
+                    otherButtonTitles:nil] autorelease];
+                    [fail setTag:501];
+                    [fail show];
+                    [errCopy release];
+                    [resultCopy release];
+                    [transitURLCopy release];
+                    return;
+                }
+                BOOL enabled = [[resultCopy objectForKey:@"enabled"] boolValue];
+                NSArray *models = [resultCopy objectForKey:@"models"];
+                if (!enabled) {
+                    // Server-side toggle is OFF.
+                    UIAlertView *disabled = [[[UIAlertView alloc]
+                        initWithTitle:NSLocalizedString(@"此中转服务器不含自带模型", nil)
+                              message:NSLocalizedString(@"请在中转服务器配置 TRANSIT_MODELS_ENABLED=1 后重试", nil)
+                             delegate:nil
+                    cancelButtonTitle:NSLocalizedString(@"好", nil)
+                    otherButtonTitles:nil] autorelease];
+                    [disabled setTag:501];
+                    [disabled show];
+                    [errCopy release];
+                    [resultCopy release];
+                    [transitURLCopy release];
+                    return;
+                }
+                if (![models isKindOfClass:[NSArray class]] || [models count] == 0) {
+                    UIAlertView *empty = [[[UIAlertView alloc]
+                        initWithTitle:NSLocalizedString(@"中转服务器未配置任何模型", nil)
+                              message:NSLocalizedString(@"服务端 TRANSIT_MODELS 为空，请联系运维", nil)
+                             delegate:nil
+                    cancelButtonTitle:NSLocalizedString(@"好", nil)
+                    otherButtonTitles:nil] autorelease];
+                    [empty setTag:501];
+                    [empty show];
+                    [errCopy release];
+                    [resultCopy release];
+                    [transitURLCopy release];
+                    return;
+                }
+                // Success — bulk-add to local storage with source="transit".
+                [ModelManagementViewController addTransitModels:models];
+                // Record last-search timestamp (used by Settings page footer).
+                [[NSUserDefaults standardUserDefaults] setObject:[NSDate date]
+                                                          forKey:SettingsKeyTransitModelsLastSearch];
+                [[NSUserDefaults standardUserDefaults] synchronize];
+                if (_tableView) [_tableView reloadData];
+                [[Logger sharedLogger] info:[NSString stringWithFormat:
+                    @"Transit bundled models added — %lu", (unsigned long)[models count]]];
+                UIAlertView *ok = [[[UIAlertView alloc]
+                    initWithTitle:NSLocalizedString(@"搜索到的模型已存储至模型管理", nil)
+                          message:[NSString stringWithFormat:
+                              NSLocalizedString(@"已添加 %lu 个模型", nil),
+                              (unsigned long)[models count]]
+                         delegate:nil
+                cancelButtonTitle:NSLocalizedString(@"好", nil)
+                otherButtonTitles:nil] autorelease];
+                [ok setTag:501];
+                [ok show];
+                [errCopy release];
+                [resultCopy release];
+                [transitURLCopy release];
+            });
+        }
+    });
 }
 
 @end

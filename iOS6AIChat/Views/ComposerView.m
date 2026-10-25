@@ -193,8 +193,74 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 - (void)setIsStreaming:(BOOL)isStreaming
 {
     _isStreaming = isStreaming;
-    _sendButton.enabled = !isStreaming;
-    [_sendButton setAlpha:isStreaming ? 0.4f : 1.0f];
+    // v261025-3: while streaming, the send button transforms into a
+    // "stop" button: it stays ENABLED (so the user can tap it), the
+    // icon swaps to a stop square, and the background changes from
+    // accent-blue to a desaturated red (iOS 6 "destructive" hint).
+    // Tapping the button in this state fires composerDidTapStop: on
+    // the delegate (which should call NetworkService.stopGenerating).
+    _sendButton.enabled = YES;  // always tappable: send OR stop
+    [_sendButton setAlpha:1.0f];
+    if (isStreaming) {
+        // Stop icon — white filled square, drawn inline (no font glyph
+        // dependency, since iOS 6 Helvetica may not have a U+25A0 black
+        // square at the size we need).
+        UIImage *stopIcon = [self _stopIconImage];
+        [_sendButton setImage:stopIcon forState:UIControlStateNormal];
+        // Red-tinted glass background — visually distinct from the
+        // accent-blue send button so the user knows this stops generation.
+        UIImage *stopBg = [iOS6Theme glassButtonImageOfSize:CGSizeMake(40, 30)
+                                                    accent:NO];
+        // Overlay a translucent red layer to make it read as destructive.
+        // (glassButtonImageOfSize draws a glassy grey button; we tint it
+        // red by drawing a red rect with alpha over it.)
+        [_sendButton setBackgroundImage:stopBg forState:UIControlStateNormal];
+        // Reuse the title color slot for an orange/red tint.
+        [_sendButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    } else {
+        // Restore send arrow + accent background.
+        UIImage *arrow = [IconDrawing imageForType:IconTypeSendArrow
+                                              size:CGSizeMake(18, 18)
+                                              color:[UIColor whiteColor]];
+        [_sendButton setImage:arrow forState:UIControlStateNormal];
+        UIImage *accentS = [iOS6Theme glassButtonImageOfSize:CGSizeMake(40, 30)
+                                                        accent:YES];
+        [_sendButton setBackgroundImage:accentS forState:UIControlStateNormal];
+        [_sendButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    }
+}
+
+// v261025-3: draw an inline stop icon (white filled square with
+// slight rounding). Cached as a static so it doesn't redraw per tap.
+- (UIImage *)_stopIconImage
+{
+    static UIImage *cachedStopIcon = nil;
+    if (cachedStopIcon) return cachedStopIcon;
+    CGFloat sz = 14.0f;
+    CGFloat scale = [[UIScreen mainScreen] scale];
+    if (scale < 1) scale = 1;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(sz, sz), NO, scale);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (ctx) {
+        CGContextSetFillColorWithColor(ctx, [UIColor whiteColor].CGColor);
+        CGFloat r = 2.0f;  // slight rounding
+        CGContextBeginPath(ctx);
+        CGContextMoveToPoint(ctx, r, 0);
+        CGContextAddArcToPoint(ctx, sz, 0, sz, r, r);
+        CGContextAddArcToPoint(ctx, sz, sz, sz - r, sz, r);
+        CGContextAddArcToPoint(ctx, 0, sz, 0, sz - r, r);
+        CGContextAddArcToPoint(ctx, 0, 0, r, 0, r);
+        CGContextClosePath(ctx);
+        CGContextFillPath(ctx);
+    }
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    if (img) {
+        // Retain for the app lifetime — this is a tiny static image.
+        cachedStopIcon = [img retain];
+        return cachedStopIcon;
+    }
+    return nil;
 }
 
 #pragma mark - Layout
@@ -380,11 +446,21 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 
 - (void)_sendTapped
 {
+    // v261025-3: if we're currently streaming, the send button has
+    // morphed into a stop button — fire the stop delegate path instead
+    // of the send path. The delegate (ChatViewController) should call
+    // NetworkService.stopGenerating, which preserves the partial text
+    // and triggers the normal didFinish flow.
+    if (_isStreaming) {
+        if ([_delegate respondsToSelector:@selector(composerDidTapStop:)]) {
+            [_delegate composerDidTapStop:self];
+        }
+        return;
+    }
     // v261025-1: belt-and-braces guard — the send button is disabled
     // during streaming, but if the isStreaming flag ever desyncs we
     // still refuse to double-send here rather than launching a second
     // stream on top of the first.
-    if (_isStreaming) return;
 
     NSString *text = [_textView.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (text.length == 0 && [_pendingImages count] == 0) return;

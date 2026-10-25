@@ -33,6 +33,15 @@ extern NSString *const SettingsKeySystemPrompt;
 extern NSString *const SettingsKeyWebSearchEnabled;
 extern NSString *const SettingsKeyTavilyAPIKey;
 extern NSString *const SettingsKeyTavilyMaxResults;
+// v261025-3: transit-server bundled model toggle.
+//   ON  → app calls /v1/transit/models, auto-adds returned models to the
+//         local Model management with source="transit".
+//   OFF → all source="transit" models are bulk-removed from local storage.
+extern NSString *const SettingsKeyUseTransitModels;
+// v261025-3: timestamp of the last successful /v1/transit/models search
+// (formatted as a localized date string, displayed in Settings under the
+// toggle row to remind the user when they last refreshed).
+extern NSString *const SettingsKeyTransitModelsLastSearch;
 
 // Provider IDs.
 extern NSString *const ProviderIDZhipu;

@@ -77,6 +77,10 @@
 // v261025-3: https→http URL rewrite for the iOS 6 TLS transit fallback
 // (see the implementation comment for the full rationale).
 + (NSString *)_httpFallbackForURLString:(NSString *)s;
+// v261025-3: map provider → real upstream base URL for image generation
+// (the image-gen entry point doesn't receive baseURL, so we map provider
+// to a known base URL — used only to construct X-Target-URL).
++ (NSString *)_imageAPIBaseURLForProvider:(NSString *)provider;
 @end
 
 @implementation NetworkService
@@ -394,11 +398,25 @@
         [req setValue:[NSString stringWithFormat:@"Bearer %@", self.apiKey]
         forHTTPHeaderField:@"Authorization"];
     }
-    if (self.useTransit && self.provider.length > 0) {
-        [req setValue:self.provider forHTTPHeaderField:@"X-Provider"];
-    }
-    if (self.useTransit && self.model.length > 0) {
-        [req setValue:self.model forHTTPHeaderField:@"X-Model"];
+    // v261025-3: transit is now a pure TLS pass-through proxy.
+    // Client tells transit where to forward via X-Target-URL header.
+    // We build the target URL from self.baseURL (+ /v1/chat/completions).
+    // The OLD code sent X-Provider: <provider> + X-Model: <model>, but
+    // v261025-3 transit no longer has an UPSTREAMS table — it requires
+    // X-Target-URL. Without it the transit returns 400 and the chat
+    // never starts.
+    if (self.useTransit) {
+        NSString *target = [self.baseURL stringByTrimmingCharactersInSet:
+                            [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+        if (target.length > 0) {
+            NSString *targetEndpoint;
+            if ([target hasSuffix:@"/v1"] || [target hasSuffix:@"/v1/"]) {
+                targetEndpoint = [target stringByAppendingPathComponent:@"chat/completions"];
+            } else {
+                targetEndpoint = [target stringByAppendingPathComponent:@"v1/chat/completions"];
+            }
+            [req setValue:targetEndpoint forHTTPHeaderField:@"X-Target-URL"];
+        }
     }
     [req setHTTPBody:bodyData];
 
@@ -453,6 +471,70 @@
     [_thinkingAccumulated setString:@""];
     [_toolCallAccumulators removeAllObjects];
     self.toolCallPending = NO;
+}
+
+// v261025-3: Stop the in-flight stream but PRESERVE the accumulated text.
+// Unlike cancelStream (which is used when switching conversations and
+// clears all state so the next send starts clean), stopGenerating is
+// triggered by the user tapping the "Stop" button mid-stream. The text
+// the AI has produced so far should be KEPT as the assistant message —
+// the user explicitly asked to stop, not to discard.
+//
+// Implementation:
+//   1. Nil the connection so no more chunks arrive.
+//   2. Capture accumulated text + thinking + conversation ID into locals
+//      (we're about to clear them, but we still need to deliver them).
+//   3. Reset all stream state (same as cancelStream minus the conversationID).
+//   4. Manually fire didFinishForConversationID with the captured text,
+//      so the delegate (ChatViewController) sees the normal completion path
+//      and saves the partial message to disk + clears isStreaming.
+//
+// NOTE: This method MUST be called on the main thread. The delegate is
+// __unsafe_unretained, so we cannot dispatch_async — the delegate could
+// be released before the async block runs. Synchronous delivery on the
+// caller's (main) thread is the only safe path.
+- (void)stopGenerating
+{
+    if (!_connection) {
+        // Nothing in flight — no-op (defensive; UI shouldn't allow this).
+        return;
+    }
+    NSString *capturedConvID = [_conversationID retain];
+    NSString *capturedText = [_accumulated copy];
+    NSString *capturedThinking = [_thinkingAccumulated copy];
+
+    [_connection cancel];
+    self.connection = nil;
+    [_rawBuffer setData:nil];
+    self.toolCallPending = NO;
+    [_toolCallAccumulators removeAllObjects];
+    // NOTE: do NOT nil out _conversationID here — we still need it for
+    // the didFinish delegate callback. Clear it AFTER delivery.
+    [_accumulated setString:@""];
+    [_thinkingAccumulated setString:@""];
+
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"NET ⊘ user stopped — delivering %lu chars of partial text",
+        (unsigned long)(capturedText.length)]];
+
+    // Synchronous delivery on the caller's thread. Delegate is assign,
+    // so we must not defer this to a queue (the delegate could be freed
+    // before the block runs — its owning VC could be torn down).
+    if ([_delegate respondsToSelector:@selector(networkService:didReceiveThinkingForConversationID:thinkingText:)] &&
+        capturedThinking.length > 0) {
+        [_delegate networkService:self
+            didReceiveThinkingForConversationID:capturedConvID
+                              thinkingText:capturedThinking];
+    }
+    if ([_delegate respondsToSelector:@selector(networkService:didFinishForConversationID:fullText:)]) {
+        [_delegate networkService:self
+              didFinishForConversationID:capturedConvID
+                              fullText:capturedText ?: @""];
+    }
+    self.conversationID = nil;
+    [capturedConvID release];
+    [capturedText release];
+    [capturedThinking release];
 }
 
 #pragma mark - NSURLConnectionDataDelegate
@@ -1188,6 +1270,26 @@
     return YES;
 }
 
+#pragma mark - Provider → image API base URL (v261025-3)
+
+// The image generation method (generateImageWithPrompt:) doesn't receive
+// the user's real baseURL — only provider + transitURL. To build the
+// X-Target-URL header (which the new transit requires), we map provider
+// to a known upstream base URL. This is a temporary bridge: once the
+// model management rework lands (with per-model baseURL support),
+// callers should pass baseURL explicitly and this helper can go away.
++ (NSString *)_imageAPIBaseURLForProvider:(NSString *)provider
+{
+    if ([provider isEqualToString:ProviderIDZhipu]) {
+        return @"https://open.bigmodel.cn/api/paas/v4";
+    }
+    if ([provider isEqualToString:ProviderIDOllama]) {
+        return @"http://localhost:11434/v1";
+    }
+    // default + ProviderIDOpenAI
+    return @"https://api.openai.com/v1";
+}
+
 #pragma mark - iOS 6 TLS transit fallback (v261025-3)
 
 // iOS 6 SecureTransport cannot complete TLS against Cloudflare's modern
@@ -1277,7 +1379,12 @@
                                                           timeoutInterval:30.0];
         [req setHTTPMethod:@"POST"];
         [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-        if (transitWebSearch) [req setValue:@"tavily" forHTTPHeaderField:@"X-Provider"];
+        // v261025-3: transit no longer routes by X-Provider. Tell it the
+        // real Tavily endpoint via X-Target-URL.
+        if (transitWebSearch) {
+            [req setValue:@"https://api.tavily.com/search"
+               forHTTPHeaderField:@"X-Target-URL"];
+        }
         [req setHTTPBody:bodyData];
         resp = nil;
         netErr = nil;
@@ -1381,8 +1488,20 @@
             [req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey]
             forHTTPHeaderField:@"Authorization"];
         }
-        if (useTransit && provider.length > 0) {
-            [req setValue:provider forHTTPHeaderField:@"X-Provider"];
+        // v261025-3: transit now requires X-Target-URL (no more X-Provider).
+        // Build target = {baseURL}/v1/models.
+        if (useTransit) {
+            NSString *target = [baseURL stringByTrimmingCharactersInSet:
+                                [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+            if (target.length > 0) {
+                NSString *targetEndpoint;
+                if ([target hasSuffix:@"/v1"] || [target hasSuffix:@"/v1/"]) {
+                    targetEndpoint = [target stringByAppendingPathComponent:@"models"];
+                } else {
+                    targetEndpoint = [target stringByAppendingPathComponent:@"v1/models"];
+                }
+                [req setValue:targetEndpoint forHTTPHeaderField:@"X-Target-URL"];
+            }
         }
         resp = nil;
         netErr = nil;
@@ -1436,6 +1555,106 @@
         }
     }
     return out;
+}
+
+#pragma mark - Transit server's own model list (sync, v261025-3)
+
+// GET {transitURL}/v1/transit/models
+//   Returns: {"enabled": true/false, "models": ["glm-4-flash", ...]}
+//
+// The transit server exposes its OWN model list (configured via
+// TRANSIT_MODELS_ENABLED + TRANSIT_MODELS env vars on the server side).
+// This is independent from the upstream's /v1/models — the user opens
+// "transit default model" in settings, this method is called to fetch
+// the server-bundled models, which then get added to the app's local
+// Model management under source="transit".
+//
+// Returns NSDictionary with keys:
+//   enabled (NSNumber bool) — whether the transit server has any bundled models
+//   models  (NSArray of NSString) — the model id list (empty if disabled)
+// Returns nil + *error on network/HTTP/parse failure.
+- (NSDictionary *)transitModelsAtTransitURL:(NSString *)transitURL
+                                      error:(NSError **)error
+{
+    NSString *base = transitURL;
+    if (!base || base.length == 0) {
+        base = @"https://ai-transit.awa.lat";
+    }
+    NSString *endpoint = [base stringByTrimmingCharactersInSet:
+                          [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+    endpoint = [endpoint stringByAppendingPathComponent:@"v1/transit/models"];
+
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"TRANSIT-MODELS → GET %@", endpoint]];
+    NSDate *t0 = [NSDate date];
+
+    NSURLResponse *resp = nil;
+    NSError *netErr = nil;
+    NSData *data = nil;
+    NSString *attemptEndpoint = endpoint;
+    for (NSInteger attempt = 0; attempt < 2; attempt++) {
+        NSURL *url = [NSURL URLWithString:attemptEndpoint];
+        if (!url) { resp = nil; netErr = nil; data = nil; break; }
+        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
+                                                              cachePolicy:NSURLRequestReloadIgnoringCacheData
+                                                          timeoutInterval:15.0];
+        [req setHTTPMethod:@"GET"];
+        [req setValue:@"application/json" forHTTPHeaderField:@"Accept"];
+        resp = nil;
+        netErr = nil;
+        data = [NSURLConnection sendSynchronousRequest:req
+                                      returningResponse:&resp
+                                                  error:&netErr];
+        if (!netErr) break;
+        if (attempt == 0 && netErr.code == -1012) {
+            NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
+            if (httpEndpoint) {
+                [[Logger sharedLogger] warn:[NSString stringWithFormat:
+                    @"TRANSIT-MODELS ⚠ https 中转 TLS -1012 — 自动改用 http 重试: %@", httpEndpoint]];
+                attemptEndpoint = httpEndpoint;
+                continue;
+            }
+        }
+        break;
+    }
+    NSTimeInterval dur = -[t0 timeIntervalSinceNow];
+    if (netErr) {
+        [[Logger sharedLogger] error:[NSString stringWithFormat:
+            @"TRANSIT-MODELS ✗ %.1fs net code=%ld — %@", dur, (long)netErr.code,
+            netErr.localizedDescription ?: @"(no desc)"]];
+        if (error) *error = netErr;
+        return nil;
+    }
+    if ([self _checkHTTPError:resp data:data error:error]) {
+        [[Logger sharedLogger] error:[NSString stringWithFormat:
+            @"TRANSIT-MODELS ✗ %.1fs HTTP error", dur]];
+        return nil;
+    }
+    if (!data || data.length == 0) {
+        [[Logger sharedLogger] error:@"TRANSIT-MODELS ✗ zero-byte response"];
+        return nil;
+    }
+    NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+    if (![json isKindOfClass:[NSDictionary class]]) {
+        [[Logger sharedLogger] error:@"TRANSIT-MODELS ✗ 200 OK but not a JSON object"];
+        return nil;
+    }
+    BOOL enabled = [[json objectForKey:@"enabled"] boolValue];
+    NSArray *rawModels = [json objectForKey:@"models"];
+    if (![rawModels isKindOfClass:[NSArray class]]) rawModels = @[];
+    NSMutableArray *models = [NSMutableArray arrayWithCapacity:[rawModels count]];
+    for (id m in rawModels) {
+        if ([m isKindOfClass:[NSString class]] && [(NSString *)m length] > 0) {
+            [models addObject:m];
+        }
+    }
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"TRANSIT-MODELS ✓ %.1fs — enabled=%d count=%lu",
+        dur, (int)enabled, (unsigned long)[models count]]];
+    return [NSDictionary dictionaryWithObjectsAndKeys:
+            [NSNumber numberWithBool:enabled], @"enabled",
+            models, @"models",
+            nil];
 }
 
 #pragma mark - Image generation (sync)
@@ -1502,7 +1721,15 @@
                                                           timeoutInterval:120.0];  // image gen can be slow
         [req setHTTPMethod:@"POST"];
         [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-        [req setValue:provider ?: @"openai" forHTTPHeaderField:@"X-Provider"];
+        // v261025-3: transit is now pure TLS pass-through. Build the real
+        // upstream target URL from provider (the image-gen method doesn't
+        // receive baseURL, so we map provider → known base URL).
+        NSString *imageTargetBase = [NetworkService _imageAPIBaseURLForProvider:provider];
+        if (imageTargetBase.length > 0) {
+            NSString *imageTarget = [imageTargetBase
+                stringByAppendingPathComponent:@"images/generations"];
+            [req setValue:imageTarget forHTTPHeaderField:@"X-Target-URL"];
+        }
         if (apiKey.length > 0) {
             [req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey]
             forHTTPHeaderField:@"Authorization"];

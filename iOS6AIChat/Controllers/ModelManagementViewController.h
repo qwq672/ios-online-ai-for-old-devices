@@ -22,4 +22,11 @@
 @property (nonatomic, retain) UITableView *tableView;
 @property (nonatomic, retain) NSMutableArray *availableModels;  // for /v1/models search picker
 
+// v261025-3: search the transit server's bundled model list
+// (GET /v1/transit/models). If the server returns enabled=false,
+// prompt the user with "此中转服务器不含自带模型". If enabled=true,
+// the returned models are bulk-added to local storage with
+// source="transit". Mid-search the user can cancel.
+- (void)searchTransitBundledModels;
+
 @end

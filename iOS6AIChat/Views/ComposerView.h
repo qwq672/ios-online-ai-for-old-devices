@@ -22,6 +22,11 @@ extern NSString *const ComposerViewSendMessageImagesKey;
               images:(NSArray *)images
         deepThinking:(BOOL)deepThinking webSearch:(BOOL)webSearch;
 - (void)composerDidChangeHeight:(ComposerView *)composer;
+// v261025-3: fired when the user taps the send/stop button while a
+// stream is in flight. The send button becomes a "stop" button while
+// isStreaming=YES — tapping it should call NetworkService.stopGenerating
+// to preserve the partial text and fire the normal didFinish path.
+- (void)composerDidTapStop:(ComposerView *)composer;
 @end
 
 @interface ComposerView : UIView <UITextViewDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate>

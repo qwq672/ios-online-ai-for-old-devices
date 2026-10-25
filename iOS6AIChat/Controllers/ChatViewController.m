@@ -32,6 +32,9 @@
 #import "SettingsViewController.h"
 #import "HistoryViewController.h"
 #import "CharacterManagementViewController.h"
+// v261025-3: needed for [ModelManagementViewController savedModelList]
+// in the send guard (model list empty check).
+#import "ModelManagementViewController.h"
 #import "DrawerViewController.h"
 #import "Logger.h"
 
@@ -346,6 +349,27 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     [self _sendUserMessage:text images:images deepThinking:deepThinking webSearch:webSearch];
 }
 
+// v261025-3: send button morphed into stop button while streaming.
+// Hand off to NetworkService.stopGenerating — it cancels the in-flight
+// connection but PRESERVES the accumulated text, then fires the normal
+// didFinish delegate path. The composer's isStreaming flag will be
+// cleared when didFinish/didFail is dispatched.
+- (void)composerDidTapStop:(ComposerView *)composer
+{
+    [[Logger sharedLogger] info:@"CHAT ⊘ user tapped stop — calling stopGenerating"];
+    if (!_networkService) {
+        // Defensive: no service to stop. Make sure the composer is
+        // visually reset (a desync would otherwise leave it stuck).
+        _composer.isStreaming = NO;
+        return;
+    }
+    // NetworkService.stopGenerating is synchronous (it does NOT
+    // dispatch_async) — it will fire didFinish on this same (main)
+    // thread before returning. That guarantees _composer.isStreaming
+    // is cleared by the time this method returns.
+    [_networkService stopGenerating];
+}
+
 - (void)composerDidChangeHeight:(ComposerView *)composer
 {
     [self _adjustForComposerHeight];
@@ -380,6 +404,36 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
 - (void)_sendUserMessage:(NSString *)text images:(NSArray *)images deepThinking:(BOOL)deepThinking webSearch:(BOOL)webSearch
 {
+    // v261025-3: send guard. If transit is ON but useServerModel is OFF
+    // (i.e. user supplies their own model in the body), and the local
+    // saved model list is empty AND SettingsKeyModel is unset, the
+    // outgoing request would have no model field. Block this earlier
+    // with a clear prompt instead of letting the upstream return 400.
+    {
+        NSDictionary *settings = [SettingsViewController loadSettings];
+        BOOL useTransit = [[settings objectForKey:SettingsKeyUseTransit] boolValue];
+        BOOL useServerModel = [[NSUserDefaults standardUserDefaults] boolForKey:@"useServerModel"];
+        if (useTransit && !useServerModel) {
+            NSArray *saved = [ModelManagementViewController savedModelList];
+            NSString *cur = [settings objectForKey:SettingsKeyModel];
+            BOOL hasModel = (cur && cur.length > 0) || [saved count] > 0;
+            if (!hasModel) {
+                UIAlertView *av = [[[UIAlertView alloc]
+                    initWithTitle:NSLocalizedString(@"请先添加模型", nil)
+                          message:NSLocalizedString(@"模型列表为空。请到 模型管理 添加至少一个模型，或开启\"中转自带模型\"开关。", nil)
+                         delegate:nil
+                cancelButtonTitle:NSLocalizedString(@"好", nil)
+                otherButtonTitles:nil] autorelease];
+                [av show];
+                // Defensive: clear isStreaming — the send button should
+                // not visually stay in the "stop" state when we never
+                // actually started streaming.
+                _composer.isStreaming = NO;
+                return;
+            }
+        }
+    }
+
     if (!_conversation) {
         Conversation *c = [[ConversationStore sharedStore] createNewConversation];
         self.conversation = c;

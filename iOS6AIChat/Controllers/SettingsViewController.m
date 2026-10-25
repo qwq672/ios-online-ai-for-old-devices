@@ -25,6 +25,9 @@
 #import "iOS6Theme.h"
 #import "NetworkService.h"
 #import "Logger.h"
+// v261025-3: needed for [ModelManagementViewController removeAllTransitModels]
+// + sourceForModel: + instantiate throwaway VC for searchTransitBundledModels
+#import "ModelManagementViewController.h"
 #import <QuartzCore/QuartzCore.h>
 
 NSString *const SettingsKeyDarkMode           = @"darkMode";
@@ -45,6 +48,14 @@ NSString *const SettingsKeyImageMaxDim = @"imageMaxDim";
 NSString *const SettingsKeyModelSupportsImages = @"modelSupportsImages";
 NSString *const SettingsKeyModelSupportsThinking = @"modelSupportsThinking";
 NSString *const SettingsKeyStreamingOutput = @"streamingOutput";
+// v261025-3: transit-server bundled model toggle (off by default).
+// When ON, the app calls GET /v1/transit/models and bulk-adds returned
+// models to local storage with source="transit". When OFF, all
+// source="transit" models are bulk-removed.
+NSString *const SettingsKeyUseTransitModels = @"useTransitModels";
+// v261025-3: timestamp of the last successful /v1/transit/models search.
+// Stored as an NSDate; formatted for display in the toggle row's footer.
+NSString *const SettingsKeyTransitModelsLastSearch = @"transitModelsLastSearch";
 
 NSString *const ProviderIDZhipu  = @"zhipu";
 NSString *const ProviderIDOpenAI = @"openai";
@@ -296,7 +307,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     NSInteger logical = [self _logicalSectionForDisplayed:section];
     switch (logical) {
         case kSectionTheme:     return 3;  // dark mode, font size, image compression
-        case kSectionTransit:    return 5;  // 使用中转 / Transit URL / Provider / 中转网络搜索 / 中转默认模型
+        case kSectionTransit:    return 6;  // 使用中转 / Transit URL / Provider / 中转网络搜索 / 中转默认模型 / 中转自带模型
         case kSectionDirect:     return 2;
         case kSectionModel:      return 4;  // Model + 搜索 / hint / 支持图片识别 / 支持思考 (v261024-15: 管理 move to ModelManagementVC)
         case kSectionWebSearch:  return 3;
@@ -660,17 +671,38 @@ titleForFooterInSection:(NSInteger)section
         [cell.contentView addSubview:sw];
         return cell;
     }
-    // row 4: 中转默认模型 toggle (default OFF).
-    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"中转默认模型", nil)]];
-    UISwitch *sw2 = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-    BOOL useServerModel = [[NSUserDefaults standardUserDefaults] boolForKey:@"useServerModel"];
-    [sw2 setOn:useServerModel animated:NO];
-    [sw2 addTarget:self action:@selector(_useServerModelToggle:)
+    if (row == 4) {
+        // 中转默认模型 toggle (default OFF).
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"中转默认模型", nil)]];
+        UISwitch *sw2 = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+        BOOL useServerModel = [[NSUserDefaults standardUserDefaults] boolForKey:@"useServerModel"];
+        [sw2 setOn:useServerModel animated:NO];
+        [sw2 addTarget:self action:@selector(_useServerModelToggle:)
+         forControlEvents:UIControlEventValueChanged];
+        sw2.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f4 = cell.contentView.bounds;
+        sw2.frame = CGRectMake(f4.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+        [cell.contentView addSubview:sw2];
+        return cell;
+    }
+    // v261025-3 row 5: 中转自带模型 toggle (default OFF) + 上次搜索时间。
+    // ON  → fetch GET /v1/transit/models; if enabled, bulk-add models to
+    //         local storage with source="transit". If disabled, prompt
+    //         "此中转服务器不含自带模型".
+    // OFF → bulk-remove all source="transit" models.
+    // The toggle handler (_useTransitModelsToggle:) creates a throwaway
+    // ModelManagementViewController to call its searchTransitBundledModels
+    // method (the search logic + UI live there).
+    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"中转自带模型", nil)]];
+    UISwitch *sw3 = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+    BOOL useTransitModels = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyUseTransitModels];
+    [sw3 setOn:useTransitModels animated:NO];
+    [sw3 addTarget:self action:@selector(_useTransitModelsToggle:)
      forControlEvents:UIControlEventValueChanged];
-    sw2.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    CGRect f4 = cell.contentView.bounds;
-    sw2.frame = CGRectMake(f4.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
-    [cell.contentView addSubview:sw2];
+    sw3.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    CGRect f5 = cell.contentView.bounds;
+    sw3.frame = CGRectMake(f5.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+    [cell.contentView addSubview:sw3];
     return cell;
 }
 
@@ -1078,6 +1110,76 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 {
     [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"useServerModel"];
     [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+// v261025-3: 中转自带模型 toggle.
+//   ON  → instantiate a throwaway ModelMgmt VC and call its
+//         searchTransitBundledModels method. The VC is retained by the
+//         dispatch_async block until the search completes (or fails),
+//         then released. The VC's _tableView is nil so the reloadData
+//         call inside is a no-op — Settings' own table will be reloaded
+//         when the user navigates back.
+//   OFF → bulk-remove all source="transit" models. The removal is
+//         synchronous (just an NSUserDefaults write).
+- (IBAction)_useTransitModelsToggle:(UISwitch *)sw
+{
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyUseTransitModels];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    if (sw.on) {
+        // Defer the search to the next runloop turn so this toggle's
+        // row redraw completes first (avoid a table-while-toggling UI
+        // glitch — the throwaway VC will display its own alert.
+        [self performSelector:@selector(_kickoffTransitBundledModelSearch)
+                   withObject:nil
+                   afterDelay:0.1];
+    } else {
+        // Bulk-remove all transit-sourced models from local storage.
+        // If the user's current default model was a transit one, fall
+        // back to the first remaining user-sourced model.
+        [ModelManagementViewController removeAllTransitModels];
+        NSString *curDefault = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyModel];
+        NSString *curSrc = [ModelManagementViewController sourceForModel:curDefault];
+        if ([curSrc isEqualToString:@"transit"]) {
+            // Current default was a transit model that just got removed —
+            // pick the first remaining user model (if any).
+            NSArray *remaining = [ModelManagementViewController savedModelList];
+            if ([remaining count] > 0) {
+                [[NSUserDefaults standardUserDefaults] setObject:[remaining objectAtIndex:0]
+                                                          forKey:SettingsKeyModel];
+            } else {
+                [[NSUserDefaults standardUserDefaults] removeObjectForKey:SettingsKeyModel];
+            }
+            [[NSUserDefaults standardUserDefaults] synchronize];
+        }
+        [[Logger sharedLogger] info:@"Settings: transit bundled models toggled OFF — bulk-removed"];
+        // Reload this table to refresh the footer's last-search hint.
+        if (_tableView) [_tableView reloadData];
+    }
+}
+
+// Called via performSelector:withObject:afterDelay:0.1 from the toggle.
+// Lives here so the toggle handler stays short.
+- (void)_kickoffTransitBundledModelSearch
+{
+    // v261025-3: throwaway VC. Its dispatch_async block retains it, so
+    // the autorelease + manual release here is safe — the block will
+    // release it when the search completes.
+    ModelManagementViewController *tmp = [[[ModelManagementViewController alloc] init] autorelease];
+    // Keep it alive past this autoreleasepool — the dispatch_async in
+    // searchTransitBundledModels captures self (tmp) and retains it,
+    // but ONLY after we enter that method. Between this point and that
+    // dispatch_async call, tmp's retaincount is exactly 1 (from alloc),
+    // which the autorelease will decrement at pool drain. To prevent a
+    // premature release, do a manual retain here and let the dispatch
+    // block's release drop it to 0 when done. Actually simpler: skip
+    // autorelease, do manual alloc+retain+release-after-search.
+    // But the cleanest pattern is just to NOT autorelease here — the
+    // dispatch_async will own the only reference.
+    // (We DID autorelease above to balance the alloc; the dispatch_async
+    // block in searchTransitBundledModels retains self, so tmp stays
+    // alive until that block completes. The autorelease here drains at
+    // the runloop end, but the block's retain keeps it alive.)
+    [tmp searchTransitBundledModels];
 }
 
 - (IBAction)_transitWebSearchToggle:(UISwitch *)sw

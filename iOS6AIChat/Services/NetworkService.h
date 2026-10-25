@@ -74,6 +74,13 @@
 // the delegate and made every later send silent.)
 - (void)cancelStream;
 
+// v261025-3: Stop the in-flight stream, PRESERVE accumulated text, and
+// dispatch the normal didFinish delegate path. Use this when the user
+// taps the "Stop" button mid-generation. The text produced so far is
+// KEPT as the assistant message (unlike cancelStream which discards
+// everything and is meant for switching conversations).
+- (void)stopGenerating;
+
 // Read the accumulated reasoning/thinking text after the stream finishes
 // (or any time during the stream). The delegate can call this to attach
 // thinking to a Message object.
@@ -114,6 +121,26 @@
                               provider:(NSString *)provider
                                apiKey:(NSString *)apiKey
                                  error:(NSError **)error;
+
+// ============================================================
+// Transit server's own bundled model list (v261025-3)
+// ============================================================
+//
+// GET {transitURL}/v1/transit/models
+//   Returns: { "enabled": true/false, "models": ["glm-4-flash", ...] }
+//
+// The transit server can optionally bundle a list of models (controlled
+// by TRANSIT_MODELS_ENABLED + TRANSIT_MODELS env vars on the server side).
+// When the user opens the "transit default model" toggle in settings, this
+// method is called. If enabled=true, the returned models are added to the
+// app's local model management under source="transit".
+//
+// Returns NSDictionary with keys:
+//   enabled (NSNumber bool) — whether the transit server has any bundled models
+//   models  (NSArray of NSString) — model id list (empty if disabled)
+// Returns nil + *error on network/HTTP/parse failure.
+- (NSDictionary *)transitModelsAtTransitURL:(NSString *)transitURL
+                                      error:(NSError **)error;
 
 // ============================================================
 // Image generation (sync)
