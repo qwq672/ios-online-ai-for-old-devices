@@ -24,6 +24,12 @@
 @optional
 - (void)chatCell:(ChatMessageCell *)cell didTapRegenerate:(Message *)message;
 - (void)chatCell:(ChatMessageCell *)cell didTapCopy:(Message *)message;
+// v261025-6: user-message edit — shows an alert with the user's original
+// text; on save, truncates the conversation from this message onward and
+// re-sends the (possibly edited) text.
+- (void)chatCell:(ChatMessageCell *)cell didTapEditUserMessage:(Message *)message;
+// v261025-6: variant pager — navigate to previous / next AI-response variant.
+- (void)chatCell:(ChatMessageCell *)cell didTapVariantArrow:(Message *)message direction:(NSInteger)direction;  // -1 = prev, +1 = next
 @end
 
 @interface ChatMessageCell : UITableViewCell
@@ -35,6 +41,13 @@
 @property (nonatomic, retain) NSAttributedString *renderedAttr;
 @property (nonatomic, retain) UIButton *regenerateButton;  // AI reply only
 @property (nonatomic, retain) UIButton *clipboardButton;    // AI reply only (copy)
+// v261025-6: user-message edit button — shown on user cells only.
+@property (nonatomic, retain) UIButton *editButton;
+// v261025-6: variant pager — "‹ 1/N ›" UI + prev/next arrow buttons.
+// Shown on AI cells where the message has more than one response variant.
+@property (nonatomic, retain) UIButton *variantPrevButton;
+@property (nonatomic, retain) UIButton *variantNextButton;
+@property (nonatomic, retain) UILabel *variantIndexLabel;
 
 // Convenience sizing helper — computes the height required to display
 // the given message at the given width, accounting for text wrapping.

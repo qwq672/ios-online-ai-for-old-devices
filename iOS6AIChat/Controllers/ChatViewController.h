@@ -17,7 +17,8 @@ extern NSString *const ChatViewControllerConversationIDKey;
                                UITableViewDelegate,
                                NetworkServiceDelegate,
                                ComposerViewDelegate,
-                               ChatMessageCellDelegate>
+                               ChatMessageCellDelegate,
+                               UIAlertViewDelegate>
 
 @property (nonatomic, retain) UITableView *tableView;
 @property (nonatomic, retain) Conversation *conversation;

@@ -61,7 +61,11 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 @synthesize thinkingBlock=_thinkingBlock, thinkingToggle=_thinkingToggle,
             thinkingLabel=_thinkingLabel, thinkingSep=_thinkingSep,
             delegate=_delegate,
-            regenerateButton=_regenerateButton, clipboardButton=_clipboardButton;
+            regenerateButton=_regenerateButton, clipboardButton=_clipboardButton,
+            editButton=_editButton,
+            variantPrevButton=_variantPrevButton,
+            variantNextButton=_variantNextButton,
+            variantIndexLabel=_variantIndexLabel;
 
 #pragma mark - Cache management (class methods)
 
@@ -364,6 +368,61 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         _clipboardButton.hidden = YES;
         [self.contentView addSubview:_clipboardButton];
 
+        // v261025-6: user-message edit button — pencil icon, only shown on
+        // user cells. Tap fires didTapEditUserMessage: on the delegate,
+        // which pops an alert pre-filled with the user's original text.
+        _editButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _editButton.frame = CGRectMake(0, 0, 36, 24);
+        [_editButton setImage:[IconDrawing imageForType:IconTypeRefresh
+                                                    size:CGSizeMake(16, 16)
+                                                   color:[iOS6Theme secondaryTextColor]]
+                  forState:UIControlStateNormal];
+        // Pencil icon isn't in IconDrawing — reuse the copy icon shape
+        // but tint it differently so it reads as "edit" not "copy".
+        // TODO: add a proper pencil icon type if needed.
+        [_editButton setImage:[IconDrawing imageForType:IconTypeCopy
+                                                    size:CGSizeMake(16, 16)
+                                                   color:[iOS6Theme tintColor]]
+                  forState:UIControlStateNormal];
+        [_editButton addTarget:self action:@selector(_editTapped)
+                  forControlEvents:UIControlEventTouchUpInside];
+        _editButton.hidden = YES;
+        [self.contentView addSubview:_editButton];
+
+        // v261025-6: variant pager — "‹ 1/N ›" UI + prev/next arrows.
+        // Hidden by default; only shown on AI cells where variants.count
+        // >= 1 (i.e. the user has regenerated at least once).
+        _variantPrevButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _variantPrevButton.frame = CGRectMake(0, 0, 28, 24);
+        _variantPrevButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+        [_variantPrevButton setTitle:@"‹" forState:UIControlStateNormal];
+        [_variantPrevButton setTitleColor:[iOS6Theme tintColor]
+                               forState:UIControlStateNormal];
+        [_variantPrevButton addTarget:self action:@selector(_variantPrevTapped)
+                       forControlEvents:UIControlEventTouchUpInside];
+        _variantPrevButton.hidden = YES;
+        [self.contentView addSubview:_variantPrevButton];
+
+        _variantNextButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _variantNextButton.frame = CGRectMake(0, 0, 28, 24);
+        _variantNextButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+        [_variantNextButton setTitle:@"›" forState:UIControlStateNormal];
+        [_variantNextButton setTitleColor:[iOS6Theme tintColor]
+                               forState:UIControlStateNormal];
+        [_variantNextButton addTarget:self action:@selector(_variantNextTapped)
+                       forControlEvents:UIControlEventTouchUpInside];
+        _variantNextButton.hidden = YES;
+        [self.contentView addSubview:_variantNextButton];
+
+        _variantIndexLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 50, 24)];
+        _variantIndexLabel.font = [UIFont systemFontOfSize:12];
+        _variantIndexLabel.textColor = [iOS6Theme secondaryTextColor];
+        _variantIndexLabel.backgroundColor = [UIColor clearColor];
+        _variantIndexLabel.textAlignment = NSTextAlignmentCenter;
+        _variantIndexLabel.text = @"";
+        _variantIndexLabel.hidden = YES;
+        [self.contentView addSubview:_variantIndexLabel];
+
         // Listen for theme changes.
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(_themeChanged)
@@ -421,6 +480,11 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     _textView.attributedText = nil;
     _regenerateButton.hidden = YES;
     _clipboardButton.hidden = YES;
+    // v261025-6: hide the new edit + pager buttons on reuse.
+    _editButton.hidden = YES;
+    _variantPrevButton.hidden = YES;
+    _variantNextButton.hidden = YES;
+    _variantIndexLabel.hidden = YES;
 }
 
 - (void)_setCurrentMessageKey:(NSString *)key
@@ -442,6 +506,31 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 {
     if ([self.delegate respondsToSelector:@selector(chatCell:didTapCopy:)]) {
         [self.delegate chatCell:self didTapCopy:_message];
+    }
+}
+
+// v261025-6: user-message edit — fires the edit delegate, which shows an
+// alert pre-filled with the user's text and on save truncates from this
+// message onward and re-sends (possibly edited).
+- (void)_editTapped
+{
+    if ([self.delegate respondsToSelector:@selector(chatCell:didTapEditUserMessage:)]) {
+        [self.delegate chatCell:self didTapEditUserMessage:_message];
+    }
+}
+
+// v261025-6: variant pager — prev / next arrows.
+- (void)_variantPrevTapped
+{
+    if ([self.delegate respondsToSelector:@selector(chatCell:didTapVariantArrow:direction:)]) {
+        [self.delegate chatCell:self didTapVariantArrow:_message direction:-1];
+    }
+}
+
+- (void)_variantNextTapped
+{
+    if ([self.delegate respondsToSelector:@selector(chatCell:didTapVariantArrow:direction:)]) {
+        [self.delegate chatCell:self didTapVariantArrow:_message direction:+1];
     }
 }
 
@@ -486,6 +575,16 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     BubbleRole role = message.isUser ? BubbleRoleUser : BubbleRoleAssistant;
     _bubble.role = role;
 
+    // v261025-6: if this AI message has a currentVariantIndex pointing at
+    // a saved snapshot (i.e. user navigated to an OLD variant), display
+    // the snapshot's content + thinking instead of the live values. The
+    // live values are preserved in the message's content/thinking for when
+    // the user navigates back to the current variant.
+    // For user messages or live AI responses, we use message.content/
+    // thinking directly.
+    NSString *displayedContent = [Message displayedContentForMessage:message];
+    NSString *displayedThinking = [Message displayedThinkingForMessage:message];
+
     // v261025-4: base text color follows the bubble — white on the
     // green user glass, theme color on the silver/charcoal AI glass.
     // (Only affects plain-text fallbacks; the attributed string above
@@ -507,13 +606,31 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // Build the attributed string. Use the shared cache so we don't
     // run MarkdownParser twice per streaming chunk (cell render + height
     // calc). This was the perf killer for long AI replies.
-    self.renderedAttr = [ChatMessageCell _renderedAttrForMessage:message
-                                                            width:textWidth];
+    // v261025-6: when showing an OLD variant, we DON'T want to pull from
+    // the cache (which would have the LIVE content keyed by messageID +
+    // contentLen — different for the variant). Render fresh with the
+    // displayed content as the source.
+    if (message.currentVariantIndex < 0) {
+        // LIVE — use the cached rendered attr (regular path).
+        self.renderedAttr = [ChatMessageCell _renderedAttrForMessage:message
+                                                                width:textWidth];
+    } else {
+        // OLD variant — render fresh from displayedContent.
+        // Synthesize a temporary Message with the variant's content so
+        // the cache key (messageID + contentLen) is unique to this variant.
+        Message *tempMsg = [Message messageWithRole:message.role
+                                              content:displayedContent ?: @""];
+        tempMsg.messageID = [NSString stringWithFormat:@"%@_v%ld",
+                             message.messageID, (long)message.currentVariantIndex];
+        tempMsg.thinking = displayedThinking;
+        self.renderedAttr = [ChatMessageCell _renderedAttrForMessage:tempMsg
+                                                                width:textWidth];
+    }
 
     // === Deep thinking block ===
     // If the message has a non-empty `thinking` string, show a collapsible
     // block at the top of the bubble with the reasoning content.
-    if (message.thinking.length > 0 && !message.isUser) {
+    if (displayedThinking.length > 0 && !message.isUser) {
         _thinkingBlock.hidden = NO;
         // Restore the per-message expanded state from the static dict.
         // While the AI is still mid-reasoning (thinking live) force-expand
@@ -528,14 +645,14 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
             headerTitle = @"💭 深度思考中…";
         } else if (_thinkingCollapsed) {
             headerTitle = [NSString stringWithFormat:@"💭 深度思考 (点击展开) — %lu 字",
-               (unsigned long)message.thinking.length];
+               (unsigned long)displayedThinking.length];
         } else {
             headerTitle = @"💭 深度思考 (点击收起)";
         }
         [_thinkingToggle setTitle:headerTitle forState:UIControlStateNormal];
 
         // Render thinking content as plain text.
-        _thinkingLabel.text = message.thinking;
+        _thinkingLabel.text = displayedThinking;
     } else {
         _thinkingBlock.hidden = YES;
     }
@@ -732,16 +849,56 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     }
 
     // === Action buttons (regenerate + copy) — AI assistant only ===
-    BOOL showButtons = !_message.isUser && _message.content.length > 0;
-    _regenerateButton.hidden = !showButtons;
-    _clipboardButton.hidden = !showButtons;
-    if (showButtons) {
+    // v261025-6: layout now includes the variant pager (‹ 1/N ›) on the
+    // right side, and the edit button on user cells.
+    BOOL showAIButtons = !_message.isUser
+                         && [Message displayedContentForMessage:_message].length > 0;
+    BOOL showUserEditButton = _message.isUser
+                              && _message.content.length > 0;
+    BOOL showVariantPager = !_message.isUser
+                            && [_message.variants isKindOfClass:[NSArray class]]
+                            && [_message.variants count] > 0;
+    _regenerateButton.hidden = !showAIButtons;
+    _clipboardButton.hidden = !showAIButtons;
+    _editButton.hidden = !showUserEditButton;
+    _variantPrevButton.hidden = !showVariantPager;
+    _variantNextButton.hidden = !showVariantPager;
+    _variantIndexLabel.hidden = !showVariantPager;
+    if (showVariantPager) {
+        // "1/N" — currentVariantIndex = -1 means "the live (latest) variant",
+        // displayed as N+1 out of N+1. Otherwise index+1 out of (variants.count + 1).
+        NSInteger total = (NSInteger)[_message.variants count] + 1;
+        NSInteger cur = (_message.currentVariantIndex < 0)
+                        ? total
+                        : (_message.currentVariantIndex + 1);
+        _variantIndexLabel.text = [NSString stringWithFormat:@"%ld/%ld",
+                                    (long)cur, (long)total];
+    }
+    if (showAIButtons) {
         CGFloat btnY = bubbleY + bubbleHeight + 2;
         CGFloat btnW = 36, btnH = 24, btnGap = 4;
         // Left-align buttons under the bubble.
         CGFloat regenX = bubbleX;
         _regenerateButton.frame = CGRectMake(regenX, btnY, btnW, btnH);
         _clipboardButton.frame = CGRectMake(regenX + btnW + btnGap, btnY, btnW, btnH);
+        // v261025-6: variant pager to the right of clipboard button.
+        if (showVariantPager) {
+            CGFloat pagerX = regenX + 2 * (btnW + btnGap);
+            CGFloat arrowW = 28, labelW = 50;
+            _variantPrevButton.frame = CGRectMake(pagerX, btnY, arrowW, btnH);
+            _variantIndexLabel.frame = CGRectMake(pagerX + arrowW + 2, btnY, labelW, btnH);
+            _variantNextButton.frame = CGRectMake(pagerX + arrowW + labelW + 4, btnY, arrowW, btnH);
+        }
+    }
+    if (showUserEditButton) {
+        // v261025-6: edit button on the right side of the user bubble
+        // (mirrors how iOS Messages shows a "..." on the user's bubble).
+        CGFloat btnY = bubbleY + bubbleHeight + 2;
+        CGFloat btnW = 36, btnH = 24;
+        // For user messages, bubbleX is on the right; place edit button
+        // under the bubble's left edge (so it doesn't run off-screen).
+        CGFloat editX = bubbleX;
+        _editButton.frame = CGRectMake(editX, btnY, btnW, btnH);
     }
 }
 
@@ -759,10 +916,13 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // Cache key — message ID + width + content hash (cheap: just length).
     // Note: during streaming the content changes, so we must include a
     // content length component to invalidate the cache when chunks arrive.
-    NSString *cacheKey = [NSString stringWithFormat:@"%@_%.0f_%lu_%lu",
+    // v261025-6: include currentVariantIndex in the key so switching
+    // variants re-queries the height (different content length per variant).
+    NSString *cacheKey = [NSString stringWithFormat:@"%@_%.0f_%lu_%lu_%ld",
                           message.messageID, (double)width,
                           (unsigned long)message.content.length,
-                          (unsigned long)message.thinking.length];
+                          (unsigned long)message.thinking.length,
+                          (long)message.currentVariantIndex];
     NSNumber *cached = [gHeightCache objectForKey:cacheKey];
     if (cached) {
         return [cached floatValue];
@@ -776,11 +936,30 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     CGFloat availTextWidth = [ChatMessageCell unifiedTextWidthForOuterWidth:width];
     if (availTextWidth < 60) availTextWidth = 60;
 
+    // v261025-6: if we're showing an OLD variant, use a temp Message
+    // built from the variant's content+thinking (mirroring what
+    // _applyMessageInternal: does) so the rendered attr matches the
+    // displayed bubble content — otherwise the row height would be
+    // measured against the LIVE content while the cell shows a variant.
+    Message *msgForRender = message;
+    Message *tempMsg = nil;  // retained only for the variant case
+    if (message.currentVariantIndex >= 0) {
+        NSString *dispContent = [Message displayedContentForMessage:message];
+        NSString *dispThinking = [Message displayedThinkingForMessage:message];
+        tempMsg = [[Message messageWithRole:message.role
+                                      content:dispContent ?: @""] retain];
+        tempMsg.messageID = [NSString stringWithFormat:@"%@_v%ld",
+                             message.messageID, (long)message.currentVariantIndex];
+        tempMsg.thinking = dispThinking;
+        msgForRender = tempMsg;
+    }
+
     // Use the SHARED rendered-attr cache — saves a MarkdownParser run
     // per streaming chunk (which was the perf killer for long AI replies).
     // The cache invalidates automatically when content.length changes.
-    NSAttributedString *attr = [ChatMessageCell _renderedAttrForMessage:message
-                                                                   width:availTextWidth];
+    NSAttributedString *attr = [ChatMessageCell _renderedAttrForMessage:msgForRender
+                                                                  width:availTextWidth];
+    [tempMsg release];   // matched by the retain above (only in variant case)
     CGRect textRect = [attr boundingRectWithSize:CGSizeMake(availTextWidth, CGFLOAT_MAX)
                                          options:(NSStringDrawingUsesLineFragmentOrigin |
                                                   NSStringDrawingUsesFontLeading)
@@ -790,8 +969,10 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // If the user has expanded this message, OR the AI is still actively
     // thinking (streaming reasoning, no final answer yet), compute the
     // FULL height so the bubble grows with the reasoning text.
+    // v261025-6: use displayed thinking (variant-aware).
+    NSString *dispThinkingForCalc = [Message displayedThinkingForMessage:message];
     CGFloat thinkingH = 0;
-    if (message.thinking.length > 0 && !message.isUser) {
+    if (dispThinkingForCalc.length > 0 && !message.isUser) {
         CGFloat thinkingToggleH = 22;
         CGFloat thinkingLabelH = 0;
         if ([self _isThinkingExpanded:message.messageID] ||
@@ -800,7 +981,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
             // at availTextWidth - 4 (the label's actual content width).
             UIFont *thinkFont = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
             NSAttributedString *thinkAttr = [[[NSAttributedString alloc]
-                initWithString:message.thinking
+                initWithString:dispThinkingForCalc
                     attributes:@{NSFontAttributeName: thinkFont}] autorelease];
             CGFloat availW = availTextWidth - 4;
             if (availW < 50) availW = 50;
@@ -823,8 +1004,13 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 
     // Match layoutSubviews: text + vpad + tail(6) + safety(12) + thinking + images.
     // Plus 2*verticalPad for cell padding.
-    // Plus action buttons height (24+2=26) for AI assistant messages.
-    CGFloat buttonH = (!message.isUser && message.content.length > 0) ? 26 : 0;
+    // Plus action buttons height (24+2=26) for AI assistant messages AND
+    // user messages (both have buttons under the bubble now: AI has
+    // regenerate/copy/variant-pager; user has edit).
+    // v261025-6: user messages now have an edit button, so they need
+    // the same 26pt action-button allowance as AI messages.
+    BOOL hasActionButtons = (message.content.length > 0);  // both roles
+    CGFloat buttonH = hasActionButtons ? 26 : 0;
     CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + 6 + 12
                           + thinkingH + imagesH;
     CGFloat result = bubbleHeight + 2 * verticalPad + buttonH;
@@ -869,6 +1055,11 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     NSString *cmk = _currentMessageKey;     _currentMessageKey = nil;
     UIButton *rb = _regenerateButton;       _regenerateButton = nil;
     UIButton *cb = _clipboardButton;        _clipboardButton = nil;
+    // v261025-6: new buttons + label.
+    UIButton *eb = _editButton;             _editButton = nil;
+    UIButton *vpb = _variantPrevButton;     _variantPrevButton = nil;
+    UIButton *vnb = _variantNextButton;     _variantNextButton = nil;
+    UILabel *vil = _variantIndexLabel;      _variantIndexLabel = nil;
 
     // Release the VIEWS first (so each view's layer.dealloc can do its
     // CGColorRelease cleanly), THEN release the retained UIColor ivars
@@ -888,6 +1079,11 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     [cmk release];
     [rb release];
     [cb release];
+    // v261025-6: new buttons + label.
+    [eb release];
+    [vpb release];
+    [vnb release];
+    [vil release];
 
     [tbBg release];
     [tbBd release];

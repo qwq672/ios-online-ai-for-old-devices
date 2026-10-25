@@ -59,6 +59,12 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 @property (nonatomic, retain) UIView *emptyPlaceholderView;
 @property (nonatomic, retain) UILabel *emptyTitleLabel;
 @property (nonatomic, retain) UILabel *emptyHintLabel;
+// v261025-6: pending user-message-edit alert state. The alert (tag 600)
+// asks the user to edit their original message; on save, the conv is
+// truncated from this message onward and the (possibly edited) text is
+// re-sent as a new user message + fresh AI placeholder.
+@property (nonatomic, retain) NSString *pendingEditMessageID;
+@property (nonatomic, retain) NSString *pendingEditOriginalText;
 @end
 
 @implementation ChatViewController
@@ -70,7 +76,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
             lastRowReloadTime=_lastRowReloadTime,
             emptyPlaceholderView=_emptyPlaceholderView,
             emptyTitleLabel=_emptyTitleLabel,
-            emptyHintLabel=_emptyHintLabel;
+            emptyHintLabel=_emptyHintLabel,
+            pendingEditMessageID=_pendingEditMessageID,
+            pendingEditOriginalText=_pendingEditOriginalText;
 
 - (id)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil
 {
@@ -122,6 +130,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     [_emptyTitleLabel release];
     [_emptyHintLabel release];
     [_emptyPlaceholderView release];
+    // v261025-6: pending edit alert state.
+    [_pendingEditMessageID release];
+    [_pendingEditOriginalText release];
     [super dealloc];
 }
 
@@ -1062,6 +1073,19 @@ didFailForConversationID:(NSString *)conversationID
         [[Logger sharedLogger] warn:@"ChatVC regenerate ignored — still streaming"];
         return;
     }
+    // v261025-6: before truncating the message, snapshot the current AI
+    // response (content + thinking) into the message's variants array. This
+    // lets the user navigate back to this response via the ‹ 1/N › pager
+    // after the new response streams in.
+    // Only snapshot if there's actual content (skip the "..." placeholder
+    // case where the user is regenerating an empty/failed response).
+    NSString *currentContent = message.content;
+    if (currentContent.length > 0 && ![currentContent isEqualToString:@"…"]) {
+        NSArray *newVariants = [Message pushCurrentLiveSnapshotIntoVariants:message.variants
+                                                                      content:currentContent
+                                                                     thinking:message.thinking];
+        message.variants = newVariants;
+    }
     // Find the user message that preceded this AI reply.
     NSInteger idx = [_conversation.messages indexOfObject:message];
     if (idx == NSNotFound || idx == 0) return;
@@ -1080,10 +1104,176 @@ didFailForConversationID:(NSString *)conversationID
                 webSearch:[ComposerView webSearchEnabled]];
 }
 
+// v261025-6: user-message edit — pops an alert pre-filled with the user's
+// text. On save, truncates the conversation from this message onward and
+// re-sends (possibly edited) text. The conversation's messages array gets
+// shortened, and a fresh AI placeholder is appended as part of _sendUserMessage.
+- (void)chatCell:(ChatMessageCell *)cell didTapEditUserMessage:(Message *)message
+{
+    if (!message || !message.isUser) return;
+    if (_composer.isStreaming) {
+        [[Logger sharedLogger] warn:@"ChatVC edit-user ignored — still streaming"];
+        return;
+    }
+    // Stash the message being edited + the conversation so the alert handler
+    // can find them. We use a tag to distinguish edit alerts from others.
+    UIAlertView *av = [[[UIAlertView alloc]
+        initWithTitle:NSLocalizedString(@"编辑消息", nil)
+              message:NSLocalizedString(@"修改后将以新消息发送（旧消息会被覆盖）。", nil)
+             delegate:self
+    cancelButtonTitle:NSLocalizedString(@"取消", nil)
+    otherButtonTitles:NSLocalizedString(@"发送", nil), nil] autorelease];
+    if ([av respondsToSelector:@selector(setAlertViewStyle:)]) {
+        [av setAlertViewStyle:UIAlertViewStylePlainTextInput];
+    }
+    // Pre-fill the text field with the user's original text.
+    if ([av respondsToSelector:@selector(textFieldAtIndex:)]) {
+        // Note: textFieldAtIndex: is only valid AFTER the alert view has
+        // been added to a window (i.e. after -show). Setting .text here is
+        // a no-op; we use the delegate method didPresentAlertView: below
+        // to pre-fill once the text field is actually available.
+    }
+    [av setTag:600];
+    // Stash the message ID + original text via the synthesized setters
+    // (which release the previous values). The alert handler resolves the
+    // message by ID from the conversation's messages array.
+    self.pendingEditMessageID = message.messageID;
+    self.pendingEditOriginalText = message.content;
+    [av show];
+}
+
+// v261025-6: variant pager — navigate to prev/next variant. The delegate
+// (ChatViewController) updates the message's currentVariantIndex and tells
+// the table to reload the affected row.
+- (void)chatCell:(ChatMessageCell *)cell
+   didTapVariantArrow:(Message *)message
+              direction:(NSInteger)direction
+{
+    if (!message || !message.isAssistant) return;
+    if (![message.variants isKindOfClass:[NSArray class]] ||
+        [message.variants count] == 0) {
+        return;
+    }
+    // total = variants.count + 1 (the +1 is the LIVE/current).
+    // index: -1 = LIVE (the rightmost); 0..N-1 = saved variants.
+    NSInteger total = (NSInteger)[message.variants count] + 1;
+    // Current displayed position (0-based from left, LIVE = total-1).
+    NSInteger currentPos = (message.currentVariantIndex < 0)
+                            ? (total - 1)
+                            : message.currentVariantIndex;
+    NSInteger newPos = currentPos + direction;
+    if (newPos < 0) newPos = 0;       // clamp at first variant
+    if (newPos >= total) newPos = total - 1;  // clamp at last (live)
+    // Convert back to currentVariantIndex: -1 = LIVE, else newPos.
+    message.currentVariantIndex = (newPos == total - 1) ? -1 : newPos;
+    // Invalidate the height cache for this message so the row re-sizes
+    // (different variant might have different content length).
+    [ChatMessageCell flushCaches];
+    // Reload the affected row.
+    NSInteger rowIdx = (NSInteger)[_conversation.messages indexOfObject:message];
+    if (rowIdx != NSNotFound && rowIdx < (NSInteger)[_tableView numberOfRowsInSection:0]) {
+        [_tableView beginUpdates];
+        [_tableView reloadRowsAtIndexPaths:[NSArray arrayWithObject:
+                                            [NSIndexPath indexPathForRow:rowIdx inSection:0]]
+                        withRowAnimation:UITableViewRowAnimationNone];
+        [_tableView endUpdates];
+    }
+    // Save the variant-index change to disk so it persists.
+    [[ConversationStore sharedStore] saveConversation:_conversation];
+}
+
 - (void)chatCell:(ChatMessageCell *)cell didTapCopy:(Message *)message
 {
     if (!message) return;
-    [[UIPasteboard generalPasteboard] setString:message.content ?: @""];
+    // v261025-6: copy the DISPLAYED content (which may be a variant snapshot,
+    // not the live content).
+    NSString *toCopy = [Message displayedContentForMessage:message] ?: @"";
+    [[UIPasteboard generalPasteboard] setString:toCopy];
+}
+
+#pragma mark - UIAlertViewDelegate (v261025-6 user-message edit)
+
+// Pre-fill the alert's text field with the user's original message text
+// once the alert has been presented (the text field is only accessible
+// after -show lands the alert on screen).
+- (void)didPresentAlertView:(UIAlertView *)alertView
+{
+    if (alertView.tag == 600 && _pendingEditOriginalText) {
+        if ([alertView respondsToSelector:@selector(textFieldAtIndex:)]) {
+            UITextField *tf = [alertView textFieldAtIndex:0];
+            if ([tf isKindOfClass:[UITextField class]]) {
+                tf.text = _pendingEditOriginalText;
+            }
+        }
+    }
+}
+
+- (void)alertView:(UIAlertView *)alertView
+clickedButtonAtIndex:(NSInteger)buttonIndex
+{
+    if (alertView.tag != 600) return;
+    // buttonIndex 0 = 取消, 1 = 发送.
+    if (buttonIndex != 1) {
+        // Cancel — clear pending state.
+        self.pendingEditMessageID = nil;
+        self.pendingEditOriginalText = nil;
+        return;
+    }
+    // Send — read the text field, find the message, truncate from it, re-send.
+    NSString *editedText = nil;
+    if ([alertView respondsToSelector:@selector(textFieldAtIndex:)]) {
+        UITextField *tf = [alertView textFieldAtIndex:0];
+        if ([tf isKindOfClass:[UITextField class]]) {
+            editedText = [tf.text stringByTrimmingCharactersInSet:
+                          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        }
+    }
+    if (!editedText || editedText.length == 0) {
+        // Empty edit — treat as cancel.
+        self.pendingEditMessageID = nil;
+        self.pendingEditOriginalText = nil;
+        return;
+    }
+    // Find the message by ID.
+    Message *targetMsg = nil;
+    NSInteger targetIdx = NSNotFound;
+    for (NSInteger i = 0; i < (NSInteger)[_conversation.messages count]; i++) {
+        Message *m = [_conversation.messages objectAtIndex:i];
+        if ([m isKindOfClass:[Message class]] &&
+            [m.messageID isEqualToString:_pendingEditMessageID]) {
+            targetMsg = m;
+            targetIdx = i;
+            break;
+        }
+    }
+    if (!targetMsg || targetIdx == NSNotFound) {
+        // Message no longer exists — clear state and bail.
+        self.pendingEditMessageID = nil;
+        self.pendingEditOriginalText = nil;
+        return;
+    }
+    // Truncate the conversation from targetIdx onward (drop the user msg + AI
+    // reply + everything after).
+    NSMutableArray *kept = [NSMutableArray array];
+    for (NSInteger i = 0; i < targetIdx; i++) {
+        [kept addObject:[_conversation.messages objectAtIndex:i]];
+    }
+    // Replace the messages array.
+    [_conversation.messages removeAllObjects];
+    for (Message *m in kept) {
+        [_conversation.messages addObject:m];
+    }
+    // Save the truncated state to disk so the old AI reply isn't resurrected
+    // on next launch.
+    [[ConversationStore sharedStore] saveConversation:_conversation];
+    // Re-send the edited text as a fresh user message + AI placeholder.
+    [self _sendUserMessage:editedText
+                   images:targetMsg.images
+             deepThinking:[ComposerView deepThinkingEnabled]
+               webSearch:[ComposerView webSearchEnabled]];
+    // Clear pending state.
+    self.pendingEditMessageID = nil;
+    self.pendingEditOriginalText = nil;
 }
 
 #pragma mark - Keyboard

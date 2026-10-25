@@ -57,6 +57,7 @@
         case IconTypeLayers:       [self _drawLayers:ctx cx:cx cy:cy w:w h:h]; break;
         case IconTypePerson:       [self _drawPerson:ctx cx:cx cy:cy w:w h:h]; break;
         case IconTypeDoc:          [self _drawDoc:ctx cx:cx cy:cy w:w h:h]; break;
+        case IconTypeExport:       [self _drawExport:ctx cx:cx cy:cy w:w h:h]; break;
     }
 
     UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
@@ -517,6 +518,54 @@
         CGContextMoveToPoint(ctx, x0, y);
         CGContextAddLineToPoint(ctx, x1, y);
     }
+    CGContextStrokePath(ctx);
+}
+
+// v261025-6: Export icon — downward-pointing arrow above a tray (the
+// classic "save to file" glyph). Reads as "export conversations" at 26pt.
++ (void)_drawExport:(CGContextRef)ctx cx:(CGFloat)cx cy:(CGFloat)cy w:(CGFloat)w h:(CGFloat)h
+{
+    CGFloat arrowW = w * 0.22f;
+    CGFloat arrowH = h * 0.36f;
+    CGFloat shaftW = w * 0.10f;
+    // Shaft (vertical rectangle above the arrowhead).
+    CGFloat shaftTop = cy - h * 0.30f;
+    CGFloat shaftBot = cy + h * 0.06f;  // arrowhead base sits here
+    CGFloat shaftLeft = cx - shaftW * 0.5f;
+    CGContextSetLineWidth(ctx, MAX(1.5f, shaftW * 0.30f));
+    CGContextSetLineJoin(ctx, kCGLineJoinRound);
+    CGContextSetLineCap(ctx, kCGLineCapRound);
+    CGContextBeginPath(ctx);
+    CGContextMoveToPoint(ctx, shaftLeft, shaftBot);
+    CGContextAddLineToPoint(ctx, shaftLeft, shaftTop);
+    CGContextAddLineToPoint(ctx, shaftLeft + shaftW, shaftTop);
+    CGContextAddLineToPoint(ctx, shaftLeft + shaftW, shaftBot);
+    // Continue into arrowhead.
+    CGFloat arrowTipY = shaftBot + arrowH * 0.5f;
+    CGContextAddLineToPoint(ctx, cx + arrowW * 0.5f, shaftBot + arrowH * 0.15f);
+    CGContextAddLineToPoint(ctx, cx, arrowTipY);
+    CGContextAddLineToPoint(ctx, cx - arrowW * 0.5f, shaftBot + arrowH * 0.15f);
+    CGContextClosePath(ctx);
+    CGContextFillPath(ctx);
+
+    // Tray (open-top box below the arrowhead) — two short verticals + a
+    // horizontal base. Drawn as an outlined open box.
+    CGFloat trayW = w * 0.50f;
+    CGFloat trayH = h * 0.14f;
+    CGFloat trayTop = arrowTipY + h * 0.04f;
+    CGFloat trayBot = trayTop + trayH;
+    CGFloat trayLeft = cx - trayW * 0.5f;
+    CGFloat trayRight = cx + trayW * 0.5f;
+    CGFloat trayLineW = MAX(1.5f, trayW * 0.10f);
+    CGContextSetLineWidth(ctx, trayLineW);
+    CGContextSetLineCap(ctx, kCGLineCapRound);
+    // Left vertical (short, just the corner).
+    CGContextMoveToPoint(ctx, trayLeft, trayTop);
+    CGContextAddLineToPoint(ctx, trayLeft, trayBot);
+    // Base.
+    CGContextAddLineToPoint(ctx, trayRight, trayBot);
+    // Right vertical.
+    CGContextAddLineToPoint(ctx, trayRight, trayTop);
     CGContextStrokePath(ctx);
 }
 
