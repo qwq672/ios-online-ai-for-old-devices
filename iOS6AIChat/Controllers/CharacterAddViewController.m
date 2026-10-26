@@ -24,6 +24,8 @@
 #import "iOS6Theme.h"
 #import "CharacterManagementViewController.h"
 #import "Logger.h"
+// v261025-7: needed for layer.borderColor / cornerRadius on the prompt view.
+#import <QuartzCore/QuartzCore.h>
 
 static NSString *const kCharFormCellID = @"CharAddFormCell";
 

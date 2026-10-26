@@ -229,6 +229,24 @@ static NSArray *kProviderOrder = nil;
     [self saveModelEntries:entries];
 }
 
+// v261025-7: bare-id add (legacy path — still used by the /v1/models search
+// sheet when the user picks a result). Creates a minimal entry with
+// source=user and NO provider overrides (resolves from global settings).
++ (void)addModel:(NSString *)model
+{
+    if (!model || model.length == 0) return;
+    NSArray *cur = [self savedModelEntries];
+    for (NSDictionary *e in cur) {
+        NSString *mid = [e objectForKey:@"id"];
+        if ([mid isKindOfClass:[NSString class]] && [mid isEqualToString:model]) return;
+    }
+    NSMutableArray *arr = [NSMutableArray arrayWithArray:cur];
+    [arr addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+                    model, @"id",
+                    @"user", @"source", nil]];
+    [self saveModelEntries:arr];
+}
+
 // v261025-7: full-entry add. Merges the caller's dict with defaults; keeps
 // existing entries untouched. De-duplicates by id.
 + (void)addModelEntry:(NSDictionary *)entry
