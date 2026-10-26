@@ -14,32 +14,48 @@
 #import "iOS6Theme.h"
 #import "SettingsViewController.h"
 #import "NetworkService.h"
+#import "ModelAddViewController.h"
 #import "Logger.h"
 #import <QuartzCore/QuartzCore.h>
 
 static NSString *const kCellReuseID = @"ModelMgmtCell";
 
 enum {
-    kMMSectionCurrent = 0,   // 当前默认 + 搜索
-    kMMSectionList,          // 已保存列表
-    kMMSectionAdd,           // 添加新模型
-    kMMSectionCaps,          // 能力开关
+    kMMSectionCurrent = 0,   // 当前默认 (resolved active entry) + 测试/搜索
+    // v261025-7: provider group sections live between Current and Add.
+    // Their count is dynamic (_providerGroups.count).
+    kMMSectionAdd = 100,    // 添加 (+ 添加模型 → ModelAddViewController)
+    kMMSectionCaps,          // 能力开关 (图片识别 / 思考)
     kMMSectionCount
 };
 
+// v261025-7: provider display order for the group sections.
+static NSArray *kProviderOrder = nil;
+
 @interface ModelManagementViewController () {
     NSMutableArray *_availableModels;   // for /v1/models search action sheet
-    NSString *_pendingAddModel;          // for tag-300 alert (add model)
+    NSString *_pendingAddModel;          // for tag-300 alert (LEGACY — add now goes through ModelAddVC; kept harmless)
     NSString *_pendingDeleteModel;       // for tag-700 alert (confirm delete)
     // v261025-3: transit bundled-model search state.
     BOOL _transitSearchInProgress;       // YES while a search is in-flight
     BOOL _transitSearchCancelled;        // YES if user tapped 取消 on the loading alert
+    // v261025-7: provider → entries groups for the two-tier list.
+    NSMutableArray *_providerGroups;     // array of {provider, entries(NSArray)}
 }
 @end
 
 @implementation ModelManagementViewController
 
 @synthesize tableView=_tableView, availableModels=_availableModels;
+
++ (NSArray *)_providerOrder
+{
+    if (!kProviderOrder) {
+        kProviderOrder = [[NSArray arrayWithObjects:
+                           ProviderIDZhipu, ProviderIDOpenAI, ProviderIDOllama, @"custom", nil] retain];
+    }
+    return kProviderOrder;
+}
 
 #pragma mark - Model list persistence (class helpers)
 
@@ -89,6 +105,10 @@ enum {
     }
     // Migrate: if parsed contains bare NSStrings (old format) or dicts
     // missing source, convert to canonical {id, source} form.
+    // v261025-7: dicts that ALREADY have valid id+source (and possibly the
+    // new provider/baseURL/apiKey/displayName keys) pass through UNTOUCHED
+    // — the old code rebuilt them as bare {id, source}, which would strip
+    // the provider-management data on first read.
     BOOL migrated = NO;
     NSMutableArray *entries = [NSMutableArray arrayWithCapacity:[parsed count]];
     for (id e in parsed) {
@@ -102,12 +122,15 @@ enum {
             NSString *src = [e objectForKey:@"source"];
             if (![mid isKindOfClass:[NSString class]] || mid.length == 0) continue;
             if (![src isKindOfClass:[NSString class]] || src.length == 0) {
-                src = @"user";
+                // Missing source → mutate a copy with source=user, keep the
+                // other keys (provider/baseURL/apiKey/displayName) intact.
+                NSMutableDictionary *m = [NSMutableDictionary dictionaryWithDictionary:(NSDictionary *)e];
+                [m setObject:@"user" forKey:@"source"];
+                [entries addObject:m];
                 migrated = YES;
+            } else {
+                [entries addObject:e];
             }
-            [entries addObject:[NSDictionary dictionaryWithObjectsAndKeys:
-                                mid, @"id",
-                                src, @"source", nil]];
         }
     }
     if (migrated) [self saveModelEntries:entries];
@@ -133,26 +156,48 @@ enum {
 + (void)saveModelEntries:(NSArray *)entries
 {
     // De-duplicate by id; first occurrence wins.
+    // v261025-7: ALSO preserve the new per-entry keys (provider / baseURL /
+    // apiKey / displayName). The old sanitizer dropped unknown keys, which
+    // would silently strip the provider-management data on every save.
     NSMutableArray *seen = [NSMutableArray array];
     NSMutableArray *clean = [NSMutableArray arrayWithCapacity:[entries count]];
     for (id e in entries) {
         NSString *mid = nil;
         NSString *src = @"user";
+        NSString *provider = nil;
+        NSString *baseURL = nil;
+        NSString *apiKey = nil;
+        NSString *displayName = nil;
         if ([e isKindOfClass:[NSDictionary class]]) {
             mid = [e objectForKey:@"id"];
             id srcObj = [e objectForKey:@"source"];
             if ([srcObj isKindOfClass:[NSString class]] && [(NSString *)srcObj length] > 0) {
                 src = srcObj;
             }
+            id p = [e objectForKey:@"provider"];
+            if ([p isKindOfClass:[NSString class]] && [(NSString *)p length] > 0) provider = p;
+            id b = [e objectForKey:@"baseURL"];
+            if ([b isKindOfClass:[NSString class]] && [(NSString *)b length] > 0) baseURL = b;
+            id k = [e objectForKey:@"apiKey"];
+            if ([k isKindOfClass:[NSString class]] && [(NSString *)k length] > 0) apiKey = k;
+            id d = [e objectForKey:@"displayName"];
+            if ([d isKindOfClass:[NSString class]] && [(NSString *)d length] > 0) displayName = d;
         } else if ([e isKindOfClass:[NSString class]]) {
             mid = e;
         }
         if (![mid isKindOfClass:[NSString class]] || mid.length == 0) continue;
         if ([seen containsObject:mid]) continue;
         [seen addObject:mid];
-        [clean addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+        NSMutableDictionary *entry = [NSMutableDictionary dictionaryWithObjectsAndKeys:
                           mid, @"id",
-                          src, @"source", nil]];
+                          src, @"source", nil];
+        // v261025-7: only attach the keys that are actually set — entries
+        // without them resolve from global settings (backward compatible).
+        if (provider)    [entry setObject:provider forKey:@"provider"];
+        if (baseURL)     [entry setObject:baseURL forKey:@"baseURL"];
+        if (apiKey)      [entry setObject:apiKey forKey:@"apiKey"];
+        if (displayName) [entry setObject:displayName forKey:@"displayName"];
+        [clean addObject:entry];
     }
     NSError *err = nil;
     NSData *data = [NSJSONSerialization dataWithJSONObject:clean options:0 error:&err];
@@ -184,19 +229,77 @@ enum {
     [self saveModelEntries:entries];
 }
 
-+ (void)addModel:(NSString *)model
+// v261025-7: full-entry add. Merges the caller's dict with defaults; keeps
+// existing entries untouched. De-duplicates by id.
++ (void)addModelEntry:(NSDictionary *)entry
 {
-    if (!model || model.length == 0) return;
+    if (![entry isKindOfClass:[NSDictionary class]]) return;
+    NSString *mid = [entry objectForKey:@"id"];
+    if (![mid isKindOfClass:[NSString class]] || mid.length == 0) return;
     NSArray *cur = [self savedModelEntries];
     for (NSDictionary *e in cur) {
-        NSString *mid = [e objectForKey:@"id"];
-        if ([mid isKindOfClass:[NSString class]] && [mid isEqualToString:model]) return;
+        NSString *eid = [e objectForKey:@"id"];
+        if ([eid isKindOfClass:[NSString class]] && [eid isEqualToString:mid]) {
+            // Already exists — replace it (the add page doubles as edit).
+            NSMutableArray *arr = [NSMutableArray arrayWithArray:cur];
+            [arr replaceObjectAtIndex:[arr indexOfObject:e] withObject:entry];
+            [self saveModelEntries:arr];
+            return;
+        }
     }
     NSMutableArray *arr = [NSMutableArray arrayWithArray:cur];
-    [arr addObject:[NSDictionary dictionaryWithObjectsAndKeys:
-                    model, @"id",
-                    @"user", @"source", nil]];
+    [arr addObject:entry];
     [self saveModelEntries:arr];
+}
+
+// v261025-7: resolve the connection the CHAT path should use. Merges the
+// ACTIVE entry's overrides (provider / baseURL / apiKey) with the global
+// settings defaults. Entries from pre-v261025-7 files have no overrides —
+// they fall through to the global settings exactly as before.
++ (NSDictionary *)resolvedConnectionForChat
+{
+    NSDictionary *settings = [SettingsViewController loadSettings];
+    NSString *model = [settings objectForKey:SettingsKeyModel];
+    NSDictionary *entry = nil;
+    if (model.length > 0) {
+        for (NSDictionary *e in [self savedModelEntries]) {
+            NSString *eid = [e objectForKey:@"id"];
+            if ([eid isKindOfClass:[NSString class]] && [eid isEqualToString:model]) {
+                entry = e;
+                break;
+            }
+        }
+    }
+    NSString *provider = [entry objectForKey:@"provider"];
+    if (![provider isKindOfClass:[NSString class]] || provider.length == 0) {
+        provider = [settings objectForKey:SettingsKeyProvider];
+    }
+    NSString *baseURL = [entry objectForKey:@"baseURL"];
+    if (![baseURL isKindOfClass:[NSString class]] || baseURL.length == 0) {
+        baseURL = [settings objectForKey:SettingsKeyBaseURL];
+    }
+    NSString *apiKey = [entry objectForKey:@"apiKey"];
+    if (![apiKey isKindOfClass:[NSString class]] || apiKey.length == 0) {
+        apiKey = [settings objectForKey:SettingsKeyAPIKey];
+    }
+    return [NSDictionary dictionaryWithObjectsAndKeys:
+            provider ?: ProviderIDOpenAI, @"provider",
+            baseURL   ?: @"https://api.openai.com", @"baseURL",
+            apiKey    ?: @"", @"apiKey",
+            model     ?: @"", @"model",
+            nil];
+}
+
+// v261025-7: which provider bucket does an entry belong to?
++ (NSString *)_providerBucketForEntry:(NSDictionary *)entry
+{
+    NSString *p = [entry objectForKey:@"provider"];
+    if ([p isKindOfClass:[NSString class]] && p.length > 0) {
+        return p;
+    }
+    // No explicit provider → global settings provider at the time of read.
+    NSString *globalProvider = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyProvider];
+    return globalProvider.length > 0 ? globalProvider : ProviderIDOpenAI;
 }
 
 + (void)removeModel:(NSString *)model
@@ -280,6 +383,7 @@ enum {
     if (self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil]) {
         self.title = NSLocalizedString(@"模型管理", nil);
         _availableModels = [[NSMutableArray array] retain];
+        _providerGroups = [[NSMutableArray array] retain];
     }
     return self;
 }
@@ -291,8 +395,7 @@ enum {
     // notification center as a ZOMBIE after the page was popped. The
     // next iOS6ThemeDidChangeNotification (dark mode / font size / the
     // image-support toggle on THIS VERY PAGE posts it!) messaged freed
-    // memory → SIGSEGV with NOTHING in the log. This explains the
-    // "searched models, tapped cancel, crashed" class of reports.
+    // memory → SIGSEGV with NOTHING in the log.
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     // v261025-1: also drop any deferred sheet presentation still pending.
     [NSObject cancelPreviousPerformRequestsWithTarget:self];
@@ -300,6 +403,8 @@ enum {
     [_availableModels release];
     [_pendingAddModel release];
     [_pendingDeleteModel release];
+    // v261025-7: provider group cache.
+    [_providerGroups release];
     [super dealloc];
 }
 
@@ -328,6 +433,7 @@ enum {
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
     _tableView.backgroundColor = [UIColor clearColor];
     _tableView.backgroundView = nil;
+    [self _rebuildGroups];
     [_tableView reloadData];
 }
 
@@ -337,51 +443,172 @@ enum {
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
     _tableView.backgroundColor = [UIColor clearColor];
     _tableView.backgroundView = nil;
+    // v261025-7: rebuild groups every appear — the ModelAddViewController
+    // may have added/edited entries while we were covered.
+    [self _rebuildGroups];
     [_tableView reloadData];
+}
+
+#pragma mark - v261025-7 Provider groups (two-tier structure)
+
+// Group saved entries by provider bucket into _providerGroups:
+//   [{ provider: "zhipu",   entries: [...] },
+//    { provider: "openai",  entries: [...] }, ...]
+// Providers appear in kProviderOrder order; the "custom" bucket collects
+// anything not matching a known provider id. Groups with zero entries are
+// omitted entirely.
+- (void)_rebuildGroups
+{
+    NSArray *all = [ModelManagementViewController savedModelEntries];
+    NSArray *order = [ModelManagementViewController _providerOrder];
+    NSMutableArray *groups = [NSMutableArray array];
+    for (NSString *prov in order) {
+        NSMutableArray *bucket = [NSMutableArray array];
+        for (NSDictionary *e in all) {
+            if (![e isKindOfClass:[NSDictionary class]]) continue;
+            NSString *bucketProv = [ModelManagementViewController _providerBucketForEntry:e];
+            BOOL isKnown = [bucketProv isEqualToString:prov];
+            // "custom" bucket swallows every non-zhipu/openai/ollama provider.
+            if ([prov isEqualToString:@"custom"]) {
+                isKnown = ([bucketProv isEqualToString:ProviderIDZhipu] ||
+                           [bucketProv isEqualToString:ProviderIDOpenAI] ||
+                           [bucketProv isEqualToString:ProviderIDOllama]) ? NO : YES;
+            }
+            if (isKnown) [bucket addObject:e];
+        }
+        if ([bucket count] > 0) {
+            [groups addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+                               prov, @"provider",
+                               [NSArray arrayWithArray:bucket], @"entries",
+                               nil]];
+        }
+    }
+    [_providerGroups release];
+    _providerGroups = [groups retain];
+}
+
+// Map a displayed section index → group index (or NSNotFound).
+- (NSInteger)_groupIndexForSection:(NSInteger)section
+{
+    if (section < 1 || section > (NSInteger)[_providerGroups count]) return NSNotFound;
+    return section - 1;
+}
+
+- (NSInteger)_sectionForAdd      { return 1 + (NSInteger)[_providerGroups count]; }
+- (NSInteger)_sectionForCaps     { return 2 + (NSInteger)[_providerGroups count]; }
+
+- (NSString *)_displayNameForProvider:(NSString *)provider
+{
+    NSString *n = [SettingsViewController displayNameForProvider:provider];
+    if ([provider isEqualToString:@"custom"]) return NSLocalizedString(@"自定义", nil);
+    return n;
 }
 
 #pragma mark - Table data source
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
 {
-    return kMMSectionCount;
+    // v261025-7: 1 (current) + N (provider groups) + 1 (add) + 1 (caps).
+    [self _rebuildGroupsIfNeeded];
+    return 1 + (NSInteger)[_providerGroups count] + 2;
+}
+
+// v261025-7: groups can be empty before the first rebuild (e.g. the table
+// asks before viewWillAppear on a fresh push).
+- (void)_rebuildGroupsIfNeeded
+{
+    if ([_providerGroups count] == 0) {
+        [self _rebuildGroups];
+    }
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
-    switch (section) {
-        case kMMSectionCurrent: return 1;     // 显示当前默认 + 搜索按钮
-        case kMMSectionList:   return (NSInteger)[[ModelManagementViewController savedModelList] count];
-        case kMMSectionAdd:    return 1;
-        case kMMSectionCaps:   return 2;       // 图片识别 / 思考
-        default: return 0;
+    [self _rebuildGroupsIfNeeded];
+    if (section == 0) return 1;                      // 当前默认模型 + 测试/搜索
+    NSInteger gIdx = [self _groupIndexForSection:section];
+    if (gIdx != NSNotFound) {
+        NSDictionary *g = [_providerGroups objectAtIndex:gIdx];
+        return (NSInteger)[[g objectForKey:@"entries"] count];
     }
+    if (section == [self _sectionForAdd])  return 1;  // + 添加模型
+    if (section == [self _sectionForCaps]) return 2;  // 图片识别 / 思考
+    return 0;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
 {
-    switch (section) {
-        case kMMSectionCurrent: return NSLocalizedString(@"当前默认模型", nil);
-        case kMMSectionList:    return NSLocalizedString(@"已保存模型", nil);
-        case kMMSectionAdd:     return NSLocalizedString(@"添加", nil);
-        case kMMSectionCaps:    return NSLocalizedString(@"能力（应用到所有模型）", nil);
-        default: return @"";
+    [self _rebuildGroupsIfNeeded];
+    if (section == 0) return NSLocalizedString(@"当前默认模型", nil);
+    NSInteger gIdx = [self _groupIndexForSection:section];
+    if (gIdx != NSNotFound) {
+        NSDictionary *g = [_providerGroups objectAtIndex:gIdx];
+        NSString *prov = [g objectForKey:@"provider"];
+        NSInteger cnt = (NSInteger)[[g objectForKey:@"entries"] count];
+        return [NSString stringWithFormat:@"%@ (%d)",
+                [self _displayNameForProvider:prov], (int)cnt];
     }
+    if (section == [self _sectionForAdd]) return NSLocalizedString(@"添加", nil);
+    if (section == [self _sectionForCaps]) return NSLocalizedString(@"能力（应用到所有模型）", nil);
+    return @"";
+}
+
+// v261025-7: custom TRANSPARENT header/footer views — the iOS 6 system
+// grouped header/footer draws an opaque LIGHT strip that shows up as a
+// white bar behind the text in dark mode (user-reported).
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForHeaderInSection:section];
+    return [iOS6Theme groupedSectionHeaderViewWithTitle:title
+                                                  width:tableView.bounds.size.width];
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForHeaderInSection:section];
+    return (title.length > 0) ? 26.0f : 8.0f;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
-    switch (section) {
-        case kMMSectionCurrent:
-            return NSLocalizedString(@"点行从 /v1/models 拉取可选用模型。", nil);
-        case kMMSectionList:
-            return NSLocalizedString(@"点模型设为默认；右滑或编辑模式可删除。删当前默认会自动 fallback 到列表第一项。", nil);
-        case kMMSectionAdd:
-            return NSLocalizedString(@"弹出输入框,任意填入模型名(如 gpt-4o)。", nil);
-        case kMMSectionCaps:
-            return NSLocalizedString(@"开关会附加到所有 AI 请求,决定是否携带图片/思考参数。", nil);
-        default: return @"";
+    [self _rebuildGroupsIfNeeded];
+    if (section == 0) {
+        return NSLocalizedString(@"点「测试」验证连接；点「搜索」从 /v1/models 拉取可选用模型。", nil);
     }
+    NSInteger gIdx = [self _groupIndexForSection:section];
+    if (gIdx != NSNotFound) {
+        NSDictionary *g = [_providerGroups objectAtIndex:gIdx];
+        NSString *prov = [g objectForKey:@"provider"];
+        // Show the group's shared endpoint hint when the entries carry one.
+        NSDictionary *firstEntry = [[g objectForKey:@"entries"] count] > 0
+            ? [[g objectForKey:@"entries"] objectAtIndex:0] : nil;
+        NSString *b = [firstEntry objectForKey:@"baseURL"];
+        if ([b isKindOfClass:[NSString class]] && b.length > 0) {
+            return [NSString stringWithFormat:@"点模型设为默认；右滑删除。端点: %@", b];
+        }
+        return NSLocalizedString(@"点模型设为默认；右滑删除。", nil);
+    }
+    if (section == [self _sectionForAdd]) {
+        return NSLocalizedString(@"打开完整表单：选提供商、填 BaseURL / API Key / 模型名。", nil);
+    }
+    if (section == [self _sectionForCaps]) {
+        return NSLocalizedString(@"开关会附加到所有 AI 请求，决定是否携带图片/思考参数。", nil);
+    }
+    return @"";
+}
+
+- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForFooterInSection:section];
+    return [iOS6Theme groupedSectionFooterViewWithTitle:title
+                                                  width:tableView.bounds.size.width];
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForFooterInSection:section];
+    return [iOS6Theme groupedSectionFooterHeightForTitle:title
+                                                   width:tableView.bounds.size.width];
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
@@ -400,6 +627,9 @@ enum {
     for (UIView *v in oldSubviews) [v removeFromSuperview];
     [oldSubviews release];
     cell.backgroundColor = [iOS6Theme bubbleAssistantColor];
+    // v261025-7: explicit CLEAR label backgrounds (dark-mode white-plate fix).
+    cell.textLabel.backgroundColor = [UIColor clearColor];
+    cell.textLabel.opaque = NO;
     cell.textLabel.text = @"";
     cell.textLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];
     cell.textLabel.textColor = [iOS6Theme textColor];
@@ -407,18 +637,19 @@ enum {
     cell.accessoryType = UITableViewCellAccessoryNone;
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
 
-    switch (indexPath.section) {
-        case kMMSectionCurrent: {
-            // Show current default model name + 搜索 button on the right.
-            // v261025-6: also add 测试连接 button next to 搜索 — fires off
-            // a GET /v1/models with current settings and shows the result
-            // (success / fail). Same NetworkService.listModels call as
-            // 搜索, but no model sheet at the end.
-            NSString *def = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyModel];
-            if (!def) def = @"(unset)";
-            cell.textLabel.text = def ?: @"(unset)";
+    [self _rebuildGroupsIfNeeded];
+    NSInteger gIdx = [self _groupIndexForSection:indexPath.section];
 
-            UIButton *testBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    if (indexPath.section == 0) {
+        // Show the resolved ACTIVE entry: "provider · model" + 测试/搜索 buttons.
+        NSDictionary *conn = [ModelManagementViewController resolvedConnectionForChat];
+        NSString *model = [conn objectForKey:@"model"];
+        NSString *prov = [conn objectForKey:@"provider"];
+        NSString *display = model.length > 0 ? model : @"(unset)";
+        cell.textLabel.text = [NSString stringWithFormat:@"%@ · %@",
+                               [self _displayNameForProvider:prov], display];
+
+        UIButton *testBtn = [UIButton buttonWithType:UIButtonTypeCustom];
             [testBtn setTitle:NSLocalizedString(@"测试", nil) forState:UIControlStateNormal];
             [testBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
             testBtn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
@@ -448,63 +679,57 @@ enum {
               forControlEvents:UIControlEventTouchUpInside];
             [cell.contentView addSubview:btn];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
-            break;
+    }
+    else if (gIdx != NSNotFound) {
+        // v261025-7: provider-group row — one saved model entry.
+        NSDictionary *g = [_providerGroups objectAtIndex:gIdx];
+        NSArray *entries = [g objectForKey:@"entries"];
+        if (indexPath.row >= (NSInteger)[entries count]) return cell;
+        NSDictionary *e = [entries objectAtIndex:indexPath.row];
+        NSString *mid = [e objectForKey:@"id"];
+        if (![mid isKindOfClass:[NSString class]]) return cell;
+        // Display: displayName if set, else the raw model id.
+        NSString *dn = [e objectForKey:@"displayName"];
+        cell.textLabel.text = [dn isKindOfClass:[NSString class]] && dn.length > 0 ? dn : mid;
+        // "自定义" badge when the entry carries its own endpoint/key —
+        // i.e. it's a full provider profile, not a bare model name.
+        BOOL hasOverrides = ([[e objectForKey:@"baseURL"] length] > 0) ||
+                            ([[e objectForKey:@"apiKey"] length] > 0);
+        NSString *src = [e objectForKey:@"source"];
+        BOOL isTransit = [src isKindOfClass:[NSString class]] && [src isEqualToString:@"transit"];
+        if (hasOverrides || isTransit) {
+            UILabel *badge = [[[UILabel alloc]
+                initWithFrame:CGRectMake(0, 0, 50, 18)] autorelease];
+            badge.text = isTransit ? NSLocalizedString(@"中转", nil)
+                                   : NSLocalizedString(@"自定义", nil);
+            badge.textColor = [UIColor whiteColor];
+            badge.backgroundColor = isTransit ? [iOS6Theme tintColor]
+                                              : [iOS6Theme secondaryTextColor];
+            badge.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:10]];
+            badge.textAlignment = NSTextAlignmentCenter;
+            badge.layer.cornerRadius = 4.0f;
+            badge.layer.masksToBounds = YES;
+            badge.tag = 9001;  // for cleanup on cell reuse
+            CGRect f = cell.contentView.bounds;
+            badge.frame = CGRectMake(f.size.width - 60 - 12,
+                                     (44 - 18) / 2, 50, 18);
+            badge.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+            [cell.contentView addSubview:badge];
         }
-        case kMMSectionList: {
-            NSArray *list = [ModelManagementViewController savedModelList];
-            if (indexPath.row >= (NSInteger)[list count]) return cell;
-            NSString *m = [list objectAtIndex:indexPath.row];
-            // v261025-3: show a small "中转" badge next to transit-sourced
-            // models. The badge is a tinted UILabel appended to the right
-            // of the model id text. Tapping the row still sets it as the
-            // default (the badge is display-only).
-            NSString *src = [ModelManagementViewController sourceForModel:m];
-            if ([src isEqualToString:@"transit"]) {
-                // Build the title as "model_id  [中转]" with the tag
-                // appended in a softer color (NSAttributedString would be
-                // ideal but iOS 6 UILabel doesn't support attributedText
-                // until iOS 6.0 — wait, actually it DOES in 6.0, but the
-                // cctools-port SDK headers may not declare it. Safer to
-                // just append to the plain text and rely on a separate
-                // badge UILabel in the cell.contentView.)
-                cell.textLabel.text = m;
-                UILabel *badge = [[[UILabel alloc]
-                    initWithFrame:CGRectMake(0, 0, 50, 18)] autorelease];
-                badge.text = NSLocalizedString(@"中转", nil);
-                badge.textColor = [UIColor whiteColor];
-                badge.backgroundColor = [iOS6Theme tintColor];
-                badge.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:10]];
-                badge.textAlignment = NSTextAlignmentCenter;
-                badge.layer.cornerRadius = 4.0f;
-                badge.layer.masksToBounds = YES;
-                badge.tag = 9001;  // for cleanup on cell reuse
-                // Position will be set in layoutSubviews — but since we
-                // don't subclass UITableViewCell here, just place it now
-                // at a fixed offset from the right edge.
-                CGRect f = cell.contentView.bounds;
-                badge.frame = CGRectMake(f.size.width - 60 - 12,
-                                         (44 - 18) / 2, 50, 18);
-                badge.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-                [cell.contentView addSubview:badge];
-            } else {
-                cell.textLabel.text = m;
-            }
-            // Checkmark if this is the current default.
-            NSString *def = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyModel];
-            if (def && [def isEqualToString:m]) {
-                cell.accessoryType = UITableViewCellAccessoryCheckmark;
-            } else {
-                cell.accessoryType = UITableViewCellAccessoryNone;
-            }
-            cell.selectionStyle = UITableViewCellSelectionStyleBlue;
-            break;
+        // Checkmark if this is the current default.
+        NSString *def = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyModel];
+        if (def && [def isEqualToString:mid]) {
+            cell.accessoryType = UITableViewCellAccessoryCheckmark;
         }
-        case kMMSectionAdd:
-            cell.textLabel.text = NSLocalizedString(@"+ 添加模型", nil);
-            cell.textLabel.textColor = [iOS6Theme tintColor];
-            cell.selectionStyle = UITableViewCellSelectionStyleBlue;
-            break;
-        case kMMSectionCaps: {
+        cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+    }
+    else if (indexPath.section == [self _sectionForAdd]) {
+        cell.textLabel.text = NSLocalizedString(@"+ 添加模型", nil);
+        cell.textLabel.textColor = [iOS6Theme tintColor];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+    }
+    else if (indexPath.section == [self _sectionForCaps]) {
             // Build toggle cells (one per capability).
             NSString *label;
             NSString *key;
@@ -534,8 +759,6 @@ enum {
             CGRect f = cell.contentView.bounds;
             sw.frame = CGRectMake(f.size.width - 79 - 12, (44 - 27) / 2, 79, 27);
             [cell.contentView addSubview:sw];
-            break;
-        }
     }
     return cell;
 }
@@ -555,61 +778,64 @@ enum {
 
 #pragma mark - Table delegate
 
+// v261025-7: group rows are editable (swipe-to-delete); everything else isn't.
 - (BOOL)tableView:(UITableView *)tableView
 canEditRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    return indexPath.section == kMMSectionList;
+    return [self _groupIndexForSection:indexPath.section] != NSNotFound;
 }
 
 - (void)tableView:(UITableView *)tableView
 commitEditingStyle:(UITableViewCellEditingStyle)editingStyle
 forRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    if (editingStyle == UITableViewCellEditingStyleDelete &&
-        indexPath.section == kMMSectionList) {
-        NSArray *list = [ModelManagementViewController savedModelList];
-        if (indexPath.row >= (NSInteger)[list count]) return;
-        NSString *toDel = [list objectAtIndex:indexPath.row];
-        // Confirm before deletion (tag 700 alert).
-        UIAlertView *av = [[[UIAlertView alloc]
-            initWithTitle:NSLocalizedString(@"删除模型?", nil)
-                  message:[NSString stringWithFormat:@"%@ \"%@\"", NSLocalizedString(@"确定从列表删除", nil), toDel]
-                 delegate:self
-        cancelButtonTitle:NSLocalizedString(@"取消", nil)
-        otherButtonTitles:NSLocalizedString(@"删除", nil), nil] autorelease];
-        [av setTag:700];
-        self.pendingDeleteModel = toDel;
-        [av show];
-    }
+    if (editingStyle != UITableViewCellEditingStyleDelete) return;
+    NSInteger gIdx = [self _groupIndexForSection:indexPath.section];
+    if (gIdx == NSNotFound) return;
+    NSDictionary *g = [_providerGroups objectAtIndex:gIdx];
+    NSArray *entries = [g objectForKey:@"entries"];
+    if (indexPath.row >= (NSInteger)[entries count]) return;
+    NSDictionary *e = [entries objectAtIndex:indexPath.row];
+    NSString *toDel = [e objectForKey:@"id"];
+    if (![toDel isKindOfClass:[NSString class]] || toDel.length == 0) return;
+    // Confirm before deletion (tag 700 alert).
+    UIAlertView *av = [[[UIAlertView alloc]
+        initWithTitle:NSLocalizedString(@"删除模型?", nil)
+              message:[NSString stringWithFormat:@"%@ \"%@\"", NSLocalizedString(@"确定从列表删除", nil), toDel]
+             delegate:self
+    cancelButtonTitle:NSLocalizedString(@"取消", nil)
+    otherButtonTitles:NSLocalizedString(@"删除", nil), nil] autorelease];
+    [av setTag:700];
+    self.pendingDeleteModel = toDel;
+    [av show];
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    if (indexPath.section == kMMSectionList) {
-        NSArray *list = [ModelManagementViewController savedModelList];
-        if (indexPath.row >= (NSInteger)[list count]) { [tableView deselectRowAtIndexPath:indexPath animated:YES]; return; }
-        NSString *m = [list objectAtIndex:indexPath.row];
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    NSInteger gIdx = [self _groupIndexForSection:indexPath.section];
+    if (gIdx != NSNotFound) {
+        // v261025-7: tap a group row → make it the ACTIVE entry. The chat
+        // path resolves provider/baseURL/apiKey from it via
+        // +resolvedConnectionForChat.
+        NSDictionary *g = [_providerGroups objectAtIndex:gIdx];
+        NSArray *entries = [g objectForKey:@"entries"];
+        if (indexPath.row >= (NSInteger)[entries count]) return;
+        NSDictionary *e = [entries objectAtIndex:indexPath.row];
+        NSString *m = [e objectForKey:@"id"];
+        if (![m isKindOfClass:[NSString class]] || m.length == 0) return;
         [[NSUserDefaults standardUserDefaults] setObject:m forKey:SettingsKeyModel];
         [[NSUserDefaults standardUserDefaults] synchronize];
-        [[Logger sharedLogger] info:[NSString stringWithFormat:@"Default model set to %@", m]];
+        [[Logger sharedLogger] info:[NSString stringWithFormat:@"Default model set to %@ (provider %@)",
+                                      m, [e objectForKey:@"provider"] ?: @"(global)"]];
         [_tableView reloadData];
-    } else if (indexPath.section == kMMSectionAdd) {
-        // Pop up an alert to input a new model name.
-        UIAlertView *av = [[[UIAlertView alloc]
-            initWithTitle:NSLocalizedString(@"添加模型", nil)
-                  message:NSLocalizedString(@"输入模型名(如 gpt-4o)", nil)
-                 delegate:self
-        cancelButtonTitle:NSLocalizedString(@"取消", nil)
-        otherButtonTitles:NSLocalizedString(@"添加", nil), nil] autorelease];
-        // This is the iOS 4+ UIAlertView style — single text field needs
-        // the alertViewStyle property which IS available on iOS 5+.
-        if ([av respondsToSelector:@selector(setAlertViewStyle:)]) {
-            [av setAlertViewStyle:UIAlertViewStylePlainTextInput];
-        }
-        [av setTag:300];
-        [av show];
+        return;
     }
-    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section == [self _sectionForAdd]) {
+        // v261025-7: full form page instead of the old single-field alert.
+        ModelAddViewController *add = [[[ModelAddViewController alloc] init] autorelease];
+        [self.navigationController pushViewController:add animated:YES];
+    }
 }
 
 #pragma mark - UIAlertViewDelegate
@@ -625,22 +851,9 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         _transitSearchCancelled = YES;
         return;
     }
-    if (alertView.tag == 300 && buttonIndex == 1) {
-        // Add model — read the text field.
-        UITextField *tf = nil;
-        if ([alertView respondsToSelector:@selector(textFieldAtIndex:)]) {
-            tf = [alertView textFieldAtIndex:0];
-        }
-        NSString *m = tf.text;
-        if (m && m.length > 0) {
-            [ModelManagementViewController addModel:m];
-            // Also set as default? No — just add to list, let user tap to
-            // set default. This matches user expectation that adding a
-            // model doesn't auto-switch the active one.
-            [[Logger sharedLogger] info:[NSString stringWithFormat:@"Added model %@", m]];
-            [_tableView reloadData];
-        }
-    } else if (alertView.tag == 700 && buttonIndex == 1) {
+    // v261025-7: tag 300 (legacy bare-model add alert) is retired — adding
+    // now goes through ModelAddViewController. The branch is removed.
+    if (alertView.tag == 700 && buttonIndex == 1) {
         // v261025-1: lean logging — entry + outcome only (v19's 10-line
         // firehose drowned the log; the Logger is crash-safe now).
         NSString *m = _pendingDeleteModel;
@@ -675,6 +888,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
             [[NSUserDefaults standardUserDefaults] synchronize];
         }
         [[Logger sharedLogger] info:[NSString stringWithFormat:@"ModelMgmt delete '%@' — done", m]];
+        [self _rebuildGroups];
         if (_tableView) [_tableView reloadData];
         self.pendingDeleteModel = nil;
     }
@@ -702,12 +916,16 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 
 - (void)_searchAvailableModels
 {
+    // v261025-7: use the ACTIVE entry's resolved connection (provider /
+    // baseURL / apiKey) instead of the raw global settings — so the
+    // search hits whatever provider profile the user has selected.
+    NSDictionary *conn = [ModelManagementViewController resolvedConnectionForChat];
     NSDictionary *settings = [SettingsViewController loadSettings];
     BOOL useTransit = [[settings objectForKey:SettingsKeyUseTransit] boolValue];
     NSString *transitURL = [settings objectForKey:SettingsKeyTransitURL];
-    NSString *baseURL = [settings objectForKey:SettingsKeyBaseURL];
-    NSString *provider = [settings objectForKey:SettingsKeyProvider];
-    NSString *apiKey = [settings objectForKey:SettingsKeyAPIKey];
+    NSString *baseURL = [conn objectForKey:@"baseURL"];
+    NSString *provider = [conn objectForKey:@"provider"];
+    NSString *apiKey = [conn objectForKey:@"apiKey"];
 
     [[Logger sharedLogger] info:[NSString stringWithFormat:
         @"ModelMgmt search models — transit=%d provider=%@", (int)useTransit, provider ?: @"?"]];
@@ -819,12 +1037,15 @@ destructiveButtonTitle:nil
 // without committing to adding a model.
 - (void)_testConnection
 {
+    // v261025-7: use the ACTIVE entry's resolved connection — testing what
+    // the chat will actually use.
+    NSDictionary *conn = [ModelManagementViewController resolvedConnectionForChat];
     NSDictionary *settings = [SettingsViewController loadSettings];
     BOOL useTransit = [[settings objectForKey:SettingsKeyUseTransit] boolValue];
     NSString *transitURL = [settings objectForKey:SettingsKeyTransitURL];
-    NSString *baseURL = [settings objectForKey:SettingsKeyBaseURL];
-    NSString *provider = [settings objectForKey:SettingsKeyProvider];
-    NSString *apiKey = [settings objectForKey:SettingsKeyAPIKey];
+    NSString *baseURL = [conn objectForKey:@"baseURL"];
+    NSString *provider = [conn objectForKey:@"provider"];
+    NSString *apiKey = [conn objectForKey:@"apiKey"];
 
     [[Logger sharedLogger] info:[NSString stringWithFormat:
         @"ModelMgmt test connection — transit=%d provider=%@", (int)useTransit, provider ?: @"?"]];

@@ -321,7 +321,17 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         _thinkingBlock.hidden = YES;
         [_bubble addSubview:_thinkingBlock];
 
-        _thinkingToggle = [UIButton buttonWithType:UIButtonTypeCustom];
+        _thinkingToggle = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
+        // v261025-7 CRITICAL: +[UIButton buttonWithType:] returns an
+        // AUTORELEASED (+0) object. The OLD code assigned it directly to
+        // the ivar — bypassing the synthesized (retain) setter — so NO
+        // retain happened, yet dealloc released it → over-release by 1.
+        // The button then dealloc'd WHILE STILL A SUBVIEW, and the later
+        // view-hierarchy teardown released the freed object again →
+        // use-after-free SIGSEGV. THIS is the root cause of the
+        // "两轮对话必闪退" crash family (v261025-4 logs: ChatMessageCell
+        // dealloc / ChatBubbleView dealloc / _CFAutoreleasePoolPop).
+        // Every buttonWithType: assignment in this file now retains.
         _thinkingToggle.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
         _thinkingToggle.contentEdgeInsets = UIEdgeInsetsMake(0, 6, 0, 6);
         _thinkingToggle.titleLabel.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
@@ -346,7 +356,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         _imageViews = [[NSMutableArray alloc] init];
 
         // Regenerate + Copy buttons (only shown for AI assistant messages).
-        _regenerateButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _regenerateButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
         _regenerateButton.frame = CGRectMake(0, 0, 36, 24);
         [_regenerateButton setImage:[IconDrawing imageForType:IconTypeRefresh
                                                            size:CGSizeMake(16, 16)
@@ -357,7 +367,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         _regenerateButton.hidden = YES;
         [self.contentView addSubview:_regenerateButton];
 
-        _clipboardButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _clipboardButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
         _clipboardButton.frame = CGRectMake(0, 0, 36, 24);
         [_clipboardButton setImage:[IconDrawing imageForType:IconTypeCopy
                                                     size:CGSizeMake(16, 16)
@@ -371,7 +381,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         // v261025-6: user-message edit button — pencil icon, only shown on
         // user cells. Tap fires didTapEditUserMessage: on the delegate,
         // which pops an alert pre-filled with the user's original text.
-        _editButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _editButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
         _editButton.frame = CGRectMake(0, 0, 36, 24);
         [_editButton setImage:[IconDrawing imageForType:IconTypeRefresh
                                                     size:CGSizeMake(16, 16)
@@ -392,10 +402,12 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         // v261025-6: variant pager — "‹ 1/N ›" UI + prev/next arrows.
         // Hidden by default; only shown on AI cells where variants.count
         // >= 1 (i.e. the user has regenerated at least once).
-        _variantPrevButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _variantPrevButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
         _variantPrevButton.frame = CGRectMake(0, 0, 28, 24);
         _variantPrevButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-        [_variantPrevButton setTitle:@"‹" forState:UIControlStateNormal];
+        // v261025-7: plain ASCII "<" — U+2039 ‹ may lack a glyph in iOS 6
+        // Helvetica (never gamble on exotic codepoints there).
+        [_variantPrevButton setTitle:@"<" forState:UIControlStateNormal];
         [_variantPrevButton setTitleColor:[iOS6Theme tintColor]
                                forState:UIControlStateNormal];
         [_variantPrevButton addTarget:self action:@selector(_variantPrevTapped)
@@ -403,10 +415,11 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         _variantPrevButton.hidden = YES;
         [self.contentView addSubview:_variantPrevButton];
 
-        _variantNextButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _variantNextButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
         _variantNextButton.frame = CGRectMake(0, 0, 28, 24);
         _variantNextButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-        [_variantNextButton setTitle:@"›" forState:UIControlStateNormal];
+        // v261025-7: plain ASCII ">" (same glyph-safety reason).
+        [_variantNextButton setTitle:@">" forState:UIControlStateNormal];
         [_variantNextButton setTitleColor:[iOS6Theme tintColor]
                                forState:UIControlStateNormal];
         [_variantNextButton addTarget:self action:@selector(_variantNextTapped)

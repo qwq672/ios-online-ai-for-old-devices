@@ -247,6 +247,21 @@ enum {
     return @"gpt-4o-mini";
 }
 
+// v261025-7: default endpoint per provider — used by ModelAddViewController
+// to auto-fill the BaseURL field when the user switches the provider
+// segment, and as the fallback when an entry has no baseURL of its own.
++ (NSString *)defaultBaseURLForProvider:(NSString *)providerID
+{
+    if ([providerID isEqualToString:ProviderIDZhipu]) {
+        return @"https://open.bigmodel.cn/api/paas/v4";
+    }
+    if ([providerID isEqualToString:ProviderIDOllama]) {
+        return @"http://localhost:11434";
+    }
+    // default + ProviderIDOpenAI
+    return @"https://api.openai.com";
+}
+
 - (void)resetToDefaults
 {
     UIAlertView *av = [[[UIAlertView alloc]
@@ -334,22 +349,33 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
 {
-    // Custom header view — no default shadow (which looks bad in dark mode).
+    // v261025-7: shared transparent header (replaces the local variant —
+    // same idea, one implementation everywhere).
     NSString *title = [self tableView:tableView titleForHeaderInSection:section];
-    if (!title || title.length == 0) return nil;
-    UIView *header = [[[UIView alloc] initWithFrame:CGRectMake(0, 0, tableView.bounds.size.width, 30)] autorelease];
-    header.backgroundColor = [UIColor clearColor];
-    UILabel *label = [[[UILabel alloc] initWithFrame:CGRectMake(16, 8, tableView.bounds.size.width - 32, 20)] autorelease];
-    label.text = title;
-    label.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
-    label.textColor = [iOS6Theme secondaryTextColor];
-    label.backgroundColor = [UIColor clearColor];
-    // No shadowOffset — this removes the iOS 6 default text shadow that
-    // looks like "glow" in dark mode.
-    label.shadowColor = nil;
-    label.shadowOffset = CGSizeZero;
-    [header addSubview:label];
-    return header;
+    return [iOS6Theme groupedSectionHeaderViewWithTitle:title
+                                                  width:tableView.bounds.size.width];
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForHeaderInSection:section];
+    return (title.length > 0) ? 26.0f : 8.0f;
+}
+
+// v261025-7: custom TRANSPARENT footer views — the system footer draws an
+// opaque LIGHT strip (white bar in dark mode, user-reported).
+- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForFooterInSection:section];
+    return [iOS6Theme groupedSectionFooterViewWithTitle:title
+                                                  width:tableView.bounds.size.width];
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForFooterInSection:section];
+    return [iOS6Theme groupedSectionFooterHeightForTitle:title
+                                                   width:tableView.bounds.size.width];
 }
 
 - (NSString *)tableView:(UITableView *)tableView
@@ -411,6 +437,9 @@ titleForFooterInSection:(NSInteger)section
     cell.textLabel.textColor = [iOS6Theme textColor];
     cell.textLabel.textAlignment = NSTextAlignmentLeft;
     cell.textLabel.numberOfLines = 1;
+    // v261025-7: explicit CLEAR label background (dark-mode white-plate fix).
+    cell.textLabel.backgroundColor = [UIColor clearColor];
+    cell.textLabel.opaque = NO;
     cell.accessoryType = UITableViewCellAccessoryNone;
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
     cell.contentView.backgroundColor = [iOS6Theme bubbleAssistantColor];

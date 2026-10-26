@@ -127,6 +127,20 @@
     return NSLocalizedString(@"日志内容", nil);
 }
 
+// v261025-7: custom TRANSPARENT header views (dark-mode white-bar fix).
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForHeaderInSection:section];
+    return [iOS6Theme groupedSectionHeaderViewWithTitle:title
+                                                  width:tableView.bounds.size.width];
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForHeaderInSection:section];
+    return (title.length > 0) ? 26.0f : 8.0f;
+}
+
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath
 {
     if (indexPath.section == 1) {
@@ -155,6 +169,9 @@
     for (UIView *v in oldSubviews) [v removeFromSuperview];
     [oldSubviews release];
     cell.backgroundColor = [iOS6Theme bubbleAssistantColor];
+    // v261025-7: explicit CLEAR label background (dark-mode white-plate fix).
+    cell.textLabel.backgroundColor = [UIColor clearColor];
+    cell.textLabel.opaque = NO;
     cell.textLabel.text = @"";
     cell.textLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
     cell.textLabel.textColor = [iOS6Theme textColor];

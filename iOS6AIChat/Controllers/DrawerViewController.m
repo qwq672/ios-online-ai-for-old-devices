@@ -233,7 +233,10 @@ static NSInteger const kMaxRecent = 6;
     // 完成 (Done) — bordered translucent glass bar button, left.
     // v261025-6: 按钮 Y 从 30 → 20 (kSheetBarH=50, status bar 20pt 占据 0-20,
     // 可见皮革区 20-50 共 30pt，按钮高 30pt 恰好填满)。
-    _doneButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    // v261025-7 CRITICAL: buttonWithType: returns AUTORELEASED (+0);
+    // retain here or dealloc over-releases (same crash family as
+    // ChatMessageCell — see that file's writeup).
+    _doneButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
     _doneButton.frame = CGRectMake(8.0f, 20.0f, 64.0f, 30.0f);
     _doneButton.autoresizingMask = UIViewAutoresizingFlexibleRightMargin;
     _doneButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
@@ -255,7 +258,7 @@ static NSInteger const kMaxRecent = 6;
     // 新对话 (New chat) — bordered glass bar button, right.
     // NOTE: plain ASCII "+" — U+271A heavy-cross may lack a glyph in
     // iOS 6 Helvetica; never gamble on exotic codepoints there.
-    _newChatButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _newChatButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
     _newChatButton.frame = CGRectMake(W - 8.0f - 72.0f, 20.0f, 72.0f, 30.0f);
     _newChatButton.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     _newChatButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
@@ -807,6 +810,23 @@ replacementString:(NSString *)string
     return NSLocalizedString(@"最近对话", nil);
 }
 
+// v261025-7: custom TRANSPARENT section header views. iOS 6's system-drawn
+// grouped headers have an opaque LIGHT strip — in dark mode that's the
+// jarring "white background behind every text" the user reported.
+// viewForHeaderInSection: takes precedence over titleForHeaderInSection:.
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForHeaderInSection:section];
+    return [iOS6Theme groupedSectionHeaderViewWithTitle:title
+                                                  width:tableView.bounds.size.width];
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForHeaderInSection:section];
+    return (title.length > 0) ? 26.0f : 8.0f;
+}
+
 - (UITableViewCell *)tableView:(UITableView *)tableView
           cellForRowAtIndexPath:(NSIndexPath *)indexPath
 {
@@ -825,6 +845,13 @@ replacementString:(NSString *)string
             cell.selectionStyle = UITableViewCellSelectionStyleBlue;
         }
         [self _applyCardBackgroundOnCell:cell tableView:tableView];
+        // v261025-7: explicit CLEAR label backgrounds — iOS 6 sometimes
+        // draws a white plate behind textLabel/detailTextLabel glyphs in
+        // grouped cells (very visible in dark mode).
+        cell.textLabel.backgroundColor = [UIColor clearColor];
+        cell.textLabel.opaque = NO;
+        cell.detailTextLabel.backgroundColor = [UIColor clearColor];
+        cell.detailTextLabel.opaque = NO;
         cell.textLabel.text = conv.displayTitle ?: @"(无标题)";
         cell.textLabel.font = [UIFont boldSystemFontOfSize:15];
         cell.textLabel.textColor = [iOS6Theme textColor];
@@ -850,6 +877,12 @@ replacementString:(NSString *)string
             cell.selectionStyle = UITableViewCellSelectionStyleBlue;
         }
         [self _applyCardBackgroundOnCell:cell tableView:tableView];
+        // v261025-7: explicit CLEAR label backgrounds (dark-mode white
+        // plate fix — same as the search-result rows above).
+        cell.textLabel.backgroundColor = [UIColor clearColor];
+        cell.textLabel.opaque = NO;
+        cell.detailTextLabel.backgroundColor = [UIColor clearColor];
+        cell.detailTextLabel.opaque = NO;
         cell.textLabel.text = conv.displayTitle ?: @"(无标题)";
         cell.textLabel.font = [UIFont boldSystemFontOfSize:15];
         cell.textLabel.textColor = [iOS6Theme textColor];
@@ -878,6 +911,9 @@ replacementString:(NSString *)string
         cell.selectionStyle = UITableViewCellSelectionStyleBlue;
     }
     [self _applyCardBackgroundOnCell:cell tableView:tableView];
+    // v261025-7: explicit CLEAR label background (dark-mode white plate fix).
+    cell.textLabel.backgroundColor = [UIColor clearColor];
+    cell.textLabel.opaque = NO;
     cell.textLabel.textColor = [iOS6Theme textColor];
     cell.textLabel.shadowColor = [iOS6Theme isDarkMode]
         ? [UIColor colorWithWhite:0.0f alpha:0.35f]

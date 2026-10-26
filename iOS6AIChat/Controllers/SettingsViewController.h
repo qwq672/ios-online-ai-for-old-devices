@@ -67,6 +67,8 @@ extern NSString *const ProviderIDOllama;
 + (NSArray *)availableProviderIDs;
 + (NSString *)displayNameForProvider:(NSString *)providerID;
 + (NSString *)defaultModelForProvider:(NSString *)providerID;
+// v261025-7: default endpoint per provider (ModelAddViewController form).
++ (NSString *)defaultBaseURLForProvider:(NSString *)providerID;
 
 // Default seed list of saved models per provider (v261024-15).
 // Used by ModelManagementViewController when the user has no saved list yet.

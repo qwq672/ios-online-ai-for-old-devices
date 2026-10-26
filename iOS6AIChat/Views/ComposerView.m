@@ -88,7 +88,11 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         [self addSubview:_textView];
 
         // Image button — glassy iOS 6 style (background image from theme).
-        _imageButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        // v261025-7 CRITICAL: buttonWithType: returns AUTORELEASED (+0);
+        // direct ivar assignment without retain = over-release in dealloc
+        // (same crash family as ChatMessageCell — see that file's writeup).
+        // All four buttons here now retain.
+        _imageButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
         _imageButton.layer.cornerRadius = 5.0f;
         _imageButton.layer.masksToBounds = YES;
         [_imageButton setTitleColor:[iOS6Theme tintColor] forState:UIControlStateNormal];
@@ -109,7 +113,7 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         [self addSubview:_imageBadge];
 
         // DT button.
-        _deepThinkingButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _deepThinkingButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
         _deepThinkingButton.layer.cornerRadius = 5.0f;
         _deepThinkingButton.layer.masksToBounds = YES;
         [_deepThinkingButton addTarget:self action:@selector(_deepThinkingTapped)
@@ -117,7 +121,7 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         [self addSubview:_deepThinkingButton];
 
         // Web button.
-        _webSearchButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _webSearchButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
         _webSearchButton.layer.cornerRadius = 5.0f;
         _webSearchButton.layer.masksToBounds = YES;
         [_webSearchButton addTarget:self action:@selector(_webSearchTapped)
@@ -125,7 +129,7 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         [self addSubview:_webSearchButton];
 
         // Send button.
-        _sendButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _sendButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
         _sendButton.layer.cornerRadius = 5.0f;
         _sendButton.layer.masksToBounds = YES;
         [_sendButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];

@@ -349,6 +349,84 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
     [self drawOuterHairlineInRect:rect context:ctx color:[self darkerColor:tint by:0.45f]];
 }
 
+#pragma mark - v261025-7 Transparent grouped section header / footer
+
+// iOS 6 system-drawn grouped-table section headers (and footers) have an
+// opaque LIGHT background strip. On a dark-mode table with a clear
+// backgroundColor, those strips show up as bright white bars behind the
+// section text — the user reported exactly this ("每个文字都有白色背景，
+// 深色模式特别突兀"). These helpers give every grouped table in the app a
+// transparent, theme-aware replacement.
++ (UIView *)groupedSectionHeaderViewWithTitle:(NSString *)title
+                                        width:(CGFloat)width
+{
+    if (width < 50) width = [UIScreen mainScreen].bounds.size.width;
+    UIView *header = [[[UIView alloc] initWithFrame:CGRectMake(0, 0, width, 26)] autorelease];
+    header.backgroundColor = [UIColor clearColor];
+    header.opaque = NO;
+    if (title.length > 0) {
+        UILabel *label = [[[UILabel alloc] initWithFrame:CGRectMake(16, 4, width - 32, 20)] autorelease];
+        label.text = title;
+        label.font = [UIFont boldSystemFontOfSize:[self fontPointSizeForBase:13]];
+        label.textColor = [self secondaryTextColor];
+        // v261025-7: EXPLICIT clear background — some iOS 6 UILabel
+        // configurations inside grouped cells draw a white plate behind
+        // the glyphs otherwise.
+        label.backgroundColor = [UIColor clearColor];
+        label.opaque = NO;
+        label.shadowColor = [self isDarkMode]
+            ? [UIColor colorWithWhite:0.0f alpha:0.6f]
+            : [UIColor colorWithWhite:1.0f alpha:0.8f];
+        label.shadowOffset = CGSizeMake(0, 1);
+        label.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        [header addSubview:label];
+    }
+    return header;
+}
+
++ (UIView *)groupedSectionFooterViewWithTitle:(NSString *)title
+                                        width:(CGFloat)width
+{
+    CGFloat h = [self groupedSectionFooterHeightForTitle:title width:width];
+    if (width < 50) width = [UIScreen mainScreen].bounds.size.width;
+    UIView *footer = [[[UIView alloc] initWithFrame:CGRectMake(0, 0, width, h)] autorelease];
+    footer.backgroundColor = [UIColor clearColor];
+    footer.opaque = NO;
+    if (title.length > 0) {
+        UILabel *label = [[[UILabel alloc] initWithFrame:CGRectMake(16, 4, width - 32, h - 8)] autorelease];
+        label.text = title;
+        label.font = [UIFont systemFontOfSize:[self fontPointSizeForBase:12]];
+        label.textColor = [self secondaryTextColor];
+        label.backgroundColor = [UIColor clearColor];
+        label.opaque = NO;
+        label.numberOfLines = 0;
+        label.shadowColor = [self isDarkMode]
+            ? [UIColor colorWithWhite:0.0f alpha:0.6f]
+            : [UIColor colorWithWhite:1.0f alpha:0.8f];
+        label.shadowOffset = CGSizeMake(0, 1);
+        label.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        [footer addSubview:label];
+    }
+    return footer;
+}
+
++ (CGFloat)groupedSectionFooterHeightForTitle:(NSString *)title
+                                        width:(CGFloat)width
+{
+    if (title.length == 0) return 8.0f;
+    if (width < 50) width = [UIScreen mainScreen].bounds.size.width;
+    CGFloat availW = width - 32;
+    if (availW < 100) availW = 100;
+    UIFont *font = [UIFont systemFontOfSize:[self fontPointSizeForBase:12]];
+    NSAttributedString *attr = [[[NSAttributedString alloc]
+        initWithString:title attributes:@{NSFontAttributeName: font}] autorelease];
+    CGRect r = [attr boundingRectWithSize:CGSizeMake(availW, CGFLOAT_MAX)
+                                   options:(NSStringDrawingUsesLineFragmentOrigin |
+                                            NSStringDrawingUsesFontLeading)
+                                   context:nil];
+    return ceilf(r.size.height) + 10.0f;
+}
+
 #pragma mark - UIKit chrome styling
 
 + (void)styleNavigationController:(UINavigationController *)nav

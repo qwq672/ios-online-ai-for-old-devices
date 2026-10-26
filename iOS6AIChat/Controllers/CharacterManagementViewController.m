@@ -16,6 +16,7 @@
 
 #import "CharacterManagementViewController.h"
 #import "iOS6Theme.h"
+#import "CharacterAddViewController.h"
 #import "Logger.h"
 
 // Settings keys (declared here, not in SettingsViewController.h to keep
@@ -274,15 +275,45 @@ enum {
 {
     switch (section) {
         case kCharSectionAdd:
-            return NSLocalizedString(@"弹出输入框依次输入角色名 + 提示词。", nil);
+            return NSLocalizedString(@"打开完整表单：角色名 + 多行提示词。", nil);
         case kCharSectionList:
-            return NSLocalizedString(@"点角色 = 设为激活（注入到 system prompt）；右滑可删除。", nil);
+            return NSLocalizedString(@"点角色 = 设为激活（注入到 system prompt）；蓝色箭头 = 编辑；右滑可删除。", nil);
         case kCharSectionActive:
             return NSLocalizedString(@"激活的角色会以 system prompt 形式注入每次对话。空字符串 = 不注入任何角色。", nil);
         case kCharSectionIdentity:
             return NSLocalizedString(@"把设备名作为「User identity: <name>」注入到 system prompt 第一行。", nil);
         default: return @"";
     }
+}
+
+// v261025-7: custom TRANSPARENT header/footer views — the iOS 6 system
+// grouped header/footer draws an opaque LIGHT strip that shows up as a
+// white bar behind the text in dark mode (user-reported).
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForHeaderInSection:section];
+    return [iOS6Theme groupedSectionHeaderViewWithTitle:title
+                                                  width:tableView.bounds.size.width];
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForHeaderInSection:section];
+    return (title.length > 0) ? 26.0f : 8.0f;
+}
+
+- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForFooterInSection:section];
+    return [iOS6Theme groupedSectionFooterViewWithTitle:title
+                                                  width:tableView.bounds.size.width];
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section
+{
+    NSString *title = [self tableView:tableView titleForFooterInSection:section];
+    return [iOS6Theme groupedSectionFooterHeightForTitle:title
+                                                   width:tableView.bounds.size.width];
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
@@ -305,6 +336,11 @@ enum {
     for (UIView *v in oldSubviews) [v removeFromSuperview];
     [oldSubviews release];
     cell.backgroundColor = [iOS6Theme bubbleAssistantColor];
+    // v261025-7: explicit CLEAR label backgrounds (dark-mode white-plate fix).
+    cell.textLabel.backgroundColor = [UIColor clearColor];
+    cell.textLabel.opaque = NO;
+    cell.detailTextLabel.backgroundColor = [UIColor clearColor];
+    cell.detailTextLabel.opaque = NO;
     cell.textLabel.textColor = [iOS6Theme textColor];
     cell.textLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];
     cell.detailTextLabel.textColor = [iOS6Theme secondaryTextColor];
@@ -334,10 +370,17 @@ enum {
             }
             cell.detailTextLabel.text = shortPrompt;
             cell.detailTextLabel.numberOfLines = 1;
-            // Checkmark if active.
+            // v261025-7: BLUE disclosure arrow = edit this character (opens
+            // the full CharacterAddViewController form pre-filled). Tapping
+            // the row body still toggles activation.
+            cell.accessoryType = UITableViewCellAccessoryDetailDisclosureButton;
+            // Active marker — text-based (glyph-safe: no exotic codepoints;
+            // iOS 6 Helvetica lacks U+2713 so a drawn ✓ would render blank).
             NSString *active = [CharacterManagementViewController activeCharacterName];
             if (active && [active isEqualToString:name]) {
-                cell.accessoryType = UITableViewCellAccessoryCheckmark;
+                cell.textLabel.text = [NSString stringWithFormat:@"%@ · %@",
+                    name, NSLocalizedString(@"使用中", nil)];
+                cell.textLabel.textColor = [iOS6Theme tintColor];
             }
             cell.selectionStyle = UITableViewCellSelectionStyleBlue;
             break;
@@ -406,17 +449,9 @@ forRowAtIndexPath:(NSIndexPath *)indexPath
     // v261025-1: lean logging — 2 lines bracketing the toggle (the v19
     // per-step firehose drowned the log; Logger is crash-safe now).
     if (indexPath.section == kCharSectionAdd) {
-        UIAlertView *av = [[[UIAlertView alloc]
-            initWithTitle:NSLocalizedString(@"角色名", nil)
-                  message:NSLocalizedString(@"输入角色名（如 \"翻译官\"）", nil)
-                 delegate:self
-        cancelButtonTitle:NSLocalizedString(@"取消", nil)
-        otherButtonTitles:NSLocalizedString(@"下一步", nil), nil] autorelease];
-        if ([av respondsToSelector:@selector(setAlertViewStyle:)]) {
-            [av setAlertViewStyle:UIAlertViewStylePlainTextInput];
-        }
-        [av setTag:kAlertAddCharacter];
-        [av show];
+        // v261025-7: full form page instead of the old two-step alert.
+        CharacterAddViewController *add = [[[CharacterAddViewController alloc] init] autorelease];
+        [self.navigationController pushViewController:add animated:YES];
     } else if (indexPath.section == kCharSectionList) {
         if (indexPath.row >= (NSInteger)[_characters count]) {
             [tableView deselectRowAtIndexPath:indexPath animated:YES];
@@ -444,6 +479,20 @@ forRowAtIndexPath:(NSIndexPath *)indexPath
         [_tableView reloadData];
     }
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+}
+
+// v261025-7: tapping the BLUE disclosure arrow opens the full edit form
+// pre-filled with the character's name + prompt.
+- (void)tableView:(UITableView *)tableView
+accessoryButtonTappedForRowWithIndexPath:(NSIndexPath *)indexPath
+{
+    if (indexPath.section != kCharSectionList) return;
+    if (indexPath.row >= (NSInteger)[_characters count]) return;
+    NSDictionary *c = [_characters objectAtIndex:indexPath.row];
+    if (![c isKindOfClass:[NSDictionary class]]) return;
+    CharacterAddViewController *edit = [[[CharacterAddViewController alloc]
+        initWithCharacter:c] autorelease];
+    [self.navigationController pushViewController:edit animated:YES];
 }
 
 - (IBAction)_identityToggle:(UISwitch *)sw

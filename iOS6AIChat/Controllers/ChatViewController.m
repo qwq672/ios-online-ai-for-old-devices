@@ -575,11 +575,16 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     NSDictionary *settings = [SettingsViewController loadSettings];
     BOOL useTransit       = [[settings objectForKey:SettingsKeyUseTransit] boolValue];
     NSString *transitURL  = [settings objectForKey:SettingsKeyTransitURL];
-    NSString *baseURL     = [settings objectForKey:SettingsKeyBaseURL];
-    NSString *provider    = [settings objectForKey:SettingsKeyProvider];
-    NSString *apiKey      = [settings objectForKey:SettingsKeyAPIKey];
-    NSString *model        = [settings objectForKey:SettingsKeyModel];
-    CGFloat temperature    = [[settings objectForKey:SettingsKeyTemperature] floatValue];
+    // v261025-7: provider / baseURL / apiKey / model now come from the
+    // ACTIVE model entry (merged with global settings defaults) via
+    // +resolvedConnectionForChat — this is what makes per-entry provider
+    // profiles (the two-tier ModelManagement) actually drive the chat.
+    NSDictionary *conn   = [ModelManagementViewController resolvedConnectionForChat];
+    NSString *baseURL    = [conn objectForKey:@"baseURL"];
+    NSString *provider   = [conn objectForKey:@"provider"];
+    NSString *apiKey     = [conn objectForKey:@"apiKey"];
+    NSString *model      = [conn objectForKey:@"model"];
+    CGFloat temperature  = [[settings objectForKey:SettingsKeyTemperature] floatValue];
 
     // v261024-15: log the outgoing request for crash/error diagnosis.
     [[Logger sharedLogger] info:[NSString stringWithFormat:

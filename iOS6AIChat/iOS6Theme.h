@@ -171,6 +171,19 @@ typedef enum {
                                   tintColor:(UIColor *)tint
                                  highlighted:(BOOL)highlighted;
 
+// v261025-7: custom TRANSPARENT section header / footer views for grouped
+// tables. iOS 6's system-drawn grouped headers/footers have an opaque
+// LIGHT background strip — in dark mode these show up as jarring white
+// bars behind the section titles (user-reported "每个文字都有白色背景").
+// Every grouped table in the app now uses these instead of the plain
+// titleForHeader/Footer strings.
++ (UIView *)groupedSectionHeaderViewWithTitle:(NSString *)title
+                                        width:(CGFloat)width;
++ (UIView *)groupedSectionFooterViewWithTitle:(NSString *)title
+                                        width:(CGFloat)width;
++ (CGFloat)groupedSectionFooterHeightForTitle:(NSString *)title
+                                        width:(CGFloat)width;
+
 // === UIKit chrome styling ==============================================
 
 + (void)styleNavigationController:(UINavigationController *)nav

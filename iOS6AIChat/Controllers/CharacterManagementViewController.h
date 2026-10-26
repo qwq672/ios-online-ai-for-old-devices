@@ -25,4 +25,9 @@
 // 3) Append `base` (the user's regular system prompt from Settings)
 + (NSString *)effectiveSystemPromptWithBase:(NSString *)base;
 
+// v261025-7: declared here so CharacterAddViewController (and anything
+// else) can call the persistence without "class method not found".
++ (NSArray *)loadCharacters;
++ (void)saveCharacters:(NSArray *)characters;
+
 @end
