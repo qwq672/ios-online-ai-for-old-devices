@@ -1663,7 +1663,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         if (buttonIndex != 1) return;   // 取消
         if (_conversation) {
             [_conversation.messages removeAllObjects];
-            [ConversationStore saveConversation:_conversation];
+            [[ConversationStore sharedStore] saveConversation:_conversation];
             [self _reload];
             [self _updateEmptyPlaceholder];
             [[Logger sharedLogger] info:@"CHAT ⊕ cleared current conversation"];

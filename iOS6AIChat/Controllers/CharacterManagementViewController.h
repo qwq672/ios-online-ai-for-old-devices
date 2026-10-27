@@ -30,4 +30,9 @@
 + (NSArray *)loadCharacters;
 + (void)saveCharacters:(NSArray *)characters;
 
+// v261025-10: declared here so ComposerPlusMenuView (and others) can
+// call without "class method not found".
++ (NSString *)activeCharacterName;
++ (void)setActiveCharacterName:(NSString *)name;
+
 @end

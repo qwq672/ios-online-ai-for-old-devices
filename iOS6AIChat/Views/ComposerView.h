@@ -85,6 +85,12 @@ extern NSString *const ComposerViewSendMessageImagesKey;
 // internals.
 - (void)refreshPlusButtonVisuals;
 
+// v261025-10: present the UIImagePickerController from the given VC.
+// The composer owns the picker delegate + _pendingImages array; this
+// just kicks off the picker presentation. Public so ChatViewController's
+// plus-menu callback can trigger image upload.
+- (void)presentImagePickerFromViewController:(UIViewController *)vc;
+
 - (void)clearText;
 
 @end
