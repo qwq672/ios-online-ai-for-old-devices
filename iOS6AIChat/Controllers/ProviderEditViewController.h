@@ -32,6 +32,8 @@
                                UIActionSheetDelegate,
                                UIAlertViewDelegate>
 
+@property (nonatomic, retain) UITableView *tableView;
+
 // Initialize with the provider entry to edit (a deep copy is kept; the
 // original is replaced wholesale on save). The id is preserved.
 - (id)initWithProviderEntry:(NSDictionary *)entry;

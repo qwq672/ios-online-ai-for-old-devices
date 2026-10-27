@@ -330,7 +330,7 @@ enum {
     NSDictionary *p = [self providerEntryContainingModel:modelID];
     NSString *key = SettingsKeyModel;
     for (NSDictionary *m in [p objectForKey:@"models"]) {
-        if ([[[m objectForKey:@"id"] isEqualToString:modelID] boolValue]) {
+        if ([[m objectForKey:@"id"] isEqualToString:modelID]) {
             if ([[m objectForKey:@"kind"] isEqualToString:@"image"]) {
                 key = SettingsKeyImageGenModel;
             }
@@ -356,7 +356,7 @@ enum {
         NSMutableArray *models = [[p objectForKey:@"models"] mutableCopy];
         // Skip if already exists.
         for (NSDictionary *m in models) {
-            if ([[[m objectForKey:@"id"] isEqualToString:modelID] boolValue]) {
+            if ([[m objectForKey:@"id"] isEqualToString:modelID]) {
                 [models release];
                 [arr autorelease];
                 return;
@@ -389,7 +389,7 @@ enum {
         NSMutableArray *models = [[p objectForKey:@"models"] mutableCopy];
         for (NSInteger j = 0; j < (NSInteger)[models count]; j++) {
             NSDictionary *m = [models objectAtIndex:j];
-            if ([[[m objectForKey:@"id"] isEqualToString:modelID] boolValue]) {
+            if ([[m objectForKey:@"id"] isEqualToString:modelID]) {
                 [models removeObjectAtIndex:j];
                 break;
             }
@@ -613,7 +613,7 @@ enum {
         // Skip if the model already exists; otherwise append.
         BOOL exists = NO;
         for (NSDictionary *m in models) {
-            if ([[[m objectForKey:@"id"] isEqualToString:mid] boolValue]) { exists = YES; break; }
+            if ([[m objectForKey:@"id"] isEqualToString:mid]) { exists = YES; break; }
         }
         if (!exists) {
             NSMutableDictionary *mc = [NSMutableDictionary dictionary];
@@ -718,7 +718,7 @@ enum {
         if (![mid isKindOfClass:[NSString class]] || mid.length == 0) continue;
         BOOL exists = NO;
         for (NSDictionary *m in models) {
-            if ([[[m objectForKey:@"id"] isEqualToString:mid] boolValue]) { exists = YES; break; }
+            if ([[m objectForKey:@"id"] isEqualToString:mid]) { exists = YES; break; }
         }
         if (exists) continue;
         NSMutableDictionary *mc = [NSMutableDictionary dictionary];

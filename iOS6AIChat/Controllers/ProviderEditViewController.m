@@ -645,7 +645,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         NSMutableArray *models = [[_entry objectForKey:@"models"] mutableCopy];
         // De-dupe.
         for (NSDictionary *m in models) {
-            if ([[[m objectForKey:@"id"] isEqualToString:mid] boolValue]) {
+            if ([[m objectForKey:@"id"] isEqualToString:mid]) {
                 [models release];
                 return;
             }
@@ -672,7 +672,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         NSMutableArray *models = [[_entry objectForKey:@"models"] mutableCopy];
         NSMutableArray *clean = [NSMutableArray array];
         for (NSDictionary *m in models) {
-            if ([[[m objectForKey:@"id"] isEqualToString:mid] boolValue]) continue;
+            if ([[m objectForKey:@"id"] isEqualToString:mid]) continue;
             [clean addObject:m];
         }
         [_entry setObject:clean forKey:@"models"];
@@ -754,7 +754,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         if (!mid.length) return;
         NSMutableArray *models = [[_entry objectForKey:@"models"] mutableCopy];
         for (NSDictionary *m in models) {
-            if ([[[m objectForKey:@"id"] isEqualToString:mid] boolValue]) {
+            if ([[m objectForKey:@"id"] isEqualToString:mid]) {
                 [models release];
                 return;
             }
@@ -789,7 +789,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     NSMutableArray *modelsM = [models mutableCopy];
     for (NSInteger i = 0; i < (NSInteger)[modelsM count]; i++) {
         NSDictionary *mm = [modelsM objectAtIndex:i];
-        if (![[[mm objectForKey:@"id"] isEqualToString:mid] boolValue]) continue;
+        if (![[mm objectForKey:@"id"] isEqualToString:mid]) continue;
         NSMutableDictionary *mc = [NSMutableDictionary dictionaryWithDictionary:mm];
         BOOL was = [[mc objectForKey:@"starred"] boolValue];
         [mc setObject:[NSNumber numberWithBool:!was] forKey:@"starred"];

@@ -587,7 +587,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         if (!mid.length) return;
         // De-dupe.
         for (NSDictionary *m in _models) {
-            if ([[[m objectForKey:@"id"] isEqualToString:mid] boolValue]) return;
+            if ([[m objectForKey:@"id"] isEqualToString:mid]) return;
         }
         NSMutableDictionary *nm = [NSMutableDictionary dictionary];
         [nm setObject:mid forKey:@"id"];
@@ -610,7 +610,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
         if (mid.length == 0) return;
         for (NSDictionary *m in _models) {
-            if ([[[m objectForKey:@"id"] isEqualToString:mid] boolValue]) return;
+            if ([[m objectForKey:@"id"] isEqualToString:mid]) return;
         }
         NSMutableDictionary *nm = [NSMutableDictionary dictionary];
         [nm setObject:mid forKey:@"id"];
