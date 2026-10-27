@@ -226,7 +226,7 @@ static NSInteger const kPESheetQuickPick = 481;
     }
     // Update format if it doesn't match the new template's canonical format.
     NSString *canonFmt = [SettingsViewController formatForTemplate:tpl];
-    if (![[canonFmt isEqualToString:[_entry objectForKey:@"format"]] boolValue]) {
+    if (![canonFmt isEqualToString:[_entry objectForKey:@"format"]]) {
         [_entry setObject:canonFmt forKey:@"format"];
     }
     [self _persistAndReload];
@@ -818,7 +818,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         [_entry setObject:v forKey:@"baseURL"];
         // Re-derive template from the typed URL if it matches a known one.
         NSString *inferredTpl = [SettingsViewController templateForBaseURL:v];
-        if (![[inferredTpl isEqualToString:[_entry objectForKey:@"template"]] boolValue]) {
+        if (![inferredTpl isEqualToString:[_entry objectForKey:@"template"]]) {
             [_entry setObject:inferredTpl forKey:@"template"];
             [_entry setObject:[SettingsViewController displayNameForTemplate:inferredTpl]
                        forKey:@"displayName"];
