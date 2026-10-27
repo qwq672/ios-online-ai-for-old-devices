@@ -66,6 +66,15 @@
 // Public so ModelAddViewController / ProviderEditViewController can call it.
 + (NSString *)newProviderUUID;
 
+// v261025-10: starred-model helpers for the composer 加号 menu.
+// +starredChatModels returns an array of dicts:
+//   { id: modelID, displayName: "...", providerDisplayName: "...", active: BOOL }
+// across ALL providers' models where starred=YES and kind != "image".
+// +starredImageModels is the same but for kind == "image" entries.
+// Both return an empty array when no models are starred.
++ (NSArray *)starredChatModels;
++ (NSArray *)starredImageModels;
+
 // Look up the provider entry that owns the given model id.
 // Returns nil when no provider has a model with that id.
 + (NSDictionary *)providerEntryContainingModel:(NSString *)modelID;

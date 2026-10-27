@@ -7,6 +7,7 @@
 #import "Conversation.h"
 #import "NetworkService.h"
 #import "ComposerView.h"
+#import "ComposerPlusMenuView.h"
 #import "ChatMessageCell.h"
 
 extern NSString *const ChatViewControllerDidLoadConversationNotification;
@@ -17,6 +18,7 @@ extern NSString *const ChatViewControllerConversationIDKey;
                                UITableViewDelegate,
                                NetworkServiceDelegate,
                                ComposerViewDelegate,
+                               ComposerPlusMenuDelegate,
                                ChatMessageCellDelegate,
                                UIAlertViewDelegate>
 

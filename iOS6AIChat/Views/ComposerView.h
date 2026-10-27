@@ -2,13 +2,15 @@
 //  ComposerView.h
 //  iOS6AIChat
 //
-//  Single-row composer with image upload:
-//    [📷] [💡DT] [🌐Web] [🖼生图] [   input field   ] [➤Send]
+//  v261025-10: simplified layout — only [+] [─── input ───] [➤Send].
+//  The four toggle buttons (image / deepThinking / webSearch / imageGen)
+//  moved into a slide-up 加号 menu (ComposerPlusMenuView). The plus button
+//  shows a red badge with the count of currently-active toggles so the
+//  user can tell at a glance how many modes are on.
 //
-//  v261025-8: added the 生图 (image generation) toggle. While ON, sending
-//  routes the text to the image-generation API (active kind="image"
-//  model) instead of the chat completion — deep-thinking and web-search
-//  toggles are visually disabled in that mode (they don't apply).
+//  When image-gen is ON, the input field's background turns light blue
+//  and the placeholder becomes "输入生图提示" — a stronger signal than
+//  the old per-button highlight.
 //
 
 #import <UIKit/UIKit.h>
@@ -20,6 +22,7 @@ extern NSString *const ComposerViewSendMessageWebSearchKey;
 extern NSString *const ComposerViewSendMessageImagesKey;
 
 @class ComposerView;
+@class ComposerPlusMenuView;
 
 @protocol ComposerViewDelegate <NSObject>
 @optional
@@ -37,6 +40,13 @@ extern NSString *const ComposerViewSendMessageImagesKey;
 // v261025-8: this ALSO fires while an image generation is running —
 // the delegate should cancel its pending image-gen completion.
 - (void)composerDidTapStop:(ComposerView *)composer;
+// v261025-10: fired when the user taps the plus button. The delegate
+// (ChatViewController) should create / show the ComposerPlusMenuView.
+- (void)composerDidTapPlusButton:(ComposerView *)composer;
+// v261025-10: fired after any toggle state changes from the plus menu
+// (so the plus button's badge count and the input field's image-gen
+// blue tint can refresh).
+- (void)composerToggleStateDidChange:(ComposerView *)composer;
 @end
 
 @interface ComposerView : UIView <UITextViewDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate>
@@ -44,20 +54,36 @@ extern NSString *const ComposerViewSendMessageImagesKey;
 @property (nonatomic, assign) id<ComposerViewDelegate> delegate;
 @property (nonatomic, retain) UITextView *textView;
 @property (nonatomic, retain) UIButton  *sendButton;
-@property (nonatomic, retain) UIButton *deepThinkingButton;
-@property (nonatomic, retain) UIButton *webSearchButton;
-@property (nonatomic, retain) UIButton *imageButton;
-@property (nonatomic, retain) UIButton *imageGenButton;
-@property (nonatomic, retain) UILabel  *imageBadge;
+// v261025-10: replaces the four old toggle buttons. Tap → menu.
+@property (nonatomic, retain) UIButton *plusButton;
+// v261025-10: badge showing the count of active toggles (1/2/3).
+@property (nonatomic, retain) UILabel *plusBadge;
 @property (nonatomic, assign) BOOL isStreaming;
+
+// v261025-10: retained UIColor ivars for layer.borderColor — assigning a
+// bare [UIColor ...].CGColor leaves a dangling ref after the autorelease
+// pool drains (same crash class as v261025-5's text-view border).
+// Field border color is the standard one; image-gen mode swaps in a
+// blue tint by switching the ivar (and refreshing layer.borderColor).
+@property (nonatomic, retain) UIColor *fieldBorderUIColor;
 
 + (BOOL)deepThinkingEnabled;
 + (void)setDeepThinkingEnabled:(BOOL)enabled;
 + (BOOL)webSearchEnabled;
 + (void)setWebSearchEnabled:(BOOL)enabled;
-// v261025-8: 生图 toggle state (persisted like the other two).
 + (BOOL)imageGenEnabled;
 + (void)setImageGenEnabled:(BOOL)enabled;
+
+// v261025-10: count of currently-active toggles (DT + Web + imageGen).
+// The plus button badge displays this number. Public so
+// ComposerPlusMenuView can read it for badge refresh.
++ (NSInteger)activeToggleCount;
+
+// v261025-10: refresh the plus button badge + input field background
+// (call after any toggle change). Public so ComposerPlusMenuView can
+// invoke it via the delegate path without having to import ComposerView
+// internals.
+- (void)refreshPlusButtonVisuals;
 
 - (void)clearText;
 

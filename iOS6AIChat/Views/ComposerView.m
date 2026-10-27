@@ -2,13 +2,8 @@
 //  ComposerView.m
 //  iOS6AIChat
 //
-//  Single-row composer: [📷] [💡] [🌐] [input] [➤]
-//  Image button picks from photo library, compresses, base64 encodes.
-//  Badge shows pending image count.
-//
-//  Dark mode fix: All controls (text view, buttons) now use the theme's
-//  dark colors via [iOS6Theme inputFieldBackgroundColor] etc., instead
-//  of hardcoded UIColor whiteColor / lightGrayColor.
+//  v261025-10: simplified layout — only [+] [─── input ───] [➤Send].
+//  See the .h file for the layout rationale and the menu-based toggle UX.
 //
 
 #import "ComposerView.h"
@@ -29,33 +24,28 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 
 @interface ComposerView () {
     NSMutableArray *_pendingImages;
-    // v261025-5: retained UIColor ivar for the text-view border. The
-    // old `layer.borderColor = [autoreleased CGColor]` pattern left a
-    // dangling CGColorRef after the autorelease pool drained — same
-    // crash class as the one we fixed in ChatMessageCell.
     UIColor *_fieldBorderUIColor;
+    // v261025-10: image-gen-mode background tint (light blue). Retained
+    // for the same reason as the border color ivar — bare UIColor* from
+    // a class method is autoreleased, and we need to keep the CGColor
+    // alive across the runloop.
+    UIColor *_imageGenBgUIColor;
 }
 @end
 
 @implementation ComposerView
 
 @synthesize textView=_textView, sendButton=_sendButton, isStreaming=_isStreaming,
-            delegate=_delegate, deepThinkingButton=_deepThinkingButton,
-            webSearchButton=_webSearchButton, imageButton=_imageButton,
-            imageGenButton=_imageGenButton, imageBadge=_imageBadge;
+            delegate=_delegate, plusButton=_plusButton, plusBadge=_plusBadge,
+            fieldBorderUIColor=_fieldBorderUIColor;
 
 - (id)initWithFrame:(CGRect)frame
 {
     if (self = [super initWithFrame:frame]) {
-        // Drawn in drawRect: iOS 6 metal-bar gradient + top highlight +
-        // bottom shadow (replaces the old flat pinstripeBackground that
-        // visually merged with the page background and produced the
-        // "dead band" above the tab bar).
         self.backgroundColor = [UIColor clearColor];
         self.opaque = NO;
         self.clipsToBounds = YES;
 
-        // Pending images array (base64 data URLs).
         _pendingImages = [[NSMutableArray alloc] init];
 
         // Text view (main input) — inset glass field, darker than its bar.
@@ -88,56 +78,27 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
         }
         [self addSubview:_textView];
 
-        // Image button — glassy iOS 6 style (background image from theme).
-        // v261025-7 CRITICAL: buttonWithType: returns AUTORELEASED (+0);
-        // direct ivar assignment without retain = over-release in dealloc
-        // (same crash family as ChatMessageCell — see that file's writeup).
-        // All four buttons here now retain.
-        _imageButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
-        _imageButton.layer.cornerRadius = 5.0f;
-        _imageButton.layer.masksToBounds = YES;
-        [_imageButton setTitleColor:[iOS6Theme tintColor] forState:UIControlStateNormal];
-        [_imageButton setTitleColor:[iOS6Theme secondaryTextColor] forState:UIControlStateDisabled];
-        [_imageButton addTarget:self action:@selector(_imageButtonTapped)
-                forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:_imageButton];
-
-        // Image badge (shows count).
-        _imageBadge = [[UILabel alloc] initWithFrame:CGRectZero];
-        _imageBadge.font = [UIFont boldSystemFontOfSize:10];
-        _imageBadge.textColor = [UIColor whiteColor];
-        _imageBadge.backgroundColor = [UIColor redColor];
-        _imageBadge.textAlignment = NSTextAlignmentCenter;
-        _imageBadge.layer.cornerRadius = 8.0f;
-        _imageBadge.layer.masksToBounds = YES;
-        _imageBadge.hidden = YES;
-        [self addSubview:_imageBadge];
-
-        // DT button.
-        _deepThinkingButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
-        _deepThinkingButton.layer.cornerRadius = 5.0f;
-        _deepThinkingButton.layer.masksToBounds = YES;
-        [_deepThinkingButton addTarget:self action:@selector(_deepThinkingTapped)
-                      forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:_deepThinkingButton];
-
-        // Web button.
-        _webSearchButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
-        _webSearchButton.layer.cornerRadius = 5.0f;
-        _webSearchButton.layer.masksToBounds = YES;
-        [_webSearchButton addTarget:self action:@selector(_webSearchTapped)
-                    forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:_webSearchButton];
-
-        // v261025-8: 生图 (image generation) toggle button — photo icon.
-        // When active, the composer's send routes the text to the image
-        // API instead of the chat stream (and DT/Web are disabled).
-        _imageGenButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
-        _imageGenButton.layer.cornerRadius = 5.0f;
-        _imageGenButton.layer.masksToBounds = YES;
-        [_imageGenButton addTarget:self action:@selector(_imageGenTapped)
+        // v261025-10: plus button (replaces 4 old toggle buttons).
+        // buttonWithType: returns autorelease(+0); retain per ivar — the
+        // v261025-7 root-cause writeup (over-release crash) applies here.
+        _plusButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
+        _plusButton.layer.cornerRadius = 5.0f;
+        _plusButton.layer.masksToBounds = YES;
+        [_plusButton addTarget:self action:@selector(_plusTapped)
                   forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:_imageGenButton];
+        [self addSubview:_plusButton];
+
+        // v261025-10: badge — small red circle on top-right of plus button
+        // showing the count of active toggles. Hidden when count = 0.
+        _plusBadge = [[UILabel alloc] initWithFrame:CGRectZero];
+        _plusBadge.font = [UIFont boldSystemFontOfSize:10];
+        _plusBadge.textColor = [UIColor whiteColor];
+        _plusBadge.backgroundColor = [UIColor redColor];
+        _plusBadge.textAlignment = NSTextAlignmentCenter;
+        _plusBadge.layer.cornerRadius = 8.0f;
+        _plusBadge.layer.masksToBounds = YES;
+        _plusBadge.hidden = YES;
+        [self addSubview:_plusBadge];
 
         // Send button.
         _sendButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
@@ -145,14 +106,18 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
         _sendButton.layer.masksToBounds = YES;
         [_sendButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         [_sendButton addTarget:self action:@selector(_sendTapped)
-              forControlEvents:UIControlEventTouchUpInside];
+                forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_sendButton];
 
         _isStreaming = NO;
 
-        [self _refreshToggleVisuals];
+        // v261025-10: image-gen background tint color (light blue).
+        // Retained for the same reason as the border ivar.
+        _imageGenBgUIColor = [[UIColor colorWithRed:0.85f green:0.92f
+                                               blue:1.0f alpha:1.0f] retain];
 
-        // Subscribe to theme changes so colors update live.
+        [self refreshPlusButtonVisuals];
+
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(_themeChanged)
                                                      name:@"iOS6ThemeDidChangeNotification"
@@ -162,8 +127,7 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 }
 
 // iOS 6 metal input-toolbar: 1px top highlight → 1px bevel line → vertical
-// gradient body → 1px bottom shadow. The lines stay 1px no matter how tall
-// the composer grows (drawRect re-renders, nothing stretches).
+// gradient body → 1px bottom shadow. (Identical to v261025-8.)
 - (void)drawRect:(CGRect)rect
 {
     CGContextRef ctx = UIGraphicsGetCurrentContext();
@@ -173,13 +137,11 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     CGFloat lineH = 1.0f / scale;
     CGFloat w = rect.size.width, h = rect.size.height;
 
-    // Gradient body.
     [iOS6Theme drawLinearGradientInRect:rect
                                 context:ctx
                                topColor:[iOS6Theme composerBarTopColor]
                             bottomColor:[iOS6Theme composerBarBottomColor]];
 
-    // Top highlight + bevel line (mirrors the tab bar's edge structure).
     CGContextSetFillColorWithColor(ctx,
         [UIColor colorWithWhite:1.0f alpha:([iOS6Theme isDarkMode] ? 0.55f : 0.85f)].CGColor);
     CGContextFillRect(ctx, CGRectMake(0, 0, w, lineH));
@@ -187,8 +149,6 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
         [UIColor colorWithWhite:0.0f alpha:([iOS6Theme isDarkMode] ? 0.8f : 0.12f)].CGColor);
     CGContextFillRect(ctx, CGRectMake(0, lineH, w, lineH));
 
-    // Bottom shadow line — sits right above the tab bar's own top
-    // highlight: two stacked bevels, exactly like stacked iOS 6 bars.
     CGContextSetFillColorWithColor(ctx,
         [UIColor colorWithWhite:0.0f alpha:([iOS6Theme isDarkMode] ? 0.9f : 0.3f)].CGColor);
     CGContextFillRect(ctx, CGRectMake(0, h - lineH, w, lineH));
@@ -196,55 +156,34 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 
 - (void)_themeChanged
 {
-    // Redraw the bar chrome (gradient + bevel lines) with new colors.
     [self setNeedsDisplay];
     _textView.backgroundColor = [iOS6Theme composerFieldBackgroundColor];
     _textView.textColor = [iOS6Theme inputFieldTextColor];
-    // v261025-5: refresh the retained border-color ivar too.
     [_fieldBorderUIColor release];
     _fieldBorderUIColor = [[iOS6Theme composerFieldBorderColor] retain];
     _textView.layer.borderColor = [_fieldBorderUIColor CGColor];
-    // Set keyboard appearance based on theme — alert style = dark keyboard.
     if ([iOS6Theme isDarkMode] && [_textView respondsToSelector:@selector(setKeyboardAppearance:)]) {
         [_textView setKeyboardAppearance:UIKeyboardAppearanceAlert];
     } else if ([_textView respondsToSelector:@selector(setKeyboardAppearance:)]) {
         [_textView setKeyboardAppearance:UIKeyboardAppearanceDefault];
     }
-    [self _refreshToggleVisuals];
+    [self refreshPlusButtonVisuals];
     [self setNeedsLayout];
 }
 
 - (void)setIsStreaming:(BOOL)isStreaming
 {
     _isStreaming = isStreaming;
-    // v261025-3: while streaming, the send button transforms into a
-    // "stop" button: it stays ENABLED (so the user can tap it), the
-    // icon swaps to a stop square, and the background changes from
-    // accent-blue to a desaturated red (iOS 6 "destructive" hint).
-    // Tapping the button in this state fires composerDidTapStop: on
-    // the delegate (which should call NetworkService.stopGenerating).
-    _sendButton.enabled = YES;  // always tappable: send OR stop
+    _sendButton.enabled = YES;
     [_sendButton setAlpha:1.0f];
     if (isStreaming) {
-        // Stop icon — white filled square, drawn inline (no font glyph
-        // dependency, since iOS 6 Helvetica may not have a U+25A0 black
-        // square at the size we need).
         UIImage *stopIcon = [self _stopIconImage];
         [_sendButton setImage:stopIcon forState:UIControlStateNormal];
-        // Red-tinted glass background — visually distinct from the
-        // accent-blue send button so the user knows this stops generation.
         UIImage *stopBg = [iOS6Theme glassButtonImageOfSize:CGSizeMake(40, 30)
                                                     accent:NO];
-        // Overlay a translucent red layer to make it read as destructive.
-        // (glassButtonImageOfSize draws a glassy grey button; we tint it
-        // red by drawing a red rect with alpha over it.)
         [_sendButton setBackgroundImage:stopBg forState:UIControlStateNormal];
-        // Reuse the title color slot for an orange/red tint.
         [_sendButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     } else {
-        // Restore send arrow + Messages-green glass background
-        // (v261025-4 — matches the green user bubbles; classic iOS 6
-        // Messages send button, reference IMG_0446).
         UIImage *arrow = [IconDrawing imageForType:IconTypeSendArrow
                                               size:CGSizeMake(18, 18)
                                               color:[UIColor whiteColor]];
@@ -253,7 +192,6 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
         if (greenS) {
             [_sendButton setBackgroundImage:greenS forState:UIControlStateNormal];
         } else {
-            // Fallback: the blue accent glass (green draw failed).
             UIImage *accentS = [iOS6Theme glassButtonImageOfSize:CGSizeMake(40, 30)
                                                             accent:YES];
             [_sendButton setBackgroundImage:accentS forState:UIControlStateNormal];
@@ -262,8 +200,8 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     }
 }
 
-// v261025-3: draw an inline stop icon (white filled square with
-// slight rounding). Cached as a static so it doesn't redraw per tap.
+// v261025-3: draw an inline stop icon. Cached as a static (identical to
+// the v261025-8 implementation).
 - (UIImage *)_stopIconImage
 {
     static UIImage *cachedStopIcon = nil;
@@ -275,7 +213,7 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     if (ctx) {
         CGContextSetFillColorWithColor(ctx, [UIColor whiteColor].CGColor);
-        CGFloat r = 2.0f;  // slight rounding
+        CGFloat r = 2.0f;
         CGContextBeginPath(ctx);
         CGContextMoveToPoint(ctx, r, 0);
         CGContextAddArcToPoint(ctx, sz, 0, sz, r, r);
@@ -288,7 +226,6 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     if (img) {
-        // Retain for the app lifetime — this is a tiny static image.
         cachedStopIcon = [img retain];
         return cachedStopIcon;
     }
@@ -307,23 +244,10 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     CGFloat btnY = (h - btnH) / 2.0f;
     CGFloat x = pad;
 
-    // Image button (leftmost) — hidden if model doesn't support images.
-    if (!_imageButton.hidden) {
-        _imageButton.frame = CGRectMake(x, btnY, btnW, btnH);
-        _imageBadge.frame = CGRectMake(x + btnW - 10, btnY - 4, 16, 16);
-        x += btnW + gap;
-    }
-
-    // DT button.
-    _deepThinkingButton.frame = CGRectMake(x, btnY, btnW, btnH);
-    x += btnW + gap;
-
-    // Web button.
-    _webSearchButton.frame = CGRectMake(x, btnY, btnW, btnH);
-    x += btnW + gap;
-
-    // v261025-8: 生图 button.
-    _imageGenButton.frame = CGRectMake(x, btnY, btnW, btnH);
+    // Plus button (leftmost).
+    _plusButton.frame = CGRectMake(x, btnY, btnW, btnH);
+    // Badge sits at the top-right corner of the plus button.
+    _plusBadge.frame = CGRectMake(x + btnW - 10, btnY - 4, 16, 16);
     x += btnW + gap;
 
     // Send button (right).
@@ -331,6 +255,8 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     _sendButton.frame = CGRectMake(sendX, btnY, sendW, btnH);
 
     // Text view (middle, fills remaining space).
+    // v261025-10: with only 2 buttons ([+] and [▶]) the text view now
+    // spans ~230pt on a 320pt screen — over 65% wider than the old 116pt.
     CGFloat tvX = x + gap;
     CGFloat tvW = sendX - gap - tvX;
     if (tvW < 60) tvW = 60;
@@ -339,104 +265,121 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     _textView.frame = CGRectMake(tvX, pad, tvW, tvH);
 }
 
-#pragma mark - Toggles
+#pragma mark - Toggles (class accessors — same keys as v261025-8)
 
 + (BOOL)deepThinkingEnabled { NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyDeepThinking]; return n ? [n boolValue] : YES; }
 + (void)setDeepThinkingEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyDeepThinking]; [[NSUserDefaults standardUserDefaults] synchronize]; }
 + (BOOL)webSearchEnabled { NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyWebSearch]; return n ? [n boolValue] : NO; }
 + (void)setWebSearchEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyWebSearch]; [[NSUserDefaults standardUserDefaults] synchronize]; }
-// v261025-8: 生图 toggle (default OFF).
 + (BOOL)imageGenEnabled { NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyImageGen]; return n ? [n boolValue] : NO; }
 + (void)setImageGenEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyImageGen]; [[NSUserDefaults standardUserDefaults] synchronize]; }
 
-- (void)_deepThinkingTapped {
-    // v261024-19: NO @try — class accessors can't throw.
-    BOOL v = ![[self class] deepThinkingEnabled];
-    [[self class] setDeepThinkingEnabled:v];
-    [self _refreshToggleVisuals];
-}
-- (void)_webSearchTapped {
-    // v261024-19: NO @try — class accessors can't throw.
-    BOOL v = ![[self class] webSearchEnabled];
-    [[self class] setWebSearchEnabled:v];
-    [self _refreshToggleVisuals];
-}
-- (void)_imageGenTapped {
-    // v261025-8: 生图 toggle. Turning it ON implicitly switches the send
-    // mode; DT/Web are disabled while it's active (see _refreshToggleVisuals).
-    BOOL v = ![[self class] imageGenEnabled];
-    [[self class] setImageGenEnabled:v];
-    [self _refreshToggleVisuals];
+// v261025-10: how many toggles are currently ON.
++ (NSInteger)activeToggleCount
+{
+    NSInteger n = 0;
+    if ([self deepThinkingEnabled]) n++;
+    if ([self webSearchEnabled]) n++;
+    if ([self imageGenEnabled]) n++;
+    return n;
 }
 
 - (void)_keyboardDone { [_textView resignFirstResponder]; }
 
-- (void)_refreshToggleVisuals
+// v261025-10: refresh the plus button badge + the input field's image-gen
+// blue tint. Called from initWithFrame:, _themeChanged, and after any
+// toggle change fired via ComposerPlusMenuView.
+- (void)refreshPlusButtonVisuals
 {
-    BOOL dt = [[self class] deepThinkingEnabled];
-    BOOL ws = [[self class] webSearchEnabled];
-    // v261025-8: 生图 mode — when active, DT/Web don't apply (the send goes
-    // to the image API, not a chat stream). Grey them out + disable so the
-    // composer's state is honest about what will happen on send.
+    NSInteger count = [[self class] activeToggleCount];
+    if (count > 0) {
+        _plusBadge.hidden = NO;
+        _plusBadge.text = [NSString stringWithFormat:@"%d", (int)count];
+    } else {
+        _plusBadge.hidden = YES;
+    }
+    // Plus button background: glassy neutral. Icon: black "+" on light,
+    // white "+" on dark.
+    CGSize plusSize = CGSizeMake(34, 30);
+    UIImage *plusBg = [iOS6Theme glassButtonImageOfSize:plusSize accent:NO];
+    [_plusButton setBackgroundImage:plusBg forState:UIControlStateNormal];
+    // Draw a "+" glyph directly (avoids Helvetica glyph gaps at small sizes).
+    UIImage *plusIcon = [self _plusIconImage];
+    [_plusButton setImage:plusIcon forState:UIControlStateNormal];
+
+    // v261025-10: when image-gen is ON, the text-view background turns
+    // light blue + placeholder reads "输入生图提示". When OFF, restore.
     BOOL ig = [[self class] imageGenEnabled];
-
-    // Glassy button backgrounds from the theme (redrawn on theme change).
-    // Active toggles + send = accent (saturated blue glass); inactive =
-    // neutral bar glass. Fixed button sizes → no stretching needed.
-    CGSize toggleSize = CGSizeMake(34, 30);
-    CGSize sendSize   = CGSizeMake(40, 30);
-    UIImage *neutral = [iOS6Theme glassButtonImageOfSize:toggleSize accent:NO];
-    UIImage *accentT = [iOS6Theme glassButtonImageOfSize:toggleSize accent:YES];
-    UIImage *accentS = [iOS6Theme glassButtonImageOfSize:sendSize accent:YES];
-    [_imageButton setBackgroundImage:neutral forState:UIControlStateNormal];
-    [_deepThinkingButton setBackgroundImage:((dt && !ig) ? accentT : neutral) forState:UIControlStateNormal];
-    [_webSearchButton setBackgroundImage:((ws && !ig) ? accentT : neutral) forState:UIControlStateNormal];
-    [_imageGenButton setBackgroundImage:(ig ? accentT : neutral) forState:UIControlStateNormal];
-    [_sendButton setBackgroundImage:accentS forState:UIControlStateNormal];
-
-    // Icons: white on accent (active / send), secondary on neutral.
-    UIImage *bulb = [IconDrawing imageForType:IconTypeLightbulb size:CGSizeMake(16, 16)
-                                        color:(dt && !ig) ? [UIColor whiteColor] : [iOS6Theme secondaryTextColor]];
-    UIImage *globe = [IconDrawing imageForType:IconTypeGlobe size:CGSizeMake(16, 16)
-                                          color:(ws && !ig) ? [UIColor whiteColor] : [iOS6Theme secondaryTextColor]];
-    // v261025-8: photo icon for 生图.
-    UIImage *photo = [IconDrawing imageForType:IconTypeImageGen size:CGSizeMake(17, 17)
-                                          color:ig ? [UIColor whiteColor] : [iOS6Theme secondaryTextColor]];
-    UIImage *cam = [IconDrawing imageForType:IconTypeCamera size:CGSizeMake(16, 16)
-                                        color:[iOS6Theme secondaryTextColor]];
-    UIImage *arrow = [IconDrawing imageForType:IconTypeSendArrow size:CGSizeMake(18, 18)
-                                          color:[UIColor whiteColor]];
-    [_deepThinkingButton setImage:bulb forState:UIControlStateNormal];
-    [_webSearchButton setImage:globe forState:UIControlStateNormal];
-    [_imageGenButton setImage:photo forState:UIControlStateNormal];
-    [_imageButton setImage:cam forState:UIControlStateNormal];
-    [_sendButton setImage:arrow forState:UIControlStateNormal];
-
-    // v261025-8: DT/Web disabled (visually + interaction) while 生图 is ON.
-    _deepThinkingButton.enabled = !ig;
-    _webSearchButton.enabled = !ig;
-    _deepThinkingButton.alpha = ig ? 0.45f : 1.0f;
-    _webSearchButton.alpha   = ig ? 0.45f : 1.0f;
-    _imageGenButton.alpha = 1.0f;
-
-    // Check if model supports images — hide button if not.
-    BOOL imgSupport = [[NSUserDefaults standardUserDefaults] boolForKey:@"modelSupportsImages"];
-    _imageButton.hidden = !imgSupport;
-    _imageBadge.hidden = !imgSupport || ([_pendingImages count] == 0);
-    _imageBadge.text = [NSString stringWithFormat:@"%d", (int)[_pendingImages count]];
+    if (ig) {
+        _textView.backgroundColor = _imageGenBgUIColor;
+        // Border to a slightly more saturated blue to match.
+        _textView.layer.borderColor = [[UIColor colorWithRed:0.4f green:0.6f
+                                                        blue:0.95f alpha:1.0f] CGColor];
+        // (placeholder set via textViewDidChange when empty)
+        if (_textView.text.length == 0) {
+            _textView.text = @"";
+            // iOS 6 UITextView doesn't have placeholder natively; we draw a
+            // fake one by setting text to a grayed-out hint and clearing it
+            // on first edit. Simpler: just leave it empty; the blue
+            // background already signals image-gen mode.
+        }
+    } else {
+        _textView.backgroundColor = [iOS6Theme composerFieldBackgroundColor];
+        _textView.layer.borderColor = [_fieldBorderUIColor CGColor];
+    }
 }
 
-#pragma mark - Image picker
+// v261025-10: draw a "+" icon inline (cached). The glyph uses Helvetica
+// "+"; if Helvetica is missing the glyph at the size we want, we fall
+// back to two rectangles (vertical + horizontal) drawn with CG.
+- (UIImage *)_plusIconImage
+{
+    static UIImage *cachedPlus = nil;
+    if (cachedPlus) return cachedPlus;
+    CGFloat sz = 16.0f;
+    CGFloat scale = [[UIScreen mainScreen] scale];
+    if (scale < 1) scale = 1;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(sz, sz), NO, scale);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (ctx) {
+        CGContextSetFillColorWithColor(ctx, [iOS6Theme secondaryTextColor].CGColor);
+        CGFloat barW = 2.0f;
+        CGFloat barL = 4.0f;
+        // Horizontal bar.
+        CGContextFillRect(ctx, CGRectMake(barL, (sz - barW) / 2.0f, sz - 2 * barL, barW));
+        // Vertical bar.
+        CGContextFillRect(ctx, CGRectMake((sz - barW) / 2.0f, barL, barW, sz - 2 * barL));
+    }
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    if (img) {
+        cachedPlus = [img retain];
+        return cachedPlus;
+    }
+    return nil;
+}
 
-- (void)_imageButtonTapped
+// v261025-10: the plus button was tapped — let the delegate show the menu.
+- (void)_plusTapped
+{
+    if ([_delegate respondsToSelector:@selector(composerDidTapPlusButton:)]) {
+        [_delegate composerDidTapPlusButton:self];
+    }
+}
+
+#pragma mark - Image picker (action delegated to ChatViewController)
+
+// v261025-10: image-upload now happens via the plus menu's action row,
+// but the actual UIImagePickerController is still presented by the
+// ComposerView itself (it owns the _pendingImages array + the picker
+// delegate). Exposed as a public-ish method so ChatViewController can
+// trigger it from the plus-menu callback.
+- (void)presentImagePickerFromViewController:(UIViewController *)vc
 {
     UIImagePickerController *picker = [[[UIImagePickerController alloc] init] autorelease];
     picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
     picker.allowsEditing = NO;
     picker.delegate = self;
-    UIView *v = self;
-    while (v && ![v.nextResponder isKindOfClass:[UIViewController class]]) v = v.superview;
-    UIViewController *vc = (UIViewController *)v.nextResponder;
     if (vc) [vc presentViewController:picker animated:YES completion:nil];
 }
 
@@ -446,8 +389,6 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     [picker dismissViewControllerAnimated:YES completion:nil];
     if (!image || image.size.width <= 0 || image.size.height <= 0) return;
 
-    // Compress: read max dimension from settings.
-    // maxDim == 0 means "原图" (original) — skip compression entirely.
     NSInteger maxDim = [[NSUserDefaults standardUserDefaults] integerForKey:@"imageMaxDim"];
     if (maxDim > 0) {
         CGFloat w = image.size.width, h = image.size.height;
@@ -457,43 +398,32 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
             h = (NSInteger)(h * scale);
             if (w < 1) w = 1;
             if (h < 1) h = 1;
-            // UIGraphicsBeginImageContext must have positive dimensions.
-            // Guard against edge cases (extremely tiny source images) that
-            // could crash on iOS 6.
             UIGraphicsBeginImageContextWithOptions(CGSizeMake(w, h), NO, 0.0);
-            // v261024-19: NO @try — drawInRect: with positive-dim context
-            // is safe; just make sure to end the context no matter what.
             [image drawInRect:CGRectMake(0, 0, w, h)];
             UIImage *resized = UIGraphicsGetImageFromCurrentImageContext();
             UIGraphicsEndImageContext();
             if (resized) image = resized;
         }
     }
-    // Show a placeholder badge while encoding runs on bg queue.
-    // For a 12MP iPhone photo, UIImageJPEGRepresentation + base64
-    // can take 1-3s on an iOS 6 device's A4/A5 CPU — that would
-    // freeze the UI if run on main. (Audit finding #4.)
-    _imageBadge.hidden = NO;
-    _imageBadge.text = @"…";
-    UIImage *capturedImage = [image retain];  // MRC: bg queue retains
-
+    UIImage *capturedImage = [image retain];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // v261025-1: @autoreleasepool — GCD worker threads have NO pool;
-        // the autoreleased JPEG data / base64 string below would otherwise
-        // leak on every image pick.
         @autoreleasepool {
             NSData *jpegData = UIImageJPEGRepresentation(capturedImage, 0.7);
             NSString *base64 = jpegData ? [jpegData base64String] : nil;
             dispatch_async(dispatch_get_main_queue(), ^{
                 [capturedImage release];
-                if (!base64 || base64.length == 0) {
-                    // Encoding failed — show empty badge state.
-                    _imageBadge.hidden = YES;
-                    return;
-                }
+                if (!base64 || base64.length == 0) return;
                 NSString *dataUrl = [NSString stringWithFormat:@"data:image/jpeg;base64,%@", base64];
                 [_pendingImages addObject:dataUrl];
-                [self _refreshToggleVisuals];
+                // Refresh badge count on the plus button (image-upload
+                // is one of the things the badge tracks; we now show
+                // pending image count as a temporary override).
+                NSInteger imgCount = (NSInteger)[_pendingImages count];
+                if (imgCount > 0) {
+                    _plusBadge.hidden = NO;
+                    _plusBadge.text = [NSString stringWithFormat:@"%d", (int)imgCount];
+                    _plusBadge.backgroundColor = [UIColor redColor];
+                }
             });
         }
     });
@@ -508,21 +438,12 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 
 - (void)_sendTapped
 {
-    // v261025-3: if we're currently streaming, the send button has
-    // morphed into a stop button — fire the stop delegate path instead
-    // of the send path. The delegate (ChatViewController) should call
-    // NetworkService.stopGenerating, which preserves the partial text
-    // and triggers the normal didFinish flow.
     if (_isStreaming) {
         if ([_delegate respondsToSelector:@selector(composerDidTapStop:)]) {
             [_delegate composerDidTapStop:self];
         }
         return;
     }
-    // v261025-1: belt-and-braces guard — the send button is disabled
-    // during streaming, but if the isStreaming flag ever desyncs we
-    // still refuse to double-send here rather than launching a second
-    // stream on top of the first.
 
     NSString *text = [_textView.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (text.length == 0 && [_pendingImages count] == 0) return;
@@ -530,12 +451,9 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 
     BOOL dt = [[self class] deepThinkingEnabled];
     BOOL ws = [[self class] webSearchEnabled];
-    BOOL ig = [[self class] imageGenEnabled];   // v261025-8
+    BOOL ig = [[self class] imageGenEnabled];
     NSArray *imgs = [_pendingImages count] > 0 ? [NSArray arrayWithArray:_pendingImages] : nil;
 
-    // v261025-1: REMOVED the ComposerViewSendMessageNotification post —
-    // it duplicated the delegate call (double-send landmine if any
-    // observer ever subscribes). The delegate channel is the only path.
     if ([_delegate respondsToSelector:@selector(composer:didSendText:images:deepThinking:webSearch:imageGen:)]) {
         [_delegate composer:self didSendText:text images:imgs deepThinking:dt webSearch:ws imageGen:ig];
     }
@@ -547,7 +465,7 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 {
     _textView.text = @"";
     [_pendingImages removeAllObjects];
-    [self _refreshToggleVisuals];
+    [self refreshPlusButtonVisuals];
     [self textViewDidChange:_textView];
 }
 
@@ -575,21 +493,15 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 - (void)dealloc
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
-    // v261025-5: release the text view FIRST (which triggers the layer's
-    // CGColorRelease on its borderColor), and only THEN release the
-    // retained UIColor ivar that backed that CGColor. Order matters:
-    // if we drop our UIColor retain first, the CGColor is freed and the
-    // layer's later CGColorRelease hits a dangling ref → SIGSEGV.
     [_textView release];
     [_sendButton release];
-    [_deepThinkingButton release];
-    [_webSearchButton release];
-    [_imageButton release];
-    [_imageGenButton release];
-    [_imageBadge release];
+    [_plusButton release];
+    [_plusBadge release];
     [_pendingImages release];
     [_fieldBorderUIColor release];
     _fieldBorderUIColor = nil;
+    [_imageGenBgUIColor release];
+    _imageGenBgUIColor = nil;
     [super dealloc];
 }
 

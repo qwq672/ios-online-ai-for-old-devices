@@ -64,6 +64,51 @@ enum {
     return [nsStr autorelease];
 }
 
+// v261025-10: return all starred models (across all providers) of the given
+// kind, as flat dicts the composer's 加号 menu can display. kind="chat"
+// picks non-image models; kind="image" picks image-gen models.
++ (NSArray *)_starredModelsOfKind:(NSString *)kind
+{
+    NSMutableArray *out = [NSMutableArray array];
+    NSString *activeModelID = [[NSUserDefaults standardUserDefaults]
+        stringForKey:[kind isEqualToString:@"image"] ? SettingsKeyImageGenModel
+                                                     : SettingsKeyModel];
+    for (NSDictionary *p in [self savedProviders]) {
+        NSString *providerName = [p objectForKey:@"displayName"];
+        if (![providerName isKindOfClass:[NSString class]] || providerName.length == 0) {
+            providerName = [SettingsViewController displayNameForTemplate:
+                            [p objectForKey:@"template"]];
+        }
+        NSArray *models = [p objectForKey:@"models"];
+        if (![models isKindOfClass:[NSArray class]]) continue;
+        for (NSDictionary *m in models) {
+            if (![[m objectForKey:@"starred"] boolValue]) continue;
+            NSString *mkind = [m objectForKey:@"kind"];
+            BOOL isImage = [mkind isKindOfClass:[NSString class]] && [mkind isEqualToString:@"image"];
+            if ([kind isEqualToString:@"image"]) {
+                if (!isImage) continue;
+            } else {
+                if (isImage) continue;
+            }
+            NSString *mid = [m objectForKey:@"id"];
+            if (![mid isKindOfClass:[NSString class]] || mid.length == 0) continue;
+            NSString *dn = [m objectForKey:@"displayName"];
+            if (![dn isKindOfClass:[NSString class]] || dn.length == 0) dn = mid;
+            BOOL isActive = activeModelID && [activeModelID isEqualToString:mid];
+            [out addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+                            mid, @"id",
+                            dn, @"displayName",
+                            providerName ?: @"?", @"providerDisplayName",
+                            [NSNumber numberWithBool:isActive], @"active",
+                            nil]];
+        }
+    }
+    return out;
+}
+
++ (NSArray *)starredChatModels  { return [self _starredModelsOfKind:@"chat"]; }
++ (NSArray *)starredImageModels { return [self _starredModelsOfKind:@"image"]; }
+
 // Read the new two-tier structure from NSUserDefaults. Auto-migrates the
 // legacy flat SettingsKeyModelList when the new key is empty.
 + (NSArray *)savedProviders

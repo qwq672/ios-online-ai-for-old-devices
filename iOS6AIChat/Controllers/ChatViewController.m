@@ -125,6 +125,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 @property (nonatomic, assign) BOOL imageGenInProgress;
 @property (nonatomic, assign) BOOL imageGenCancelled;
 @property (nonatomic, retain) Message *imageGenAssistantMessage;
+// v261025-10: plus-button slide-up menu (lazy-initialized on first show;
+// reused thereafter).
+@property (nonatomic, retain) ComposerPlusMenuView *plusMenu;
 @end
 
 @implementation ChatViewController
@@ -141,7 +144,8 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
             pendingEditOriginalText=_pendingEditOriginalText,
             imageGenInProgress=_imageGenInProgress,
             imageGenCancelled=_imageGenCancelled,
-            imageGenAssistantMessage=_imageGenAssistantMessage;
+            imageGenAssistantMessage=_imageGenAssistantMessage,
+            plusMenu=_plusMenu;
 
 - (id)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil
 {
@@ -199,6 +203,8 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     // v261025-8: image-gen in-flight state (the block holds its own
     // retain on the message, so releasing here can't dangle it).
     [_imageGenAssistantMessage release];
+    // v261025-10: plus-button slide-up menu (lazy-init, retained).
+    [_plusMenu release];
     [super dealloc];
 }
 
@@ -306,9 +312,11 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 {
     [super viewWillAppear:animated];
     [self _applyTheme];
-    // Refresh toggle button icons.
-    if ([_composer respondsToSelector:@selector(_refreshToggleVisuals)]) {
-        [_composer performSelector:@selector(_refreshToggleVisuals)];
+    // v261025-10: refresh the plus-button badge + image-gen blue tint
+    // (the old _refreshToggleVisuals was renamed and now also handles
+    // the badge count + the input field's image-gen tint).
+    if ([_composer respondsToSelector:@selector(refreshPlusButtonVisuals)]) {
+        [_composer refreshPlusButtonVisuals];
     }
     [self _reload];
 }
@@ -567,6 +575,119 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 - (void)composerDidChangeHeight:(ComposerView *)composer
 {
     [self _adjustForComposerHeight];
+}
+
+#pragma mark - v261025-10 ComposerPlusMenuDelegate
+
+// The plus button on the composer was tapped — lazily create the menu
+// and show it as an overlay over the chat root view.
+- (void)composerDidTapPlusButton:(ComposerView *)composer
+{
+    if (!_plusMenu) {
+        _plusMenu = [[ComposerPlusMenuView alloc] initWithFrame:CGRectZero];
+        _plusMenu.delegate = self;
+    }
+    // Refresh inline data + show.
+    [_plusMenu refresh];
+    [_plusMenu showInView:self.view];
+}
+
+// Toggle state changed from inside the menu — refresh the composer's
+// plus-button badge + image-gen blue tint.
+- (void)plusMenu:(ComposerPlusMenuView *)menu
+  deepThinkingEnabledChanged:(BOOL)enabled
+{
+    (void)enabled;
+    [_composer refreshPlusButtonVisuals];
+}
+- (void)plusMenu:(ComposerPlusMenuView *)menu
+  webSearchEnabledChanged:(BOOL)enabled
+{
+    (void)enabled;
+    [_composer refreshPlusButtonVisuals];
+}
+- (void)plusMenu:(ComposerPlusMenuView *)menu
+  imageGenEnabledChanged:(BOOL)enabled
+{
+    (void)enabled;
+    // Refresh the composer (badge count + input field blue tint).
+    [_composer refreshPlusButtonVisuals];
+    // Reload the toggles section of the menu itself so DT/Web grey out
+    // when image-gen turns ON (and un-grey when it turns OFF).
+    [menu refresh];
+}
+
+// Action callbacks — wire to existing ChatVC flows.
+- (void)plusMenuDidTapImageUpload:(ComposerPlusMenuView *)menu
+{
+    // ComposerView owns the UIImagePickerController delegate + the
+    // _pendingImages array; just hand the picker presentation over.
+    [_composer presentImagePickerFromViewController:self];
+}
+
+- (void)plusMenuDidTapClearConversation:(ComposerPlusMenuView *)menu
+{
+    // Confirm before clearing the active conversation.
+    if (!_conversation || _conversation.messages.count == 0) {
+        // Nothing to clear — just dismiss (already auto-dismissed by menu,
+        // but show a hint alert for UX).
+        UIAlertView *av = [[[UIAlertView alloc]
+            initWithTitle:NSLocalizedString(@"当前对话为空", nil)
+                  message:nil
+                 delegate:nil
+        cancelButtonTitle:NSLocalizedString(@"好", nil)
+        otherButtonTitles:nil] autorelease];
+        [av show];
+        return;
+    }
+    UIAlertView *av = [[[UIAlertView alloc]
+        initWithTitle:NSLocalizedString(@"清空当前对话?", nil)
+              message:NSLocalizedString(@"所有消息将删除且不可撤销。", nil)
+             delegate:self
+    cancelButtonTitle:NSLocalizedString(@"取消", nil)
+    otherButtonTitles:NSLocalizedString(@"清空", nil), nil] autorelease];
+    [av setTag:750];
+    [av show];
+}
+
+- (void)plusMenuDidTapMoreModels:(ComposerPlusMenuView *)menu
+{
+    // Push the model management VC.
+    ModelManagementViewController *vc = [[[ModelManagementViewController alloc] init] autorelease];
+    [self.navigationController pushViewController:vc animated:YES];
+}
+
+- (void)plusMenuDidTapMoreCharacters:(ComposerPlusMenuView *)menu
+{
+    // Push the character management VC.
+    CharacterManagementViewController *vc = [[[CharacterManagementViewController alloc] init] autorelease];
+    [self.navigationController pushViewController:vc animated:YES];
+}
+
+- (void)plusMenu:(ComposerPlusMenuView *)menu
+  didSelectChatModelID:(NSString *)modelID
+{
+    // Active model was already persisted by the menu; just log + refresh
+    // the composer's empty placeholder (which may show the model name).
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"CHAT ⊕ switched chat model → %@", modelID]];
+    [self _updateEmptyPlaceholder];
+}
+
+- (void)plusMenu:(ComposerPlusMenuView *)menu
+  didSelectImageModelID:(NSString *)modelID
+{
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"CHAT ⊕ switched image model → %@", modelID]];
+}
+
+- (void)plusMenu:(ComposerPlusMenuView *)menu
+  didSelectCharacterName:(NSString *)name
+{
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"CHAT ⊕ switched character → %@", name]];
+    // Update the empty placeholder's subtitle to reflect the new character.
+    [self _updateEmptyPlaceholder];
 }
 
 - (void)_adjustForComposerHeight
@@ -1537,6 +1658,18 @@ didFailForConversationID:(NSString *)conversationID
 - (void)alertView:(UIAlertView *)alertView
 clickedButtonAtIndex:(NSInteger)buttonIndex
 {
+    // v261025-10: tag 750 = 清空当前对话确认.
+    if (alertView.tag == 750) {
+        if (buttonIndex != 1) return;   // 取消
+        if (_conversation) {
+            [_conversation.messages removeAllObjects];
+            [ConversationStore saveConversation:_conversation];
+            [self _reload];
+            [self _updateEmptyPlaceholder];
+            [[Logger sharedLogger] info:@"CHAT ⊕ cleared current conversation"];
+        }
+        return;
+    }
     if (alertView.tag != 600) return;
     // buttonIndex 0 = 取消, 1 = 发送.
     if (buttonIndex != 1) {
