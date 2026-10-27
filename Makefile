@@ -140,7 +140,7 @@ endif
 # colon `:` which would conflict if Theos also defined `clean:`).
 .PHONY: clean
 clean::
-        rm -rf .theos obj build packages Payload *.deb iOS6AIChat-unsigned.ipa
+	rm -rf .theos obj build packages Payload *.deb iOS6AIChat-unsigned.ipa
 
 # Pack an unsigned .ipa from the .app Theos just produced.
 # The .app is inside the staged .deb payload at .theos/_/Applications/
@@ -149,41 +149,41 @@ clean::
 ipa: package
         @echo "==> Locating staged .app bundle in .theos/_/"
         @BUILT_APP=$$(find .theos/_ -name "iOS6AIChat.app" -type d 2>/dev/null | head -1); \
-        if [ -z "$$BUILT_APP" ]; then \
-            echo "Could not find iOS6AIChat.app — did 'make package' succeed?"; exit 1; \
+	if [ -z "$$BUILT_APP" ]; then \
+	echo "Could not find iOS6AIChat.app — did 'make package' succeed?"; exit 1; \
         fi; \
-        echo "==> Found $$BUILT_APP"; \
-        rm -rf Payload iOS6AIChat-unsigned.ipa; \
-        mkdir Payload; \
-        cp -R "$$BUILT_APP" Payload/; \
+	echo "==> Found $$BUILT_APP"; \
+	rm -rf Payload iOS6AIChat-unsigned.ipa; \
+	mkdir Payload; \
+	cp -R "$$BUILT_APP" Payload/; \
         APP=Payload/iOS6AIChat.app; \
-        echo "==> Ensuring Info.plist is in the bundle (Theos sometimes forgets it)"; \
-        if [ ! -f "$$APP/Info.plist" ]; then \
-            cp iOS6AIChat/Resources/iOS6AIChat-Info.plist "$$APP/Info.plist"; \
+	echo "==> Ensuring Info.plist is in the bundle (Theos sometimes forgets it)"; \
+	if [ ! -f "$$APP/Info.plist" ]; then \
+	cp iOS6AIChat/Resources/iOS6AIChat-Info.plist "$$APP/Info.plist"; \
         fi; \
-        echo "==> Copying app icons into the bundle root"; \
-        for icon in Icon.png Icon@2x.png Icon-72.png Icon-72@2x.png lightbulb.png camera.png send.png; do \
-            if [ -f "iOS6AIChat/Resources/Icons/$$icon" ] && [ ! -f "$$APP/$$icon" ]; then \
-                cp "iOS6AIChat/Resources/Icons/$$icon" "$$APP/$$icon"; \
+	echo "==> Copying app icons into the bundle root"; \
+	for icon in Icon.png Icon@2x.png Icon-72.png Icon-72@2x.png lightbulb.png camera.png send.png; do \
+	if [ -f "iOS6AIChat/Resources/Icons/$$icon" ] && [ ! -f "$$APP/$$icon" ]; then \
+	cp "iOS6AIChat/Resources/Icons/$$icon" "$$APP/$$icon"; \
             fi; \
         done; \
-        echo "==> Converting Info.plist to binary format (iOS 6 prefers binary)"; \
-        if command -v plutil >/dev/null 2>&1; then \
+	echo "==> Converting Info.plist to binary format (iOS 6 prefers binary)"; \
+	if command -v plutil >/dev/null 2>&1; then \
             plutil -convert binary1 "$$APP/Info.plist" 2>/dev/null || true; \
         fi; \
-        echo "==> Ad-hoc re-signing binary with ldid (ensures it loads on jailbroken iOS)"; \
-        if command -v ldid >/dev/null 2>&1; then \
+	echo "==> Ad-hoc re-signing binary with ldid (ensures it loads on jailbroken iOS)"; \
+	if command -v ldid >/dev/null 2>&1; then \
             ldid -S "$$APP/iOS6AIChat" 2>/dev/null || true; \
         fi; \
-        echo "==> Final .app contents:"; \
+	echo "==> Final .app contents:"; \
         ls -la "$$APP"; \
-        echo "==> Zipping into iOS6AIChat-unsigned.ipa"; \
+	echo "==> Zipping into iOS6AIChat-unsigned.ipa"; \
         zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null; \
-        echo "==> Built iOS6AIChat-unsigned.ipa"; \
+	echo "==> Built iOS6AIChat-unsigned.ipa"; \
         ls -la iOS6AIChat-unsigned.ipa
 
 show-app: package
         @find .theos/_ -name "iOS6AIChat.app" -type d -print -quit
 
 clean-ipa:
-        rm -rf Payload iOS6AIChat-unsigned.ipa
+	rm -rf Payload iOS6AIChat-unsigned.ipa
