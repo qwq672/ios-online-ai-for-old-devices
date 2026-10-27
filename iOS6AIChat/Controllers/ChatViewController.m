@@ -750,7 +750,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                 // Still the active conversation → refresh the UI in place.
                 [ChatMessageCell invalidateHeightCache];
                 [self->_tableView reloadData];
-                [self->_scrollToBottomAnimated:YES];
+                [self _scrollToBottomAnimated:YES];
                 self->_imageGenInProgress = NO;
                 self->_composer.isStreaming = NO;
                 self.imageGenAssistantMessage = nil;
@@ -1418,12 +1418,9 @@ didFailForConversationID:(NSString *)conversationID
     if (!path) return;
     // Prefer the shared decoded cache (gImageCache) — same key the cell
     // used — so the modal opens instantly; fall back to the file.
-    UIImage *img = nil;
-    @try {
-        img = [UIImage imageWithContentsOfFile:path];
-    } @catch (NSException *e) {
-        img = nil;
-    }
+    // (NO @try — ObjC exceptions are disabled on cctools-port armv7;
+    // imageWithContentsOfFile: never throws, it just returns nil.)
+    UIImage *img = [UIImage imageWithContentsOfFile:path];
     if (!img) {
         [[Logger sharedLogger] warn:@"ChatVC gen-image viewer — image file missing"];
         return;
