@@ -167,6 +167,22 @@
                                apiKey:(NSString *)apiKey
                                  error:(NSError **)error;
 
+// v261025-8: full-control variant — the caller passes the image model's
+// own baseURL (per-entry connection from ModelManagement). When baseURL
+// is nil/empty, falls back to the provider-default map. `useTransit` is
+// kept for signature compatibility but image gen ALWAYS routes through
+// the transit (iOS 6 TLS cannot reach the image APIs directly).
+
+- (NSString *)generateImageWithPrompt:(NSString *)prompt
+                                 model:(NSString *)model
+                                 size:(NSString *)size
+                            useTransit:(BOOL)useTransit
+                            transitURL:(NSString *)transitURL
+                              baseURL:(NSString *)baseURL
+                              provider:(NSString *)provider
+                               apiKey:(NSString *)apiKey
+                                 error:(NSError **)error;
+
 // Fetch an arbitrary image URL via the transit server's /v1/fetch_image
 // endpoint (returns the raw image bytes as a base64 data URL string).
 // Use this to download images from hosts that iOS 6's NSURLConnection

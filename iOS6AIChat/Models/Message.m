@@ -9,7 +9,8 @@
 
 @synthesize role=_role, content=_content, contentHTML=_contentHTML,
             createdAt=_createdAt, messageID=_messageID,
-            variants=_variants, currentVariantIndex=_currentVariantIndex;
+            variants=_variants, currentVariantIndex=_currentVariantIndex,
+            generatedImagePath=_generatedImagePath;
 
 + (Message *)messageWithRole:(MessageRole)role content:(NSString *)content
 {
@@ -27,6 +28,29 @@
 - (BOOL)isUser      { return _role == MessageRoleUser; }
 - (BOOL)isAssistant { return _role == MessageRoleAssistant; }
 
+// v261025-8: image-gen result message?
+- (BOOL)isImageGenResult
+{
+    return [_generatedImagePath isKindOfClass:[NSString class]]
+           && _generatedImagePath.length > 0;
+}
+
+// v261025-8: sandbox-stable absolute path for a generated image file.
+// The stored value is a bare file name under Documents/genimg/.
++ (NSString *)absolutePathForGeneratedImage:(NSString *)fileName
+{
+    if (![fileName isKindOfClass:[NSString class]] || fileName.length == 0) return nil;
+    // Defensive: strip any path separators someone may have baked in.
+    NSString *name = [fileName lastPathComponent];
+    if (name.length == 0) return nil;
+    NSArray *dirs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,
+                                                        NSUserDomainMask, YES);
+    if ([dirs count] == 0) return nil;
+    NSString *docDir = [dirs objectAtIndex:0];
+    return [[docDir stringByAppendingPathComponent:@"genimg"]
+            stringByAppendingPathComponent:name];
+}
+
 #pragma mark - NSCoding
 
 - (id)initWithCoder:(NSCoder *)coder
@@ -41,6 +65,9 @@
         _messageID   = [[coder decodeObjectForKey:@"messageID"] copy];
         _thinking    = [[coder decodeObjectForKey:@"thinking"] copy];
         _images      = [[coder decodeObjectForKey:@"images"] retain];
+        // v261025-8: generated image file name (back-compat: nil on old
+        // conversation files — the message then renders as plain text).
+        _generatedImagePath = [[coder decodeObjectForKey:@"generatedImagePath"] copy];
         // v261025-6: variants + currentVariantIndex. Back-compat: if the
         // keys are missing (old conv file), default to empty + -1.
         NSArray *decodedVariants = [coder decodeObjectForKey:@"variants"];
@@ -70,6 +97,10 @@
     [coder encodeObject:_messageID                   forKey:@"messageID"];
     [coder encodeObject:_thinking                    forKey:@"thinking"];
     [coder encodeObject:_images                     forKey:@"images"];
+    // v261025-8: image-gen result file name.
+    if (_generatedImagePath) {
+        [coder encodeObject:_generatedImagePath    forKey:@"generatedImagePath"];
+    }
     // v261025-6: variants + currentVariantIndex.
     [coder encodeObject:_variants                    forKey:@"variants"];
     [coder encodeInteger:(NSInteger)_currentVariantIndex
@@ -89,6 +120,7 @@
     // v261025-6: copy variants + index too.
     copy.variants = [_variants copy];
     copy.currentVariantIndex = _currentVariantIndex;
+    copy.generatedImagePath = [_generatedImagePath copy];
     return copy;
 }
 
@@ -103,6 +135,7 @@
     [_thinking    release];
     [_images      release];
     [_variants    release];
+    [_generatedImagePath release];
     [super dealloc];
 }
 

@@ -30,6 +30,8 @@
 - (void)chatCell:(ChatMessageCell *)cell didTapEditUserMessage:(Message *)message;
 // v261025-6: variant pager — navigate to previous / next AI-response variant.
 - (void)chatCell:(ChatMessageCell *)cell didTapVariantArrow:(Message *)message direction:(NSInteger)direction;  // -1 = prev, +1 = next
+// v261025-8: the user tapped the generated image — open the full-screen viewer.
+- (void)chatCellDidTapGeneratedImage:(ChatMessageCell *)cell message:(Message *)message;
 @end
 
 @interface ChatMessageCell : UITableViewCell
@@ -56,6 +58,13 @@
 // Flush render caches (attributed strings bake in theme colors).
 // Call when dark/light mode or font size changes.
 + (void)flushCaches;
+
+// v261025-8: drop ONLY the height cache (not the rendered-attr cache).
+// Called when a message's content changes shape outside the streaming
+// path — e.g. an image-generation placeholder ("正在生成图片…") becomes
+// an image bubble. NSCache has no prefix eviction, so this clears the
+// whole height cache; heights rebuild lazily on the next layout pass.
++ (void)invalidateHeightCache;
 
 - (void)applyMessage:(Message *)message;
 

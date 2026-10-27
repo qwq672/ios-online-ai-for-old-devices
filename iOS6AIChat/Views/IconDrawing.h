@@ -28,6 +28,7 @@ typedef enum {
     IconTypePerson,           // Character management (person silhouette)
     IconTypeDoc,              // Log viewer (document with lines)
     IconTypeExport,           // v261025-6: Export conversations (downward arrow into tray)
+    IconTypeImageGen,         // v261025-8: Image generation (photo frame + mountain + sun)
 } IconType;
 
 @interface IconDrawing : NSObject

@@ -168,6 +168,7 @@ static NSArray *kProviderOrder = nil;
         NSString *baseURL = nil;
         NSString *apiKey = nil;
         NSString *displayName = nil;
+        NSString *kind = nil;
         if ([e isKindOfClass:[NSDictionary class]]) {
             mid = [e objectForKey:@"id"];
             id srcObj = [e objectForKey:@"source"];
@@ -182,6 +183,11 @@ static NSArray *kProviderOrder = nil;
             if ([k isKindOfClass:[NSString class]] && [(NSString *)k length] > 0) apiKey = k;
             id d = [e objectForKey:@"displayName"];
             if ([d isKindOfClass:[NSString class]] && [(NSString *)d length] > 0) displayName = d;
+            // v261025-8: image-generation entries (kind="image") must
+            // survive the save round-trip — the composer's 生图 mode looks
+            // them up via SettingsKeyImageGenModel.
+            id kk = [e objectForKey:@"kind"];
+            if ([kk isKindOfClass:[NSString class]] && [(NSString *)kk length] > 0) kind = kk;
         } else if ([e isKindOfClass:[NSString class]]) {
             mid = e;
         }
@@ -197,6 +203,7 @@ static NSArray *kProviderOrder = nil;
         if (baseURL)     [entry setObject:baseURL forKey:@"baseURL"];
         if (apiKey)      [entry setObject:apiKey forKey:@"apiKey"];
         if (displayName) [entry setObject:displayName forKey:@"displayName"];
+        if (kind)        [entry setObject:kind forKey:@"kind"];
         [clean addObject:entry];
     }
     NSError *err = nil;
@@ -281,6 +288,10 @@ static NSArray *kProviderOrder = nil;
     NSDictionary *entry = nil;
     if (model.length > 0) {
         for (NSDictionary *e in [self savedModelEntries]) {
+            // v261025-8: NEVER resolve the chat path to an image-gen entry
+            // — a kind="image" model id in SettingsKeyModel would send
+            // chat-completion requests at an image API.
+            if ([self entryIsImageKind:e]) continue;
             NSString *eid = [e objectForKey:@"id"];
             if ([eid isKindOfClass:[NSString class]] && [eid isEqualToString:model]) {
                 entry = e;
@@ -303,6 +314,72 @@ static NSArray *kProviderOrder = nil;
     return [NSDictionary dictionaryWithObjectsAndKeys:
             provider ?: ProviderIDOpenAI, @"provider",
             baseURL   ?: @"https://api.openai.com", @"baseURL",
+            apiKey    ?: @"", @"apiKey",
+            model     ?: @"", @"model",
+            nil];
+}
+
+// v261025-8: is this entry a 生图 model? (kind=="image"; absent = chat)
++ (BOOL)entryIsImageKind:(NSDictionary *)entry
+{
+    if (![entry isKindOfClass:[NSDictionary class]]) return NO;
+    NSString *k = [entry objectForKey:@"kind"];
+    return [k isKindOfClass:[NSString class]] && [k isEqualToString:@"image"];
+}
+
+// v261025-8: resolve the connection the IMAGE-GEN path should use.
+// Looks up the ACTIVE image model (SettingsKeyImageGenModel — set by
+// ModelAddViewController on save, or by tapping an image entry here).
+// model is @"" when no image model is configured — ChatViewController
+// prompts the user to add one in that case.
++ (NSDictionary *)resolvedConnectionForImageGen
+{
+    NSDictionary *settings = [SettingsViewController loadSettings];
+    NSString *model = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyImageGenModel];
+    NSDictionary *entry = nil;
+    if ([model isKindOfClass:[NSString class]] && model.length > 0) {
+        for (NSDictionary *e in [self savedModelEntries]) {
+            if (![self entryIsImageKind:e]) continue;   // image entries only
+            NSString *eid = [e objectForKey:@"id"];
+            if ([eid isKindOfClass:[NSString class]] && [eid isEqualToString:model]) {
+                entry = e;
+                break;
+            }
+        }
+    }
+    // Fallback: no stored key / stale id — use the FIRST image entry.
+    if (!entry) {
+        for (NSDictionary *e in [self savedModelEntries]) {
+            if ([self entryIsImageKind:e]) {
+                entry = e;
+                NSString *eid = [e objectForKey:@"id"];
+                if ([eid isKindOfClass:[NSString class]] && eid.length > 0) {
+                    model = eid;
+                    // Self-heal: persist so the composer + the section-0
+                    // row stay in sync.
+                    [[NSUserDefaults standardUserDefaults] setObject:eid
+                                                              forKey:SettingsKeyImageGenModel];
+                    [[NSUserDefaults standardUserDefaults] synchronize];
+                }
+                break;
+            }
+        }
+    }
+    NSString *provider = [entry objectForKey:@"provider"];
+    if (![provider isKindOfClass:[NSString class]] || provider.length == 0) {
+        provider = [settings objectForKey:SettingsKeyProvider];
+    }
+    NSString *baseURL = [entry objectForKey:@"baseURL"];
+    if (![baseURL isKindOfClass:[NSString class]] || baseURL.length == 0) {
+        baseURL = [settings objectForKey:SettingsKeyBaseURL];
+    }
+    NSString *apiKey = [entry objectForKey:@"apiKey"];
+    if (![apiKey isKindOfClass:[NSString class]] || apiKey.length == 0) {
+        apiKey = [settings objectForKey:SettingsKeyAPIKey];
+    }
+    return [NSDictionary dictionaryWithObjectsAndKeys:
+            provider ?: ProviderIDZhipu, @"provider",
+            baseURL   ?: @"", @"baseURL",
             apiKey    ?: @"", @"apiKey",
             model     ?: @"", @"model",
             nil];
@@ -467,6 +544,15 @@ static NSArray *kProviderOrder = nil;
     [_tableView reloadData];
 }
 
+// v261025-8: any image-gen entry saved at all? (Section-0 footer hint.)
+- (BOOL)_hasAnyImageEntry
+{
+    for (NSDictionary *e in [ModelManagementViewController savedModelEntries]) {
+        if ([ModelManagementViewController entryIsImageKind:e]) return YES;
+    }
+    return NO;
+}
+
 #pragma mark - v261025-7 Provider groups (two-tier structure)
 
 // Group saved entries by provider bucket into _providerGroups:
@@ -543,7 +629,7 @@ static NSArray *kProviderOrder = nil;
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
     [self _rebuildGroupsIfNeeded];
-    if (section == 0) return 1;                      // 当前默认模型 + 测试/搜索
+    if (section == 0) return 2;                      // 对话模型 + 生图模型 (v261025-8)
     NSInteger gIdx = [self _groupIndexForSection:section];
     if (gIdx != NSNotFound) {
         NSDictionary *g = [_providerGroups objectAtIndex:gIdx];
@@ -591,7 +677,10 @@ static NSArray *kProviderOrder = nil;
 {
     [self _rebuildGroupsIfNeeded];
     if (section == 0) {
-        return NSLocalizedString(@"点「测试」验证连接；点「搜索」从 /v1/models 拉取可选用模型。", nil);
+        if ([self _hasAnyImageEntry]) {
+            return NSLocalizedString(@"点「测试」验证连接；点「搜索」从 /v1/models 拉取可选用模型。", nil);
+        }
+        return NSLocalizedString(@"点「测试」验证连接；点「搜索」从 /v1/models 拉取可选用模型。生图：先在「添加」里选生图模型类型。", nil);
     }
     NSInteger gIdx = [self _groupIndexForSection:section];
     if (gIdx != NSNotFound) {
@@ -659,13 +748,50 @@ static NSArray *kProviderOrder = nil;
     NSInteger gIdx = [self _groupIndexForSection:indexPath.section];
 
     if (indexPath.section == 0) {
-        // Show the resolved ACTIVE entry: "provider · model" + 测试/搜索 buttons.
-        NSDictionary *conn = [ModelManagementViewController resolvedConnectionForChat];
+        // v261025-8: two rows — 0 = active CHAT model (+ 测试/搜索),
+        // 1 = active IMAGE-GEN model. Fully self-drawn (textLabel stays
+        // empty) so the two-line layout is exact on iOS 6.
+        BOOL isImageRow = (indexPath.row == 1);
+        NSDictionary *conn = isImageRow
+            ? [ModelManagementViewController resolvedConnectionForImageGen]
+            : [ModelManagementViewController resolvedConnectionForChat];
         NSString *model = [conn objectForKey:@"model"];
-        NSString *prov = [conn objectForKey:@"provider"];
-        NSString *display = model.length > 0 ? model : @"(unset)";
-        cell.textLabel.text = [NSString stringWithFormat:@"%@ · %@",
-                               [self _displayNameForProvider:prov], display];
+        NSString *prov  = [conn objectForKey:@"provider"];
+        BOOL hasModel = [model isKindOfClass:[NSString class]] && model.length > 0;
+        NSString *display = hasModel ? model : NSLocalizedString(@"(未添加)", nil);
+
+        UILabel *main = [[[UILabel alloc]
+            initWithFrame:CGRectMake(12, 5, cell.contentView.bounds.size.width - 170, 20)] autorelease];
+        main.text = isImageRow
+            ? [NSString stringWithFormat:@"生图模型 · %@",
+               ([prov isKindOfClass:[NSString class]] && prov.length > 0)
+                   ? [self _displayNameForProvider:prov] : @"?"]
+            : [NSString stringWithFormat:@"对话模型 · %@",
+               ([prov isKindOfClass:[NSString class]] && prov.length > 0)
+                   ? [self _displayNameForProvider:prov] : @"?"];
+        main.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
+        main.textColor = isImageRow ? [iOS6Theme tintColor] : [iOS6Theme textColor];
+        main.backgroundColor = [UIColor clearColor];
+        main.opaque = NO;
+        main.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        main.tag = 9003;
+        [cell.contentView addSubview:main];
+
+        CGFloat subW = cell.contentView.bounds.size.width - (isImageRow ? 24 : 170);
+        UILabel *sub = [[[UILabel alloc]
+            initWithFrame:CGRectMake(12, 26, subW, 15)] autorelease];
+        sub.text = isImageRow
+            ? [NSString stringWithFormat:@"%@ — 输入栏开启生图后发送即生成图片", display]
+            : [NSString stringWithFormat:@"%@ — 发送即对话", display];
+        sub.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:11]];
+        sub.textColor = [iOS6Theme secondaryTextColor];
+        sub.backgroundColor = [UIColor clearColor];
+        sub.opaque = NO;
+        sub.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        sub.tag = 9002;
+        [cell.contentView addSubview:sub];
+
+        if (isImageRow) return cell;
 
         UIButton *testBtn = [UIButton buttonWithType:UIButtonTypeCustom];
             [testBtn setTitle:NSLocalizedString(@"测试", nil) forState:UIControlStateNormal];
@@ -715,9 +841,28 @@ static NSArray *kProviderOrder = nil;
                             ([[e objectForKey:@"apiKey"] length] > 0);
         NSString *src = [e objectForKey:@"source"];
         BOOL isTransit = [src isKindOfClass:[NSString class]] && [src isEqualToString:@"transit"];
+        BOOL isImage = [ModelManagementViewController entryIsImageKind:e];
+        // v261025-8: 生图 badge is laid out LEFT of the 自定义/中转 badge
+        // (or in its place when there is none).
+        CGFloat badgeRight = cell.contentView.bounds.size.width - 12;
+        if (isImage) {
+            UILabel *imgBadge = [[[UILabel alloc]
+                initWithFrame:CGRectMake(badgeRight - 40, (44 - 18) / 2, 40, 18)] autorelease];
+            imgBadge.text = NSLocalizedString(@"生图", nil);
+            imgBadge.textColor = [UIColor whiteColor];
+            imgBadge.backgroundColor = [iOS6Theme tintColor];
+            imgBadge.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:10]];
+            imgBadge.textAlignment = NSTextAlignmentCenter;
+            imgBadge.layer.cornerRadius = 4.0f;
+            imgBadge.layer.masksToBounds = YES;
+            imgBadge.tag = 9001;
+            imgBadge.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+            [cell.contentView addSubview:imgBadge];
+            badgeRight -= (40 + 6);
+        }
         if (hasOverrides || isTransit) {
             UILabel *badge = [[[UILabel alloc]
-                initWithFrame:CGRectMake(0, 0, 50, 18)] autorelease];
+                initWithFrame:CGRectMake(badgeRight - 50, (44 - 18) / 2, 50, 18)] autorelease];
             badge.text = isTransit ? NSLocalizedString(@"中转", nil)
                                    : NSLocalizedString(@"自定义", nil);
             badge.textColor = [UIColor whiteColor];
@@ -728,14 +873,15 @@ static NSArray *kProviderOrder = nil;
             badge.layer.cornerRadius = 4.0f;
             badge.layer.masksToBounds = YES;
             badge.tag = 9001;  // for cleanup on cell reuse
-            CGRect f = cell.contentView.bounds;
-            badge.frame = CGRectMake(f.size.width - 60 - 12,
-                                     (44 - 18) / 2, 50, 18);
             badge.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
             [cell.contentView addSubview:badge];
         }
-        // Checkmark if this is the current default.
-        NSString *def = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyModel];
+        // Checkmark if this is the current default — v261025-8: image
+        // entries compare against SettingsKeyImageGenModel, chat entries
+        // against SettingsKeyModel.
+        NSString *def = isImage
+            ? [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyImageGenModel]
+            : [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyModel];
         if (def && [def isEqualToString:mid]) {
             cell.accessoryType = UITableViewCellAccessoryCheckmark;
         }
@@ -836,16 +982,21 @@ forRowAtIndexPath:(NSIndexPath *)indexPath
         // v261025-7: tap a group row → make it the ACTIVE entry. The chat
         // path resolves provider/baseURL/apiKey from it via
         // +resolvedConnectionForChat.
+        // v261025-8: image entries activate the IMAGE-GEN path instead
+        // (SettingsKeyImageGenModel) — the chat default is untouched.
         NSDictionary *g = [_providerGroups objectAtIndex:gIdx];
         NSArray *entries = [g objectForKey:@"entries"];
         if (indexPath.row >= (NSInteger)[entries count]) return;
         NSDictionary *e = [entries objectAtIndex:indexPath.row];
         NSString *m = [e objectForKey:@"id"];
         if (![m isKindOfClass:[NSString class]] || m.length == 0) return;
-        [[NSUserDefaults standardUserDefaults] setObject:m forKey:SettingsKeyModel];
+        BOOL isImage = [ModelManagementViewController entryIsImageKind:e];
+        NSString *key = isImage ? SettingsKeyImageGenModel : SettingsKeyModel;
+        [[NSUserDefaults standardUserDefaults] setObject:m forKey:key];
         [[NSUserDefaults standardUserDefaults] synchronize];
-        [[Logger sharedLogger] info:[NSString stringWithFormat:@"Default model set to %@ (provider %@)",
-                                      m, [e objectForKey:@"provider"] ?: @"(global)"]];
+        [[Logger sharedLogger] info:[NSString stringWithFormat:@"Default %@ model set to %@ (provider %@)",
+                                      isImage ? @"IMAGE" : @"chat", m,
+                                      [e objectForKey:@"provider"] ?: @"(global)"]];
         [_tableView reloadData];
         return;
     }
@@ -881,6 +1032,15 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         }
         [[Logger sharedLogger] info:[NSString stringWithFormat:@"ModelMgmt delete '%@' — start", m]];
         [ModelManagementViewController removeModel:m];
+        // v261025-8: if the deleted entry was the active IMAGE model,
+        // clear (or re-resolve) the image-gen pointer.
+        NSString *curImg = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyImageGenModel];
+        if (curImg && [curImg isEqualToString:m]) {
+            [[NSUserDefaults standardUserDefaults] removeObjectForKey:SettingsKeyImageGenModel];
+            [[NSUserDefaults standardUserDefaults] synchronize];
+            // resolvedConnectionForImageGen self-heals to the first
+            // remaining image entry (if any) on next read.
+        }
         // If deleted was the current default, fall back to first item.
         NSString *cur = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyModel];
         if (cur && [cur isEqualToString:m]) {

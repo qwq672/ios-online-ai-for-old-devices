@@ -25,6 +25,7 @@ NSString *const ComposerViewSendMessageImagesKey         = @"ComposerViewSendMes
 
 static NSString * const kUDKeyDeepThinking = @"composer.deepThinking";
 static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
+static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 
 @interface ComposerView () {
     NSMutableArray *_pendingImages;
@@ -41,7 +42,7 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 @synthesize textView=_textView, sendButton=_sendButton, isStreaming=_isStreaming,
             delegate=_delegate, deepThinkingButton=_deepThinkingButton,
             webSearchButton=_webSearchButton, imageButton=_imageButton,
-            imageBadge=_imageBadge;
+            imageGenButton=_imageGenButton, imageBadge=_imageBadge;
 
 - (id)initWithFrame:(CGRect)frame
 {
@@ -127,6 +128,16 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
         [_webSearchButton addTarget:self action:@selector(_webSearchTapped)
                     forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_webSearchButton];
+
+        // v261025-8: 生图 (image generation) toggle button — photo icon.
+        // When active, the composer's send routes the text to the image
+        // API instead of the chat stream (and DT/Web are disabled).
+        _imageGenButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
+        _imageGenButton.layer.cornerRadius = 5.0f;
+        _imageGenButton.layer.masksToBounds = YES;
+        [_imageGenButton addTarget:self action:@selector(_imageGenTapped)
+                  forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:_imageGenButton];
 
         // Send button.
         _sendButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
@@ -311,6 +322,10 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     _webSearchButton.frame = CGRectMake(x, btnY, btnW, btnH);
     x += btnW + gap;
 
+    // v261025-8: 生图 button.
+    _imageGenButton.frame = CGRectMake(x, btnY, btnW, btnH);
+    x += btnW + gap;
+
     // Send button (right).
     CGFloat sendX = w - sendW - pad;
     _sendButton.frame = CGRectMake(sendX, btnY, sendW, btnH);
@@ -330,6 +345,9 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 + (void)setDeepThinkingEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyDeepThinking]; [[NSUserDefaults standardUserDefaults] synchronize]; }
 + (BOOL)webSearchEnabled { NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyWebSearch]; return n ? [n boolValue] : NO; }
 + (void)setWebSearchEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyWebSearch]; [[NSUserDefaults standardUserDefaults] synchronize]; }
+// v261025-8: 生图 toggle (default OFF).
++ (BOOL)imageGenEnabled { NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyImageGen]; return n ? [n boolValue] : NO; }
++ (void)setImageGenEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyImageGen]; [[NSUserDefaults standardUserDefaults] synchronize]; }
 
 - (void)_deepThinkingTapped {
     // v261024-19: NO @try — class accessors can't throw.
@@ -343,6 +361,13 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     [[self class] setWebSearchEnabled:v];
     [self _refreshToggleVisuals];
 }
+- (void)_imageGenTapped {
+    // v261025-8: 生图 toggle. Turning it ON implicitly switches the send
+    // mode; DT/Web are disabled while it's active (see _refreshToggleVisuals).
+    BOOL v = ![[self class] imageGenEnabled];
+    [[self class] setImageGenEnabled:v];
+    [self _refreshToggleVisuals];
+}
 
 - (void)_keyboardDone { [_textView resignFirstResponder]; }
 
@@ -350,6 +375,10 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 {
     BOOL dt = [[self class] deepThinkingEnabled];
     BOOL ws = [[self class] webSearchEnabled];
+    // v261025-8: 生图 mode — when active, DT/Web don't apply (the send goes
+    // to the image API, not a chat stream). Grey them out + disable so the
+    // composer's state is honest about what will happen on send.
+    BOOL ig = [[self class] imageGenEnabled];
 
     // Glassy button backgrounds from the theme (redrawn on theme change).
     // Active toggles + send = accent (saturated blue glass); inactive =
@@ -360,23 +389,35 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     UIImage *accentT = [iOS6Theme glassButtonImageOfSize:toggleSize accent:YES];
     UIImage *accentS = [iOS6Theme glassButtonImageOfSize:sendSize accent:YES];
     [_imageButton setBackgroundImage:neutral forState:UIControlStateNormal];
-    [_deepThinkingButton setBackgroundImage:(dt ? accentT : neutral) forState:UIControlStateNormal];
-    [_webSearchButton setBackgroundImage:(ws ? accentT : neutral) forState:UIControlStateNormal];
+    [_deepThinkingButton setBackgroundImage:((dt && !ig) ? accentT : neutral) forState:UIControlStateNormal];
+    [_webSearchButton setBackgroundImage:((ws && !ig) ? accentT : neutral) forState:UIControlStateNormal];
+    [_imageGenButton setBackgroundImage:(ig ? accentT : neutral) forState:UIControlStateNormal];
     [_sendButton setBackgroundImage:accentS forState:UIControlStateNormal];
 
     // Icons: white on accent (active / send), secondary on neutral.
     UIImage *bulb = [IconDrawing imageForType:IconTypeLightbulb size:CGSizeMake(16, 16)
-                                        color:dt ? [UIColor whiteColor] : [iOS6Theme secondaryTextColor]];
+                                        color:(dt && !ig) ? [UIColor whiteColor] : [iOS6Theme secondaryTextColor]];
     UIImage *globe = [IconDrawing imageForType:IconTypeGlobe size:CGSizeMake(16, 16)
-                                          color:ws ? [UIColor whiteColor] : [iOS6Theme secondaryTextColor]];
+                                          color:(ws && !ig) ? [UIColor whiteColor] : [iOS6Theme secondaryTextColor]];
+    // v261025-8: photo icon for 生图.
+    UIImage *photo = [IconDrawing imageForType:IconTypeImageGen size:CGSizeMake(17, 17)
+                                          color:ig ? [UIColor whiteColor] : [iOS6Theme secondaryTextColor]];
     UIImage *cam = [IconDrawing imageForType:IconTypeCamera size:CGSizeMake(16, 16)
                                         color:[iOS6Theme secondaryTextColor]];
     UIImage *arrow = [IconDrawing imageForType:IconTypeSendArrow size:CGSizeMake(18, 18)
-                                        color:[UIColor whiteColor]];
+                                          color:[UIColor whiteColor]];
     [_deepThinkingButton setImage:bulb forState:UIControlStateNormal];
     [_webSearchButton setImage:globe forState:UIControlStateNormal];
+    [_imageGenButton setImage:photo forState:UIControlStateNormal];
     [_imageButton setImage:cam forState:UIControlStateNormal];
     [_sendButton setImage:arrow forState:UIControlStateNormal];
+
+    // v261025-8: DT/Web disabled (visually + interaction) while 生图 is ON.
+    _deepThinkingButton.enabled = !ig;
+    _webSearchButton.enabled = !ig;
+    _deepThinkingButton.alpha = ig ? 0.45f : 1.0f;
+    _webSearchButton.alpha   = ig ? 0.45f : 1.0f;
+    _imageGenButton.alpha = 1.0f;
 
     // Check if model supports images — hide button if not.
     BOOL imgSupport = [[NSUserDefaults standardUserDefaults] boolForKey:@"modelSupportsImages"];
@@ -489,13 +530,14 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 
     BOOL dt = [[self class] deepThinkingEnabled];
     BOOL ws = [[self class] webSearchEnabled];
+    BOOL ig = [[self class] imageGenEnabled];   // v261025-8
     NSArray *imgs = [_pendingImages count] > 0 ? [NSArray arrayWithArray:_pendingImages] : nil;
 
     // v261025-1: REMOVED the ComposerViewSendMessageNotification post —
     // it duplicated the delegate call (double-send landmine if any
     // observer ever subscribes). The delegate channel is the only path.
-    if ([_delegate respondsToSelector:@selector(composer:didSendText:images:deepThinking:webSearch:)]) {
-        [_delegate composer:self didSendText:text images:imgs deepThinking:dt webSearch:ws];
+    if ([_delegate respondsToSelector:@selector(composer:didSendText:images:deepThinking:webSearch:imageGen:)]) {
+        [_delegate composer:self didSendText:text images:imgs deepThinking:dt webSearch:ws imageGen:ig];
     }
 
     [self clearText];
@@ -543,6 +585,7 @@ static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
     [_deepThinkingButton release];
     [_webSearchButton release];
     [_imageButton release];
+    [_imageGenButton release];
     [_imageBadge release];
     [_pendingImages release];
     [_fieldBorderUIColor release];

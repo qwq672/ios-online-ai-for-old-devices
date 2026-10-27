@@ -35,6 +35,10 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     BOOL _thinkingCollapsed;
     NSMutableArray *_imageViews;       // weak refs to image subviews (autoreleased on assign to subview, but we keep for layout)
     NSString *_currentMessageKey;      // for cache key generation
+    // v261025-8: generated-image (生图) result view — a big AspectFit
+    // image inside the bubble, unlike the 80×80 vision thumbnails in
+    // _imageViews. Retained like the other buttons/views (MRC).
+    UIImageView *_generatedImageView;
     // v261025-5: retained UIColor ivar for the thinking-block border.
     // CALayer.borderColor holds a CGColorRef. The CGColor is owned by
     // whatever UIColor produced it; if that UIColor is autoreleased (which
@@ -53,6 +57,8 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 @property (nonatomic, retain) UIButton *thinkingToggle;
 @property (nonatomic, retain) UILabel *thinkingLabel;
 @property (nonatomic, retain) UIView *thinkingSep;
+// v261025-8: 生图 result image view.
+@property (nonatomic, retain) UIImageView *generatedImageView;
 @end
 
 @implementation ChatMessageCell
@@ -60,6 +66,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 @synthesize textView=_textView, bubble=_bubble, message=_message, renderedAttr=_renderedAttr;
 @synthesize thinkingBlock=_thinkingBlock, thinkingToggle=_thinkingToggle,
             thinkingLabel=_thinkingLabel, thinkingSep=_thinkingSep,
+            generatedImageView=_generatedImageView,
             delegate=_delegate,
             regenerateButton=_regenerateButton, clipboardButton=_clipboardButton,
             editButton=_editButton,
@@ -98,6 +105,14 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     @synchronized(gExpandedThinking) {
         // Keep expanded-state (user intent), it's theme-independent too.
     }
+}
+
+// v261025-8: drop only the height cache (see header). One-shot cost —
+// the next heightForRow pass repopulates lazily.
++ (void)invalidateHeightCache
+{
+    [self _initializeCaches];
+    [gHeightCache removeAllObjects];
 }
 
 // v261024-16 fix (text overflowing bubble bottom):
@@ -277,6 +292,42 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     });
 }
 
+// v261025-8: decode a generated-image FILE (Documents/genimg/<uuid>.png)
+// off the main thread, caching by messageID. Mirrors
+// decodeImageWithDataURL:key:callback: but reads from disk.
++ (void)decodeImageWithFile:(NSString *)path
+                        key:(NSString *)key
+                   callback:(void (^)(UIImage *))callback
+{
+    [self _initializeCaches];
+    if (!path || path.length == 0) {
+        dispatch_async(dispatch_get_main_queue(), ^{ callback(nil); });
+        return;
+    }
+    UIImage *cached = [gImageCache objectForKey:key];
+    if (cached) {
+        dispatch_async(dispatch_get_main_queue(), ^{ callback(cached); });
+        return;
+    }
+    NSString *pathCopy = [path copy];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        @autoreleasepool {
+            UIImage *img = [UIImage imageWithContentsOfFile:pathCopy];
+            if (img) {
+                // cost ~ file size; estimate from pixel dims (4 bytes/px).
+                NSUInteger cost = (NSUInteger)(img.size.width * img.size.height * 4);
+                if (cost > 0) {
+                    [gImageCache setObject:img forKey:key cost:cost];
+                }
+            }
+            dispatch_async(dispatch_get_main_queue(), ^{
+                callback(img);
+            });
+        }
+        [pathCopy release];
+    });
+}
+
 #pragma mark - Init / lifecycle
 
 - (id)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier
@@ -354,6 +405,23 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         [_thinkingBlock addSubview:_thinkingSep];
 
         _imageViews = [[NSMutableArray alloc] init];
+
+        // v261025-8: 生图 result view — big rounded image in the bubble.
+        // Retained via the synthesized (retain) property setter below.
+        _generatedImageView = [[UIImageView alloc] initWithFrame:CGRectZero];
+        _generatedImageView.contentMode = UIViewContentModeScaleAspectFit;
+        _generatedImageView.clipsToBounds = YES;
+        _generatedImageView.layer.cornerRadius = 8.0f;
+        _generatedImageView.backgroundColor = [iOS6Theme codeBackgroundColor];
+        _generatedImageView.hidden = YES;
+        // v261025-8: tap → full-screen viewer (delegate hook).
+        _generatedImageView.userInteractionEnabled = YES;
+        UITapGestureRecognizer *genTap = [[UITapGestureRecognizer alloc]
+            initWithTarget:self action:@selector(_genImageTapped)];
+        genTap.numberOfTapsRequired = 1;
+        [_generatedImageView addGestureRecognizer:genTap];
+        [genTap release];
+        [_bubble addSubview:_generatedImageView];
 
         // Regenerate + Copy buttons (only shown for AI assistant messages).
         _regenerateButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
@@ -498,6 +566,9 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     _variantPrevButton.hidden = YES;
     _variantNextButton.hidden = YES;
     _variantIndexLabel.hidden = YES;
+    // v261025-8: reset the 生图 result view.
+    _generatedImageView.hidden = YES;
+    _generatedImageView.image = nil;
 }
 
 - (void)_setCurrentMessageKey:(NSString *)key
@@ -670,6 +741,34 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         _thinkingBlock.hidden = YES;
     }
 
+    // === v261025-8: Generated image (生图 result) ===
+    // The message carries a local file name; decode off-main and show a
+    // big rounded image. content (the prompt) renders as the caption
+    // BELOW the image; while the request is in flight content is the
+    // "正在生成图片…" placeholder so the bubble reads as a loading state.
+    if ([message isImageGenResult]) {
+        NSString *absPath = [Message absolutePathForGeneratedImage:message.generatedImagePath];
+        _generatedImageView.hidden = NO;
+        [ChatMessageCell decodeImageWithFile:absPath
+                                          key:message.messageID
+                                      callback:^(UIImage *img) {
+            // Stale callback check (same as vision thumbnails).
+            NSString *currentKey = self->_currentMessageKey;
+            if (![currentKey isEqualToString:message.messageID]) return;
+            if (img) {
+                self->_generatedImageView.image = img;
+            } else {
+                // File missing (e.g. conversation imported from another
+                // device) — gray plate instead of a crash.
+                self->_generatedImageView.backgroundColor = [iOS6Theme secondaryTextColor];
+            }
+            [self setNeedsLayout];
+        }];
+    } else {
+        _generatedImageView.hidden = YES;
+        _generatedImageView.image = nil;
+    }
+
     // === Images ===
     // Remove old image views before adding new ones.
     for (UIView *v in _imageViews) {
@@ -725,6 +824,15 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     }
     _textView.attributedText = _renderedAttr;
     [self setNeedsLayout];
+}
+
+- (void)_genImageTapped
+{
+    // v261025-8: open the full-screen viewer via the delegate.
+    if (_delegate && [_delegate respondsToSelector:
+            @selector(chatCellDidTapGeneratedImage:message:)]) {
+        [_delegate chatCellDidTapGeneratedImage:self message:_message];
+    }
 }
 
 - (void)layoutSubviews
@@ -802,6 +910,21 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         }
     }
 
+    // === v261025-8: generated image sizing ===
+    // Square estimate (we always request 1024x1024); true aspect ratio
+    // applied once the image is decoded (AspectFit inside the square
+    // frame keeps non-square results unclipped).
+    CGFloat genImgH = 0;
+    BOOL isGenImage = [_message isImageGenResult];
+    if (isGenImage) {
+        CGFloat gimgW = maxBubbleWidth - 8;
+        genImgH = gimgW;
+        UIImage *gimg = _generatedImageView.image;
+        if (gimg && gimg.size.width > 0 && gimg.size.height > 0) {
+            genImgH = floorf(gimgW * gimg.size.height / gimg.size.width);
+        }
+    }
+
     // Bubble width.
     // While the AI is still mid-reasoning (thinking live, content empty or
     // just "…"), the text width is near zero, which used to collapse the
@@ -814,7 +937,10 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // container can actually fit the measured single-line width.
     BOOL thinkingLive = [ChatMessageCell _isThinkingLive:_message];
     CGFloat bubbleWidth;
-    if (thinkingLive) {
+    if (isGenImage) {
+        // The image spans the full bubble width.
+        bubbleWidth = maxBubbleWidth;
+    } else if (thinkingLive) {
         bubbleWidth = maxBubbleWidth;
     } else {
         bubbleWidth = MAX(textRect.size.width + 38, 60);
@@ -826,7 +952,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // systematically under-reports CJK line heights by 1-3pt per line.
     CGFloat tailHeight = 6.0f;
     CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + tailHeight + 12
-                          + thinkingH + imagesH;
+                          + thinkingH + imagesH + genImgH;
     if (bubbleHeight < 40) bubbleHeight = 40;
 
     CGFloat bubbleX;
@@ -847,6 +973,15 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     }
     // Text view below thinking block. Leave room for the tail at the bottom
     // (tailHeight + 4px safety) so text isn't clipped.
+    // v261025-8: on 生图 messages the image sits at the top of the bubble
+    // and the caption (prompt) flows below it.
+    if (isGenImage) {
+        _generatedImageView.frame = CGRectMake(4, yOffset,
+                                                bubbleWidth - 8, genImgH);
+        yOffset += genImgH + 6;
+    } else {
+        _generatedImageView.hidden = YES;
+    }
     CGFloat textH = bubbleHeight - yOffset - imagesH - tailHeight - 4;
     _textView.frame = CGRectMake(4, yOffset, bubbleWidth - 8, textH);
 
@@ -1015,6 +1150,23 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         imagesH = 80 + 6;
     }
 
+    // === v261025-8: generated-image messages ===
+    // Square image (we request 1024x1024) + caption + action buttons.
+    // Mirrors _layoutInternal's math exactly.
+    if ([message isImageGenResult]) {
+        CGFloat maxBubbleW = width - 2 * pad;
+        maxBubbleW = MIN(maxBubbleW, 280.0f);
+        CGFloat gimgW = maxBubbleW - 8;
+        CGFloat genImgH = gimgW;   // square estimate (AspectFit if not)
+        CGFloat captionH = textRect.size.height;
+        if (captionH < 20) captionH = 20;
+        CGFloat genBubbleHeight = genImgH + captionH + 2 * bubbleInnerVPad + 6 + 12;
+        CGFloat genResult = genBubbleHeight + 2 * verticalPad + 26;  // buttons
+        if (genResult < 50) genResult = 50;
+        [gHeightCache setObject:[NSNumber numberWithFloat:genResult] forKey:cacheKey];
+        return genResult;
+    }
+
     // Match layoutSubviews: text + vpad + tail(6) + safety(12) + thinking + images.
     // Plus 2*verticalPad for cell padding.
     // Plus action buttons height (24+2=26) for AI assistant messages AND
@@ -1073,6 +1225,8 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     UIButton *vpb = _variantPrevButton;     _variantPrevButton = nil;
     UIButton *vnb = _variantNextButton;     _variantNextButton = nil;
     UILabel *vil = _variantIndexLabel;      _variantIndexLabel = nil;
+    // v261025-8: 生图 result view.
+    UIImageView *giv = _generatedImageView; _generatedImageView = nil;
 
     // Release the VIEWS first (so each view's layer.dealloc can do its
     // CGColorRelease cleanly), THEN release the retained UIColor ivars
@@ -1097,6 +1251,9 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     [vpb release];
     [vnb release];
     [vil release];
+    // v261025-8: 生图 result view (subview of bubble — released BEFORE
+    // the UIColors, same ordering rule).
+    [giv release];
 
     [tbBg release];
     [tbBd release];

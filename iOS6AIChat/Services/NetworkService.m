@@ -195,16 +195,34 @@
 
 - (BOOL)_launchStreamWithMessages:(NSArray *)messages
 {
+    // v261025-8: provider → API format. Anthropic speaks its own
+    // /v1/messages protocol (different endpoint, different auth headers,
+    // different SSE event shapes); every other provider (智谱 / DeepSeek /
+    // Kimi / OpenAI / Ollama / custom OpenAI-compat endpoints) uses the
+    // OpenAI /v1/chat/completions format below.
+    BOOL anthropic = [SettingsViewController providerUsesAnthropicFormat:self.provider];
+
     NSString *base = self.useTransit ? self.transitURL : self.baseURL;
     if (!base || base.length == 0) {
-        base = self.useTransit ? @"https://ai-transit.awa.lat" : @"https://api.openai.com";
+        base = self.useTransit ? @"https://ai-transit.awa.lat"
+                               : (anthropic ? @"https://api.anthropic.com" : @"https://api.openai.com");
     }
     NSString *endpoint = [base stringByTrimmingCharactersInSet:
                           [NSCharacterSet characterSetWithCharactersInString:@"/"]];
-    if ([endpoint hasSuffix:@"/v1"] || [endpoint hasSuffix:@"/v1/"]) {
-        endpoint = [endpoint stringByAppendingPathComponent:@"chat/completions"];
+    if (anthropic) {
+        // Anthropic Messages API: {base}/v1/messages (or {base}/messages
+        // when the user's baseURL already ends with /v1).
+        if ([endpoint hasSuffix:@"/v1"] || [endpoint hasSuffix:@"/v1/"]) {
+            endpoint = [endpoint stringByAppendingPathComponent:@"messages"];
+        } else {
+            endpoint = [endpoint stringByAppendingPathComponent:@"v1/messages"];
+        }
     } else {
-        endpoint = [endpoint stringByAppendingPathComponent:@"v1/chat/completions"];
+        if ([endpoint hasSuffix:@"/v1"] || [endpoint hasSuffix:@"/v1/"]) {
+            endpoint = [endpoint stringByAppendingPathComponent:@"chat/completions"];
+        } else {
+            endpoint = [endpoint stringByAppendingPathComponent:@"v1/chat/completions"];
+        }
     }
 
     NSURL *url = [NSURL URLWithString:endpoint];
@@ -218,6 +236,112 @@
         return NO;
     }
 
+    // Read the streaming preference ONCE (shared by both formats).
+    BOOL doStream = YES;
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingOutput"]) {
+        doStream = [[NSUserDefaults standardUserDefaults] boolForKey:@"streamingOutput"];
+    }
+    // v261025-8: stream:false would leave the OpenAI parser with nothing
+    // (it only understands SSE "data:" lines) and Anthropic returns plain
+    // JSON too — connectionDidFinishLoading now has a non-stream JSON
+    // fallback for both shapes. Anthropic additionally REQUIRES stream:true
+    // for our SSE path, but the fallback covers stream:false as well.
+
+    NSData *bodyData = nil;
+    if (anthropic) {
+        bodyData = [self _buildAnthropicRequestBody:messages stream:doStream];
+    } else {
+        bodyData = [self _buildOpenAIRequestBody:messages stream:doStream];
+    }
+    if (!bodyData) {
+        if ([_delegate respondsToSelector:@selector(networkService:didFailForConversationID:error:)]) {
+            NSError *err = [NSError errorWithDomain:@"iOS6AIChat"
+                                              code:500
+                                          userInfo:@{NSLocalizedDescriptionKey: @"请求体序列化失败"}];
+            [_delegate networkService:self didFailForConversationID:_conversationID error:err];
+        }
+        return NO;
+    }
+
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
+                                                          cachePolicy:NSURLRequestReloadIgnoringCacheData
+                                                      timeoutInterval:120.0];
+    [req setHTTPMethod:@"POST"];
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    [req setValue:@"text/event-stream" forHTTPHeaderField:@"Accept"];
+    if (self.apiKey.length > 0) {
+        [req setValue:[NSString stringWithFormat:@"Bearer %@", self.apiKey]
+        forHTTPHeaderField:@"Authorization"];
+    }
+    if (anthropic) {
+        // Anthropic auth headers. x-api-key is the canonical one; the
+        // Bearer Authorization above is ALSO accepted by Anthropic and is
+        // the only one the current transit forwards — send both.
+        // (Transit ≥ v261025-8 additionally forwards x-api-key +
+        // anthropic-version; until it is redeployed, some strict
+        // deployments may require the update.)
+        if (self.apiKey.length > 0) {
+            [req setValue:self.apiKey forHTTPHeaderField:@"x-api-key"];
+        }
+        [req setValue:@"2023-06-01" forHTTPHeaderField:@"anthropic-version"];
+    }
+    // v261025-3: transit is now a pure TLS pass-through proxy.
+    // Client tells transit where to forward via X-Target-URL header.
+    if (self.useTransit) {
+        NSString *target = [self.baseURL stringByTrimmingCharactersInSet:
+                            [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+        if (target.length > 0) {
+            NSString *targetEndpoint;
+            if (anthropic) {
+                if ([target hasSuffix:@"/v1"] || [target hasSuffix:@"/v1/"]) {
+                    targetEndpoint = [target stringByAppendingPathComponent:@"messages"];
+                } else {
+                    targetEndpoint = [target stringByAppendingPathComponent:@"v1/messages"];
+                }
+            } else {
+                if ([target hasSuffix:@"/v1"] || [target hasSuffix:@"/v1/"]) {
+                    targetEndpoint = [target stringByAppendingPathComponent:@"chat/completions"];
+                } else {
+                    targetEndpoint = [target stringByAppendingPathComponent:@"v1/chat/completions"];
+                }
+            }
+            [req setValue:targetEndpoint forHTTPHeaderField:@"X-Target-URL"];
+        }
+    }
+    [req setHTTPBody:bodyData];
+
+    // Reset accumulators for this turn.
+    [_accumulated setString:@""];
+    [_toolCallAccumulators removeAllObjects];
+    self.toolCallPending = NO;
+
+    // Cancel any in-flight connection before starting a new one — otherwise
+    // both connections will dispatch into the same accumulators / delegate,
+    // corrupting state. This was audit finding #8.
+    [_connection cancel];
+
+    self.streamStartTs = [NSDate timeIntervalSinceReferenceDate];
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"NET → POST %@ | provider=%@ model=%@ stream=%d format=%@ msgs=%lu bytes=%lu",
+        url.absoluteString ?: @"?",
+        self.useTransit ? (self.provider ?: @"?") : @"(direct)",
+        (self.model ?: @"(server-default)"),
+        (int)doStream,
+        anthropic ? @"anthropic" : @"openai",
+        (unsigned long)[messages count], (unsigned long)[bodyData length]]];
+
+    self.connection = [[[NSURLConnection alloc] initWithRequest:req delegate:self
+                                             startImmediately:YES] autorelease];
+    return (self.connection != nil);
+}
+
+#pragma mark - Request body builders (v261025-8)
+
+// OpenAI-compatible body: {model, messages, stream, temperature,
+// [thinking], [tools]}. Message content uses the array form when images
+// are attached (multi-modal vision).
+- (NSData *)_buildOpenAIRequestBody:(NSArray *)messages stream:(BOOL)doStream
+{
     // Build the messages payload in OpenAI format.
     // messages array may contain Message objects (user/system/assistant)
     // OR NSDictionary objects (raw tool_calls assistant message and
@@ -251,11 +375,6 @@
         }
     }
 
-    // Check streaming output setting (default YES).
-    BOOL doStream = YES;
-    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingOutput"]) {
-        doStream = [[NSUserDefaults standardUserDefaults] boolForKey:@"streamingOutput"];
-    }
     // Check model supports thinking (default ON).
     BOOL doThink = NO;
     if (self.thinkingEnabled) {
@@ -285,9 +404,14 @@
         [body setObject:self.model ?: @"gpt-3.5-turbo" forKey:@"model"];
     }
     // useServerModel=YES → omit `model`; transit server will fill it in.
-    if (doThink) {
+    // v261025-8: the `thinking` request key is a ZHIPU-specific extension
+    // (glm-4-plus/air/flash accept {"type":"enabled"} to stream
+    // reasoning_content). Sending it to other providers risks a 400 on
+    // strict OpenAI-compat servers — gate it to zhipu only.
+    if (doThink && [self.provider isEqualToString:ProviderIDZhipu]) {
         [body setObject:@{@"type": @"enabled"} forKey:@"thinking"];
     }
+
     // Tools array. The two lightweight tools (get_current_time,
     // get_device_info) are ALWAYS available — they don't need any user
     // config and are useful for time/device queries. tavily_search is
@@ -323,8 +447,6 @@
     }];
 
     // Tool 3: generate_image — always available.
-    // The AI can decide to call this when the user asks to draw/paint/create
-    // an image. Returns the generated image displayed in the chat.
     [toolsArray addObject:@{
         @"type": @"function",
         @"function": @{
@@ -348,7 +470,7 @@
         }
     }];
 
-    // Tool 3: tavily_search — only when web search is enabled.
+    // Tool 4: tavily_search — only when web search is enabled.
     if (self.enableWebSearchTools && self.tavilyKey.length > 0) {
         [toolsArray addObject:@{
             @"type": @"function",
@@ -378,73 +500,81 @@
     NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body
                                                        options:0
                                                          error:&jsonErr];
-    if (jsonErr || !bodyData) {
-        if ([_delegate respondsToSelector:@selector(networkService:didFailForConversationID:error:)]) {
-            NSError *err = [NSError errorWithDomain:@"iOS6AIChat"
-                                              code:500
-                                          userInfo:@{NSLocalizedDescriptionKey: @"请求体序列化失败"}];
-            [_delegate networkService:self didFailForConversationID:_conversationID error:err];
-        }
-        return NO;
-    }
+    if (jsonErr || !bodyData) return nil;
+    return bodyData;
+}
 
-    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
-                                                          cachePolicy:NSURLRequestReloadIgnoringCacheData
-                                                      timeoutInterval:120.0];
-    [req setHTTPMethod:@"POST"];
-    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-    [req setValue:@"text/event-stream" forHTTPHeaderField:@"Accept"];
-    if (self.apiKey.length > 0) {
-        [req setValue:[NSString stringWithFormat:@"Bearer %@", self.apiKey]
-        forHTTPHeaderField:@"Authorization"];
-    }
-    // v261025-3: transit is now a pure TLS pass-through proxy.
-    // Client tells transit where to forward via X-Target-URL header.
-    // We build the target URL from self.baseURL (+ /v1/chat/completions).
-    // The OLD code sent X-Provider: <provider> + X-Model: <model>, but
-    // v261025-3 transit no longer has an UPSTREAMS table — it requires
-    // X-Target-URL. Without it the transit returns 400 and the chat
-    // never starts.
-    if (self.useTransit) {
-        NSString *target = [self.baseURL stringByTrimmingCharactersInSet:
-                            [NSCharacterSet characterSetWithCharactersInString:@"/"]];
-        if (target.length > 0) {
-            NSString *targetEndpoint;
-            if ([target hasSuffix:@"/v1"] || [target hasSuffix:@"/v1/"]) {
-                targetEndpoint = [target stringByAppendingPathComponent:@"chat/completions"];
-            } else {
-                targetEndpoint = [target stringByAppendingPathComponent:@"v1/chat/completions"];
+// v261025-8: Anthropic Messages API body:
+//   {model, max_tokens, [temperature], stream, [system], messages:[
+//      {role:"user"|"assistant", content:[{type:"text",text:…} |
+//                                         {type:"image", source:{…}}]}]}
+// System messages are hoisted into the top-level `system` field (the
+// Anthropic protocol has no system role in the messages array). Tool
+// calls are NOT sent for Anthropic in this beta (the tool-use event
+// shapes differ); pre-search web results still work because they are
+// injected as a system prompt, which maps cleanly onto `system`.
+- (NSData *)_buildAnthropicRequestBody:(NSArray *)messages stream:(BOOL)doStream
+{
+    NSMutableString *systemText = [NSMutableString string];
+    NSMutableArray *msgs = [NSMutableArray arrayWithCapacity:[messages count]];
+    for (id obj in messages) {
+        if (![obj isKindOfClass:[Message class]]) continue;   // no raw tool dicts for anthropic
+        Message *m = (Message *)obj;
+        if (m.role == MessageRoleSystem) {
+            if (m.content.length > 0) {
+                if (systemText.length > 0) [systemText appendString:@"\n\n"];
+                [systemText appendString:m.content];
             }
-            [req setValue:targetEndpoint forHTTPHeaderField:@"X-Target-URL"];
+            continue;
         }
+        NSString *role = m.isUser ? @"user" : @"assistant";
+        NSMutableArray *content = [NSMutableArray array];
+        if (m.content && m.content.length > 0) {
+            [content addObject:@{@"type": @"text", @"text": m.content}];
+        }
+        // Multi-modal: convert "data:image/jpeg;base64,…" data URLs into
+        // Anthropic's {type:"image", source:{type:"base64",…}} blocks.
+        for (NSString *dataUrl in (m.images ?: @[])) {
+            if (![dataUrl isKindOfClass:[NSString class]]) continue;
+            NSRange semi = [dataUrl rangeOfString:@";base64,"];
+            if (semi.location == NSNotFound || ![dataUrl hasPrefix:@"data:image/"]) continue;
+            NSString *mediaType = [dataUrl substringWithRange:NSMakeRange(5, semi.location - 5)];
+            NSString *b64 = [dataUrl substringFromIndex:semi.location + semi.length];
+            if (b64.length == 0) continue;
+            [content addObject:@{
+                @"type": @"image",
+                @"source": @{
+                    @"type": @"base64",
+                    @"media_type": mediaType,
+                    @"data": b64
+                }
+            }];
+        }
+        if ([content count] == 0) continue;   // nothing to send for this turn
+        [msgs addObject:@{@"role": role, @"content": content}];
     }
-    [req setHTTPBody:bodyData];
+    if ([msgs count] == 0) return nil;
 
-    // Reset accumulators for this turn.
-    [_accumulated setString:@""];
-    [_toolCallAccumulators removeAllObjects];
-    self.toolCallPending = NO;
+    NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:@{
+        @"model":      self.model ?: @"claude-3-5-haiku-20241022",
+        @"max_tokens": @4096,
+        @"stream":     @(doStream),
+        @"messages":   msgs
+    }];
+    // Anthropic recommends temperature 0..1; clamp our 0..2 range.
+    CGFloat t = self.temperature;
+    if (t > 1.0f) t = 1.0f;
+    [body setObject:[NSNumber numberWithFloat:(float)t] forKey:@"temperature"];
+    if (systemText.length > 0) {
+        [body setObject:[NSString stringWithString:systemText] forKey:@"system"];
+    }
 
-    // Cancel any in-flight connection before starting a new one — otherwise
-    // both connections will dispatch into the same accumulators / delegate,
-    // corrupting state. This was audit finding #8.
-    [_connection cancel];
-
-    // v261025-1: REQUEST log — the user needs to see exactly what was sent
-    // to diagnose transit issues (endpoint / provider / model / stream /
-    // body size / message count).
-    self.streamStartTs = [NSDate timeIntervalSinceReferenceDate];
-    [[Logger sharedLogger] info:[NSString stringWithFormat:
-        @"NET → POST %@ | provider=%@ model=%@ stream=%d think=%d tools=%d msgs=%lu bytes=%lu",
-        url.absoluteString ?: @"?",
-        self.useTransit ? (self.provider ?: @"?") : @"(direct)",
-        (self.model ?: @"(server-default)"),
-        (int)doStream, (int)doThink, (int)[toolsArray count],
-        (unsigned long)[msgs count], (unsigned long)[bodyData length]]];
-
-    self.connection = [[[NSURLConnection alloc] initWithRequest:req delegate:self
-                                             startImmediately:YES] autorelease];
-    return (self.connection != nil);
+    NSError *jsonErr = nil;
+    NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body
+                                                       options:0
+                                                         error:&jsonErr];
+    if (jsonErr || !bodyData) return nil;
+    return bodyData;
 }
 
 - (void)cancel
@@ -590,6 +720,14 @@
 
     [self _parseBufferedChunksForce:YES];
 
+    // v261025-8 BUG FIX: 流式输出关闭 (stream:false) 或响应被代理去掉 SSE 框架时，
+    // 整个响应是一个纯 JSON body —— SSE 解析器只认 "data:" 行，什么都不 accumulate，
+    // 用户就会看到 "⚠️ 服务器返回了空回复"。这里补上两种非流式 JSON 形状的解析。
+    if (_accumulated.length == 0 && [_rawBuffer length] > 0 &&
+        self.httpStatus >= 200 && self.httpStatus < 300) {
+        [self _tryParseNonStreamJSONBody];
+    }
+
     // Check if AI emitted tool_calls → multi-turn tool use flow.
     if ([_toolCallAccumulators count] > 0 && _toolCallTurn < _maxToolTurns) {
         _toolCallTurn++;
@@ -719,6 +857,10 @@
     // would return an autorelease object with no autorelease pool on the
     // GCD worker thread.
     NSString *providerName = [self.provider copy];
+    // v261025-8: the chat's own baseURL — needed by the image-gen tool
+    // call so the image API target matches the active entry's endpoint
+    // (per-entry baseURL now drives everything).
+    NSString *providerBaseURL = [self.baseURL copy];
 
     // Notify delegate that we're executing the tool call.
     if ([_delegate respondsToSelector:@selector(networkService:didReceiveToolCallStartedForConversationID:)]) {
@@ -868,12 +1010,16 @@
                     continue;
                 }
                 // Default image gen model per provider.
-                NSString *imgModel = [[NSUserDefaults standardUserDefaults] stringForKey:@"imageGenModel"];
+                // v261025-8: prefer the user's configured 生图模型
+                // (SettingsKeyImageGenModel — set by tapping a kind="image"
+                // entry in ModelManagement); fall back to a provider default
+                // (cogview for zhipu, gpt-image-1 for openai).
+                NSString *imgModel = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyImageGenModel];
                 if (!imgModel || imgModel.length == 0) {
-                    if ([providerName isEqualToString:@"zhipu"]) {
+                    if ([providerName isEqualToString:ProviderIDZhipu]) {
                         imgModel = @"cogview-3plus";
                     } else {
-                        imgModel = @"dall-e-3";
+                        imgModel = @"gpt-image-1";
                     }
                 }
                 // v261024-19: NO @try — nil-check on dataURL instead.
@@ -884,6 +1030,7 @@
                                                             size:size
                                                        useTransit:useTransit
                                                        transitURL:transitURL
+                                                         baseURL:providerBaseURL
                                                          provider:providerName
                                                           apiKey:providerKey
                                                             error:&err];
@@ -999,6 +1146,14 @@
         });
         } // @autoreleasepool
     });
+    // v261025-8: balance the [x copy] captures above — the block retains
+    // them for the duration of the GCD work; these releases drop the
+    // caller-side +1 (they previously leaked per tool-call round).
+    [tavilyKey release];
+    [transitURL release];
+    [providerKey release];
+    [providerName release];
+    [providerBaseURL release];
 }
 
 // Expose the accumulated thinking text.
@@ -1100,6 +1255,15 @@
                                                             options:0
                                                               error:&err];
         if (err || ![obj isKindOfClass:[NSDictionary class]]) continue;
+
+        // v261025-8: Anthropic SSE events carry a top-level "type" field
+        // and NO "choices" array — handle them before the OpenAI branch
+        // (they'd otherwise fall through untouched).
+        NSString *evtType = [obj objectForKey:@"type"];
+        if ([evtType isKindOfClass:[NSString class]] && evtType.length > 0) {
+            [self _processAnthropicEventObject:obj];
+            continue;
+        }
 
         NSArray *choices = [obj objectForKey:@"choices"];
         if (![choices isKindOfClass:[NSArray class]] || [choices count] == 0) continue;
@@ -1218,6 +1382,140 @@
     [super dealloc];
 }
 
+#pragma mark - Anthropic SSE events (v261025-8)
+
+// Anthropic streams typed events:
+//   data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"…"}}
+//   data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"…"}}
+//   data: {"type":"message_stop"}
+//   data: {"type":"error","error":{"message":"…"}}
+// (content_block_start / message_start / ping are informational — skipped.)
+// Tool-use blocks (input_json_delta) are unsupported in this beta.
+- (void)_processAnthropicEventObject:(NSDictionary *)obj
+{
+    NSString *evtType = [obj objectForKey:@"type"];
+    if (![evtType isKindOfClass:[NSString class]]) return;
+
+    if ([evtType isEqualToString:@"content_block_delta"]) {
+        NSDictionary *delta = [obj objectForKey:@"delta"];
+        if (![delta isKindOfClass:[NSDictionary class]]) return;
+        NSString *deltaType = [delta objectForKey:@"type"];
+        if ([deltaType isEqualToString:@"text_delta"]) {
+            NSString *text = [delta objectForKey:@"text"];
+            if ([text isKindOfClass:[NSString class]] && text.length > 0) {
+                [_accumulated appendString:text];
+                if ([_delegate respondsToSelector:@selector(networkService:didReceiveChunkForConversationID:fullText:)]) {
+                    NSString *copy = [NSString stringWithString:_accumulated];
+                    [_delegate networkService:self
+       didReceiveChunkForConversationID:_conversationID
+                                 fullText:copy];
+                }
+            }
+        } else if ([deltaType isEqualToString:@"thinking_delta"]) {
+            NSString *think = [delta objectForKey:@"thinking"];
+            if ([think isKindOfClass:[NSString class]] && think.length > 0) {
+                [_thinkingAccumulated appendString:think];
+                if ([_delegate respondsToSelector:@selector(networkService:didReceiveThinkingForConversationID:thinkingText:)]) {
+                    NSString *thinkCopy = [NSString stringWithString:_thinkingAccumulated];
+                    [_delegate networkService:self
+        didReceiveThinkingForConversationID:_conversationID
+                                 thinkingText:thinkCopy];
+                }
+            }
+        }
+        return;
+    }
+
+    if ([evtType isEqualToString:@"message_stop"]) {
+        // Like [DONE] — connectionDidFinishLoading fires the normal
+        // completion path right after the stream ends.
+        return;
+    }
+
+    if ([evtType isEqualToString:@"error"]) {
+        NSDictionary *errObj = [obj objectForKey:@"error"];
+        NSString *msg = nil;
+        if ([errObj isKindOfClass:[NSDictionary class]]) {
+            msg = [errObj objectForKey:@"message"];
+        }
+        if (![msg isKindOfClass:[NSString class]] || msg.length == 0) {
+            msg = @"Anthropic 流式错误";
+        }
+        [[Logger sharedLogger] error:[NSString stringWithFormat:@"NET ✗ anthropic stream error — %@", msg]];
+        if ([_delegate respondsToSelector:@selector(networkService:didFailForConversationID:error:)]) {
+            NSError *err = [NSError errorWithDomain:@"iOS6AIChat"
+                                              code:500
+                                          userInfo:@{NSLocalizedDescriptionKey: msg}];
+            [_delegate networkService:self didFailForConversationID:_conversationID error:err];
+        }
+        return;
+    }
+}
+
+#pragma mark - Non-stream JSON body fallback (v261025-8)
+
+// 🔴 BUG FIX — "流式输出"关闭后回复全变空。The SSE parser only understands
+// "data:" lines; a plain-JSON response body (stream:false from OpenAI-
+// compatible servers, or Anthropic non-stream) accumulated NOTHING and the
+// user saw "⚠️ 服务器返回了空回复". Parse the two plain-JSON shapes here:
+//   OpenAI:    {choices:[{message:{content, reasoning_content}}]}
+//   Anthropic: {content:[{type:"text"|"thinking", text|thinking}]}
+- (void)_tryParseNonStreamJSONBody
+{
+    if ([_rawBuffer length] == 0) return;
+    NSString *bodyText = [[[NSString alloc] initWithData:_rawBuffer
+                                                encoding:NSUTF8StringEncoding] autorelease];
+    if (bodyText.length == 0) return;
+    NSUInteger brace = [bodyText rangeOfString:@"{"].location;
+    if (brace == NSNotFound || brace >= bodyText.length) return;
+    if (brace > 0) bodyText = [bodyText substringFromIndex:brace];
+    NSData *jd = [bodyText dataUsingEncoding:NSUTF8StringEncoding];
+    if (!jd) return;
+    id obj = [NSJSONSerialization JSONObjectWithData:jd options:0 error:NULL];
+    if (![obj isKindOfClass:[NSDictionary class]]) return;
+
+    // OpenAI non-stream shape.
+    NSArray *choices = [obj objectForKey:@"choices"];
+    if ([choices isKindOfClass:[NSArray class]] && [choices count] > 0) {
+        NSDictionary *c0 = [choices objectAtIndex:0];
+        if ([c0 isKindOfClass:[NSDictionary class]]) {
+            NSDictionary *message = [c0 objectForKey:@"message"];
+            if ([message isKindOfClass:[NSDictionary class]]) {
+                NSString *content = [message objectForKey:@"content"];
+                if ([content isKindOfClass:[NSString class]] && content.length > 0) {
+                    [_accumulated appendString:content];
+                }
+                NSString *reasoning = [message objectForKey:@"reasoning_content"];
+                if (![reasoning isKindOfClass:[NSString class]]) {
+                    reasoning = [message objectForKey:@"reasoning"];
+                }
+                if ([reasoning isKindOfClass:[NSString class]] && reasoning.length > 0) {
+                    [_thinkingAccumulated appendString:reasoning];
+                }
+                [[Logger sharedLogger] info:@"NET ✓ non-stream JSON parsed (openai shape)"];
+            }
+        }
+        return;
+    }
+
+    // Anthropic non-stream shape.
+    NSArray *contentArr = [obj objectForKey:@"content"];
+    if ([contentArr isKindOfClass:[NSArray class]] && [contentArr count] > 0) {
+        for (NSDictionary *block in contentArr) {
+            if (![block isKindOfClass:[NSDictionary class]]) continue;
+            NSString *type = [block objectForKey:@"type"];
+            if ([type isEqualToString:@"text"]) {
+                NSString *t = [block objectForKey:@"text"];
+                if ([t isKindOfClass:[NSString class]]) [_accumulated appendString:t];
+            } else if ([type isEqualToString:@"thinking"]) {
+                NSString *t = [block objectForKey:@"thinking"];
+                if ([t isKindOfClass:[NSString class]]) [_thinkingAccumulated appendString:t];
+            }
+        }
+        [[Logger sharedLogger] info:@"NET ✓ non-stream JSON parsed (anthropic shape)"];
+    }
+}
+
 
 #pragma mark - Error helpers
 
@@ -1270,24 +1568,40 @@
     return YES;
 }
 
-#pragma mark - Provider → image API base URL (v261025-3)
+#pragma mark - Provider → image API base URL (v261025-8)
 
-// The image generation method (generateImageWithPrompt:) doesn't receive
-// the user's real baseURL — only provider + transitURL. To build the
-// X-Target-URL header (which the new transit requires), we map provider
-// to a known upstream base URL. This is a temporary bridge: once the
-// model management rework lands (with per-model baseURL support),
-// callers should pass baseURL explicitly and this helper can go away.
+// The image generation entry point resolves its upstream base: the
+// caller's per-entry baseURL wins; this map is the fallback for callers
+// that only know the provider. Providers WITHOUT a hosted image API
+// (DeepSeek / Kimi / Anthropic / Ollama) return nil — the caller surfaces
+// a clear error instead of a cryptic upstream 404.
 + (NSString *)_imageAPIBaseURLForProvider:(NSString *)provider
 {
     if ([provider isEqualToString:ProviderIDZhipu]) {
         return @"https://open.bigmodel.cn/api/paas/v4";
     }
-    if ([provider isEqualToString:ProviderIDOllama]) {
-        return @"http://localhost:11434/v1";
+    if ([provider isEqualToString:ProviderIDOpenAI]) {
+        return @"https://api.openai.com/v1";
     }
-    // default + ProviderIDOpenAI
-    return @"https://api.openai.com/v1";
+    // deepseek / kimi / anthropic / ollama / unknown → no image API.
+    return nil;
+}
+
+// v261025-8: append the images/generations path to an image-API base.
+// Bases that already end with a version segment (/v1, /v3, /v4) take the
+// path directly; bare hosts get /v1/ inserted (OpenAI-style).
++ (NSString *)_imageGenTargetForBase:(NSString *)base
+{
+    if (![base isKindOfClass:[NSString class]] || base.length == 0) return nil;
+    NSString *trimmed = [base stringByTrimmingCharactersInSet:
+                         [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+    if (trimmed.length == 0) return nil;
+    if ([trimmed hasSuffix:@"/v1"] || [trimmed hasSuffix:@"/v3"] ||
+        [trimmed hasSuffix:@"/v4"] || [trimmed hasSuffix:@"/v1/"] ||
+        [trimmed hasSuffix:@"/v3/"] || [trimmed hasSuffix:@"/v4/"]) {
+        return [trimmed stringByAppendingPathComponent:@"images/generations"];
+    }
+    return [trimmed stringByAppendingPathComponent:@"v1/images/generations"];
 }
 
 #pragma mark - iOS 6 TLS transit fallback (v261025-3)
@@ -1659,11 +1973,38 @@
 
 #pragma mark - Image generation (sync)
 
+// Legacy entry point — delegates to the full-control variant without a
+// per-entry baseURL (falls back to the provider map).
 - (NSString *)generateImageWithPrompt:(NSString *)prompt
                                  model:(NSString *)model
                                  size:(NSString *)size
                             useTransit:(BOOL)useTransit
                             transitURL:(NSString *)transitURL
+                              provider:(NSString *)provider
+                               apiKey:(NSString *)apiKey
+                                 error:(NSError **)error
+{
+    return [self generateImageWithPrompt:prompt
+                                   model:model
+                                   size:size
+                              useTransit:useTransit
+                              transitURL:transitURL
+                                baseURL:nil
+                              provider:provider
+                               apiKey:apiKey
+                                 error:error];
+}
+
+// v261025-8: full-control variant. `baseURL` is the image model entry's own
+// endpoint (from ModelManagement); nil/empty falls back to the provider
+// map. Image gen ALWAYS routes through the transit — iOS 6 TLS can't
+// reach api.openai.com / open.bigmodel.cn directly.
+- (NSString *)generateImageWithPrompt:(NSString *)prompt
+                                 model:(NSString *)model
+                                 size:(NSString *)size
+                            useTransit:(BOOL)useTransit
+                            transitURL:(NSString *)transitURL
+                              baseURL:(NSString *)baseURL
                               provider:(NSString *)provider
                                apiKey:(NSString *)apiKey
                                  error:(NSError **)error
@@ -1675,8 +2016,36 @@
         if ([provider isEqualToString:ProviderIDZhipu]) {
             model = @"cogview-3plus";
         } else {
-            model = @"dall-e-3";
+            model = @"gpt-image-1";
         }
+    }
+
+    // Resolve the upstream image API base: explicit per-entry baseURL
+    // wins; otherwise the provider map. Providers without an image API
+    // fail fast with a clear message.
+    NSString *imageBase = nil;
+    if ([baseURL isKindOfClass:[NSString class]] && baseURL.length > 0) {
+        imageBase = baseURL;
+    } else {
+        imageBase = [NetworkService _imageAPIBaseURLForProvider:provider];
+    }
+    if (!imageBase) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"iOS6AIChat"
+                                          code:400
+                                      userInfo:@{NSLocalizedDescriptionKey:
+                  @"该提供商没有生图 API（建议用智谱 CogView 或 OpenAI）"}];
+        }
+        return nil;
+    }
+    NSString *imageTarget = [NetworkService _imageGenTargetForBase:imageBase];
+    if (!imageTarget) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"iOS6AIChat"
+                                          code:400
+                                      userInfo:@{NSLocalizedDescriptionKey: @"无效的生图 BaseURL"}];
+        }
+        return nil;
     }
 
     // Always use transit for image gen — direct API calls would hit iOS 6
@@ -1689,18 +2058,25 @@
             [NSCharacterSet characterSetWithCharactersInString:@"/"]];
     NSString *endpoint = [base stringByAppendingPathComponent:@"v1/images/generations"];
 
-    // Build body. OpenAI supports response_format=b64_json (returns base64
-    // directly, no need to fetch URL). Zhipu CogView doesn't support
-    // response_format — always returns URL.
+    // Build body — per model family:
+    //   dall-e-*:  {model, prompt, n, size, response_format=b64_json}
+    //   gpt-image-*: {model, prompt, n, size}  (b64 by default; rejects
+    //               response_format)
+    //   cogview-*: {model, prompt}             (zhipu accepts only these;
+    //               size unsupported on cogview-3plus)
+    BOOL isDallE = [model hasPrefix:@"dall-e"];
+    BOOL isGptImage = [model hasPrefix:@"gpt-image"];
+    BOOL isOpenAIModel = isDallE || isGptImage;
     NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:@{
         @"model":    model,
-        @"prompt":    prompt,
-        @"n":        @(1),
-        @"size":      size
+        @"prompt":   prompt
     }];
-    // Use b64_json for OpenAI to avoid fetching URL (iOS 6 TLS issues).
-    if ([provider isEqualToString:ProviderIDOpenAI]) {
-        [body setObject:@"b64_json" forKey:@"response_format"];
+    if (isOpenAIModel) {
+        [body setObject:@(1) forKey:@"n"];
+        [body setObject:size forKey:@"size"];
+        if (isDallE) {
+            [body setObject:@"b64_json" forKey:@"response_format"];
+        }
     }
 
     NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
@@ -1709,9 +2085,6 @@
     NSURLResponse *resp = nil;
     NSError *netErr = nil;
     NSData *data = nil;
-    // v261025-3: image generation ALWAYS goes through the transit (iOS 6
-    // TLS can't reach the image APIs directly), so the -1012 https→http
-    // retry always applies here.
     NSString *attemptEndpoint = endpoint;
     for (NSInteger attempt = 0; attempt < 2; attempt++) {
         NSURL *url = [NSURL URLWithString:attemptEndpoint];
@@ -1721,15 +2094,9 @@
                                                           timeoutInterval:120.0];  // image gen can be slow
         [req setHTTPMethod:@"POST"];
         [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-        // v261025-3: transit is now pure TLS pass-through. Build the real
-        // upstream target URL from provider (the image-gen method doesn't
-        // receive baseURL, so we map provider → known base URL).
-        NSString *imageTargetBase = [NetworkService _imageAPIBaseURLForProvider:provider];
-        if (imageTargetBase.length > 0) {
-            NSString *imageTarget = [imageTargetBase
-                stringByAppendingPathComponent:@"images/generations"];
-            [req setValue:imageTarget forHTTPHeaderField:@"X-Target-URL"];
-        }
+        // v261025-8: X-Target-URL = the resolved per-entry / provider image
+        // endpoint (no more provider-only mapping).
+        [req setValue:imageTarget forHTTPHeaderField:@"X-Target-URL"];
         if (apiKey.length > 0) {
             [req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey]
             forHTTPHeaderField:@"Authorization"];

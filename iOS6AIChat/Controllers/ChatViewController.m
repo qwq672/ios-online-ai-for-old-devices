@@ -37,11 +37,61 @@
 #import "ModelManagementViewController.h"
 #import "DrawerViewController.h"
 #import "Logger.h"
+// v261025-8: base64 decode of the image-generation result.
+#import "NSDataBase64.h"
+// v261025-8: ComposerView imageGenEnabled + Message.isImageGenResult are
+// used in the send path; Message.h comes via ChatMessageCell.h.
 
 NSString *const ChatViewControllerDidLoadConversationNotification = @"ChatViewControllerDidLoadConversation";
 NSString *const ChatViewControllerConversationIDKey               = @"conversationID";
 
 static NSString *const kCellReuseID = @"ChatMessageCell";
+
+#pragma mark - v261025-8: full-screen generated-image viewer
+
+// Minimal tap-to-dismiss image viewer (iOS 6 compatible, MRC). Presented
+// modally when the user taps a generated image bubble.
+@interface GenImageViewerController : UIViewController
+@property (nonatomic, retain) UIImage *image;
+@end
+
+@implementation GenImageViewerController
+@synthesize image=_image;
+
+- (void)loadView
+{
+    CGRect frame = [UIScreen mainScreen].applicationFrame;
+    self.view = [[[UIView alloc] initWithFrame:frame] autorelease];
+    self.view.backgroundColor = [UIColor blackColor];
+    UIImageView *iv = [[[UIImageView alloc] initWithFrame:self.view.bounds] autorelease];
+    iv.contentMode = UIViewContentModeScaleAspectFit;
+    iv.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
+                           UIViewAutoresizingFlexibleHeight);
+    iv.image = _image;
+    iv.backgroundColor = [UIColor blackColor];
+    [self.view addSubview:iv];
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc]
+        initWithTarget:self action:@selector(_dismissTapped)];
+    tap.numberOfTapsRequired = 1;
+    [self.view addGestureRecognizer:tap];
+    [tap release];
+}
+
+- (void)_dismissTapped
+{
+    // iOS 6-safe dismissal.
+    [self dismissModalViewControllerAnimated:YES];
+}
+
+- (BOOL)wantsFullScreenLayout { return YES; }
+
+- (void)dealloc
+{
+    [_image release];
+    [super dealloc];
+}
+
+@end
 
 @interface ChatViewController ()
 @property (nonatomic, retain) ComposerView *composer;
@@ -65,6 +115,16 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 // re-sent as a new user message + fresh AI placeholder.
 @property (nonatomic, retain) NSString *pendingEditMessageID;
 @property (nonatomic, retain) NSString *pendingEditOriginalText;
+// v261025-8: image-generation in-flight state. The generate call is a
+// synchronous NSURLConnection on a GCD background queue — unlike the chat
+// stream it has no delegate, so completion is handled inside the block:
+// success → write PNG to Documents/genimg + set message.generatedImagePath;
+// failure → error text in the placeholder message. The assistant message
+// is retained here because the user may switch conversations while the
+// (up to 120s) request is running.
+@property (nonatomic, assign) BOOL imageGenInProgress;
+@property (nonatomic, assign) BOOL imageGenCancelled;
+@property (nonatomic, retain) Message *imageGenAssistantMessage;
 @end
 
 @implementation ChatViewController
@@ -78,7 +138,10 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
             emptyTitleLabel=_emptyTitleLabel,
             emptyHintLabel=_emptyHintLabel,
             pendingEditMessageID=_pendingEditMessageID,
-            pendingEditOriginalText=_pendingEditOriginalText;
+            pendingEditOriginalText=_pendingEditOriginalText,
+            imageGenInProgress=_imageGenInProgress,
+            imageGenCancelled=_imageGenCancelled,
+            imageGenAssistantMessage=_imageGenAssistantMessage;
 
 - (id)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil
 {
@@ -133,6 +196,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     // v261025-6: pending edit alert state.
     [_pendingEditMessageID release];
     [_pendingEditOriginalText release];
+    // v261025-8: image-gen in-flight state (the block holds its own
+    // retain on the message, so releasing here can't dangle it).
+    [_imageGenAssistantMessage release];
     [super dealloc];
 }
 
@@ -334,6 +400,13 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     if (_networkService) {
         [_networkService cancelStream];
     }
+    // v261025-8: also cancel a pending image generation — its completion
+    // block checks the flag and discards the result.
+    if (_imageGenInProgress) {
+        _imageGenCancelled = YES;
+        _imageGenInProgress = NO;
+        self.imageGenAssistantMessage = nil;
+    }
     _composer.isStreaming = NO;
     [self _hideSearchStatus];
 }
@@ -458,8 +531,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 - (void)composer:(ComposerView *)c didSendText:(NSString *)text
               images:(NSArray *)images
         deepThinking:(BOOL)deepThinking webSearch:(BOOL)webSearch
+            imageGen:(BOOL)imageGen
 {
-    [self _sendUserMessage:text images:images deepThinking:deepThinking webSearch:webSearch];
+    [self _sendUserMessage:text images:images deepThinking:deepThinking webSearch:webSearch imageGen:imageGen];
 }
 
 // v261025-3: send button morphed into stop button while streaming.
@@ -470,6 +544,13 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 - (void)composerDidTapStop:(ComposerView *)composer
 {
     [[Logger sharedLogger] info:@"CHAT ⊘ user tapped stop — calling stopGenerating"];
+    // v261025-8: image-gen stop — flag the cancel; the completion block
+    // discards the result and resets the composer.
+    if (_imageGenInProgress) {
+        [[Logger sharedLogger] info:@"CHAT ⊘ image-gen cancelled by user"];
+        _imageGenCancelled = YES;
+        return;
+    }
     if (!_networkService) {
         // Defensive: no service to stop. Make sure the composer is
         // visually reset (a desync would otherwise leave it stuck).
@@ -510,13 +591,227 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
 #pragma mark - Sending
 
-- (void)_sendUserMessage:(NSString *)text
+// v261025-8: image-generation send path. Mirrors _sendUserMessage: the
+// prompt becomes the user message, an assistant placeholder shows
+// "正在生成图片…", then a GCD block runs the synchronous generate call.
+// Success → PNG written to Documents/genimg/<uuid>.png and the message's
+// generatedImagePath is set (the cell then renders the image). Failure →
+// the error text lands in the placeholder so the user sees why.
+- (void)_generateImageWithPrompt:(NSString *)prompt
 {
-    [self _sendUserMessage:text images:nil deepThinking:[ComposerView deepThinkingEnabled] webSearch:[ComposerView webSearchEnabled]];
+    if (!prompt || prompt.length == 0) return;
+
+    if (!_conversation) {
+        Conversation *c = [[ConversationStore sharedStore] createNewConversation];
+        self.conversation = c;
+    }
+
+    Message *userMsg = [Message messageWithRole:MessageRoleUser content:prompt];
+    [_conversation appendMessage:userMsg];
+    Message *assistantMsg = [Message messageWithRole:MessageRoleAssistant
+                                              content:NSLocalizedString(@"🎨 正在生成图片…", nil)];
+    [_conversation appendMessage:assistantMsg];
+    [[ConversationStore sharedStore] saveConversation:_conversation];
+    [_tableView reloadData];
+    [self _scrollToBottomAnimated:YES];
+    [self _updateEmptyPlaceholder];
+
+    _composer.isStreaming = YES;
+    _imageGenInProgress = YES;
+    _imageGenCancelled = NO;
+    self.imageGenAssistantMessage = assistantMsg;
+
+    NSDictionary *iconn = [ModelManagementViewController resolvedConnectionForImageGen];
+    NSDictionary *settings = [SettingsViewController loadSettings];
+    NSString *transitURL = [settings objectForKey:SettingsKeyTransitURL];
+    BOOL useTransit = [[settings objectForKey:SettingsKeyUseTransit] boolValue];
+    NSString *imgModel = [iconn objectForKey:@"model"];
+    NSString *provider = [iconn objectForKey:@"provider"];
+    NSString *baseURL  = [iconn objectForKey:@"baseURL"];
+    NSString *apiKey   = [iconn objectForKey:@"apiKey"];
+
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"imggen promptLen=%lu provider=%@ model=%@ transit=%d",
+        (unsigned long)prompt.length, provider ?: @"?",
+        imgModel ?: @"(unset)", (int)useTransit]];
+
+    // v261025-2 lesson: capture everything the block needs as values —
+    // never read self->_conversation at execution time.
+    NSString *capturedPrompt = [prompt copy];
+    NSString *capturedModel = [imgModel copy];
+    NSString *capturedProvider = [provider copy];
+    NSString *capturedBaseURL = [baseURL copy];
+    NSString *capturedAPIKey = [apiKey copy];
+    NSString *capturedTransitURL = [transitURL copy];
+    BOOL capturedUseTransit = useTransit;
+    // assistantMsg is owned by _conversation.messages; retain so a
+    // conversation switch mid-request can't free it under the block.
+    Message *capturedMsg = [assistantMsg retain];
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        // The synchronous generate call (120s timeout inside) — safe on a
+        // background queue. NOTE: reading self->_networkService captures
+        // self (retained by the block under MRC) — ChatVC is the nav root
+        // and outlives the queue, same pattern as the Tavily pre-search.
+        NSError *err = nil;
+        NSString *dataURL = [self->_networkService
+            generateImageWithPrompt:capturedPrompt
+                              model:capturedModel
+                               size:@"1024x1024"
+                          useTransit:capturedUseTransit
+                          transitURL:capturedTransitURL
+                            baseURL:capturedBaseURL
+                           provider:capturedProvider
+                             apiKey:capturedAPIKey
+                               error:&err];
+
+        // Decode "data:image/png;base64,...." → NSData.
+        NSData *pngData = nil;
+        if ([dataURL isKindOfClass:[NSString class]] && dataURL.length > 0) {
+            NSRange comma = [dataURL rangeOfString:@","];
+            if (comma.location != NSNotFound && comma.location + 1 < dataURL.length) {
+                NSString *b64 = [dataURL substringFromIndex:comma.location + 1];
+                pngData = [NSData dataFromBase64String:b64];
+            }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            // USER-CANCELLED (stop button) → discard the result entirely.
+            // SUPERSEDED (user switched conversations / new chat while the
+            // request was in flight) → still WRITE the result into the
+            // message + save its owning conversation, just don't touch the
+            // active UI. The user finds the image when they switch back
+            // (the "正在生成图片…" placeholder becomes the image on reload)
+            // instead of a forever-loading bubble.
+            if (self->_imageGenCancelled) {
+                [capturedPrompt release];
+                [capturedModel release];
+                [capturedProvider release];
+                [capturedBaseURL release];
+                [capturedAPIKey release];
+                [capturedTransitURL release];
+                [capturedMsg release];
+                self->_imageGenInProgress = NO;
+                self->_composer.isStreaming = NO;
+                self->_imageGenCancelled = NO;
+                return;
+            }
+            BOOL superseded = (self->_imageGenAssistantMessage != capturedMsg);
+
+            if (pngData && pngData.length > 0) {
+                // Write the PNG under Documents/genimg/<uuid>.png.
+                NSArray *dirs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,
+                                                                    NSUserDomainMask, YES);
+                if ([dirs count] > 0) {
+                    NSString *genDir = [[dirs objectAtIndex:0]
+                        stringByAppendingPathComponent:@"genimg"];
+                    // iOS 5+ API — 3GS on iOS 6 has it.
+                    [[NSFileManager defaultManager]
+                        createDirectoryAtPath:genDir
+                        withIntermediateDirectories:YES
+                         attributes:nil
+                              error:NULL];
+                    NSString *fileName = [NSString stringWithFormat:@"gen-%@.png",
+                                           [[NSUUID UUID] UUIDString]];
+                    NSString *path = [genDir stringByAppendingPathComponent:fileName];
+                    if ([pngData writeToFile:path atomically:YES]) {
+                        capturedMsg.generatedImagePath = fileName;
+                        // Keep the prompt as the bubble's caption.
+                        capturedMsg.content = capturedPrompt;
+                        [[Logger sharedLogger] info:[NSString stringWithFormat:
+                            @"imggen ✓ wrote %@ (%lu bytes)",
+                            fileName, (unsigned long)pngData.length]];
+                    } else {
+                        capturedMsg.content = NSLocalizedString(@"图片保存失败（磁盘写入错误）", nil);
+                        [[Logger sharedLogger] warn:@"imggen ✗ writeToFile failed"];
+                    }
+                } else {
+                    capturedMsg.content = NSLocalizedString(@"图片保存失败（无法定位 Documents）", nil);
+                }
+            } else {
+                NSString *reason = [err localizedDescription];
+                capturedMsg.content = [NSString stringWithFormat:@"%@%@",
+                    NSLocalizedString(@"生图失败", nil),
+                    ([reason isKindOfClass:[NSString class]] && reason.length > 0)
+                        ? [NSString stringWithFormat:@": %@", reason] : @"（未知错误）"];
+                [[Logger sharedLogger] warn:[NSString stringWithFormat:
+                    @"imggen ✗ %@", reason ?: @"(no error)"]];
+            }
+
+            // Persist + refresh. capturedMsg may no longer be in the ACTIVE
+            // conversation (user switched) — find its owner and save that.
+            ConversationStore *store = [ConversationStore sharedStore];
+            Conversation *owner = nil;
+            for (Conversation *c in [store conversations]) {
+                if ([c.messages containsObject:capturedMsg]) { owner = c; break; }
+            }
+            if (owner) [store saveConversation:owner];
+
+            if (!superseded) {
+                // Still the active conversation → refresh the UI in place.
+                [ChatMessageCell invalidateHeightCache];
+                [self->_tableView reloadData];
+                [self->_scrollToBottomAnimated:YES];
+                self->_imageGenInProgress = NO;
+                self->_composer.isStreaming = NO;
+                self.imageGenAssistantMessage = nil;
+            } else {
+                // The _teardownActiveStream already reset the composer when
+                // the conversation switched; only reset the progress flag.
+                self->_imageGenInProgress = NO;
+                [[Logger sharedLogger] info:@"imggen ✓ result saved to background conversation (superseded)"];
+            }
+
+            [capturedPrompt release];
+            [capturedModel release];
+            [capturedProvider release];
+            [capturedBaseURL release];
+            [capturedAPIKey release];
+            [capturedTransitURL release];
+            [capturedMsg release];
+        });
+    });
 }
 
-- (void)_sendUserMessage:(NSString *)text images:(NSArray *)images deepThinking:(BOOL)deepThinking webSearch:(BOOL)webSearch
+- (void)_sendUserMessage:(NSString *)text
 {
+    [self _sendUserMessage:text images:nil deepThinking:[ComposerView deepThinkingEnabled] webSearch:[ComposerView webSearchEnabled] imageGen:[ComposerView imageGenEnabled]];
+}
+
+- (void)_sendUserMessage:(NSString *)text images:(NSArray *)images deepThinking:(BOOL)deepThinking webSearch:(BOOL)webSearch imageGen:(BOOL)imageGen
+{
+    // ---- v261025-8: image-generation path ----
+    // The 生图 toggle routes the text to the image API via the ACTIVE
+    // kind="image" model entry. Vision attachments / deep thinking / web
+    // search don't apply (the composer already disables their buttons).
+    if (imageGen) {
+        if (images && [images count] > 0) {
+            UIAlertView *av = [[[UIAlertView alloc]
+                initWithTitle:NSLocalizedString(@"生图模式不支持附带图片", nil)
+                      message:NSLocalizedString(@"请先删除附图，或关闭生图开关。", nil)
+                     delegate:nil
+                cancelButtonTitle:NSLocalizedString(@"好", nil)
+                otherButtonTitles:nil] autorelease];
+            [av show];
+            _composer.isStreaming = NO;
+            return;
+        }
+        NSDictionary *iconn = [ModelManagementViewController resolvedConnectionForImageGen];
+        NSString *imgModel = [iconn objectForKey:@"model"];
+        if (![imgModel isKindOfClass:[NSString class]] || imgModel.length == 0) {
+            UIAlertView *av = [[[UIAlertView alloc]
+                initWithTitle:NSLocalizedString(@"未添加生图模型", nil)
+                      message:NSLocalizedString(@"请到 模型管理 → 添加模型，把模型类型选为「生图模型」（如智谱 cogview-3plus）。", nil)
+                     delegate:nil
+                cancelButtonTitle:NSLocalizedString(@"好", nil)
+                otherButtonTitles:nil] autorelease];
+            [av show];
+            _composer.isStreaming = NO;
+            return;
+        }
+        [self _generateImageWithPrompt:text];
+        return;
+    }
+
     // v261025-3: send guard. If transit is ON but useServerModel is OFF
     // (i.e. user supplies their own model in the body), and the local
     // saved model list is empty AND SettingsKeyModel is unset, the
@@ -567,6 +862,11 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
     [_tableView reloadData];
     [self _scrollToBottomAnimated:YES];
+    // v261025-8 (bug #8 fix): hide the "开始新对话" placeholder NOW — the
+    // user's first message + AI placeholder are already in the array, but
+    // _updateEmptyPlaceholder was only called from _reload, so the big
+    // title + hint label kept floating over the streaming reply.
+    [self _updateEmptyPlaceholder];
 
     // Disable composer while streaming.
     _composer.isStreaming = YES;
@@ -1106,7 +1406,31 @@ didFailForConversationID:(NSString *)conversationID
     [self _sendUserMessage:userMsg.content
                     images:userMsg.images
               deepThinking:[ComposerView deepThinkingEnabled]
-                webSearch:[ComposerView webSearchEnabled]];
+                webSearch:[ComposerView webSearchEnabled]
+                  imageGen:[ComposerView imageGenEnabled]];
+}
+
+// v261025-8: tap a generated image → full-screen viewer.
+- (void)chatCellDidTapGeneratedImage:(ChatMessageCell *)cell message:(Message *)message
+{
+    if (!message || ![message isImageGenResult]) return;
+    NSString *path = [Message absolutePathForGeneratedImage:message.generatedImagePath];
+    if (!path) return;
+    // Prefer the shared decoded cache (gImageCache) — same key the cell
+    // used — so the modal opens instantly; fall back to the file.
+    UIImage *img = nil;
+    @try {
+        img = [UIImage imageWithContentsOfFile:path];
+    } @catch (NSException *e) {
+        img = nil;
+    }
+    if (!img) {
+        [[Logger sharedLogger] warn:@"ChatVC gen-image viewer — image file missing"];
+        return;
+    }
+    GenImageViewerController *viewer = [[[GenImageViewerController alloc] init] autorelease];
+    viewer.image = img;
+    [self presentModalViewController:viewer animated:YES];
 }
 
 // v261025-6: user-message edit — pops an alert pre-filled with the user's
@@ -1275,7 +1599,8 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     [self _sendUserMessage:editedText
                    images:targetMsg.images
              deepThinking:[ComposerView deepThinkingEnabled]
-               webSearch:[ComposerView webSearchEnabled]];
+               webSearch:[ComposerView webSearchEnabled]
+                 imageGen:[ComposerView imageGenEnabled]];
     // Clear pending state.
     self.pendingEditMessageID = nil;
     self.pendingEditOriginalText = nil;

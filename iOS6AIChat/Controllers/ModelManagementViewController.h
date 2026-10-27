@@ -16,7 +16,10 @@
 //      provider: "zhipu"|nil,        // NEW: which provider this runs on
 //      baseURL: "https://..."|nil,   // NEW: per-entry endpoint override
 //      apiKey: "sk-..."|nil,         // NEW: per-entry key override
-//      displayName: "智谱免费"|nil    // NEW: friendly name shown in list
+//      displayName: "智谱免费"|nil,   // NEW: friendly name shown in list
+//      kind: "chat"|"image"|nil      // v261025-8: kind="image" entries are
+//                                    } 生图模型 (composer 生图 mode);
+//                                    chat/absent = regular conversation model
 //    }
 //  Entries missing the new keys (pre-v261025-7 files) resolve their
 //  connection details from the global Settings at use time — fully
@@ -24,6 +27,8 @@
 //
 //  The CHAT path now goes through +resolvedConnectionForChat, which merges
 //  the active entry's overrides with the global settings defaults.
+//  v261025-8: the IMAGE-GEN path goes through +resolvedConnectionForImageGen
+//  (active kind="image" entry — tracked by SettingsKeyImageGenModel).
 //
 
 #import <UIKit/UIKit.h>
@@ -58,6 +63,15 @@
 // entry (looked up by SettingsKeyModel) and global settings defaults.
 // Callers use this instead of reading SettingsKey* directly.
 + (NSDictionary *)resolvedConnectionForChat;
+
+// ---- v261025-8 resolved connection for the image-gen path ----
+// Returns { provider, baseURL, apiKey, model } for the ACTIVE image model
+// (looked up by SettingsKeyImageGenModel). model is @"" when no image
+// model is configured — the caller should prompt the user to add one.
++ (NSDictionary *)resolvedConnectionForImageGen;
+
+// v261025-8: is this entry a 生图 model? (kind=="image"; absent = chat)
++ (BOOL)entryIsImageKind:(NSDictionary *)entry;
 
 // v261025-3: search the transit server's bundled model list
 // (GET /v1/transit/models). If the server returns enabled=false,

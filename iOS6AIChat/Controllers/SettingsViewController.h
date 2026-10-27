@@ -42,10 +42,20 @@ extern NSString *const SettingsKeyUseTransitModels;
 // (formatted as a localized date string, displayed in Settings under the
 // toggle row to remind the user when they last refreshed).
 extern NSString *const SettingsKeyTransitModelsLastSearch;
+// v261025-8: the ACTIVE image-generation model id (kind="image" entry in
+// the model list). Parallel to SettingsKeyModel which tracks the chat model.
+extern NSString *const SettingsKeyImageGenModel;
 
 // Provider IDs.
+// v261025-8: 用户明确了提供商概念 —— DeepSeek / BigModel(智谱) / Kimi 这类是
+// 「模型提供商」；OpenAI / Anthropic / Ollama 这类既是提供商也定义了
+// 「API 格式」。App 内统一用 provider id 表达，NetworkService 再把
+// provider 映射到请求格式（OpenAI 兼容 / Anthropic 原生）。
 extern NSString *const ProviderIDZhipu;
+extern NSString *const ProviderIDDeepSeek;
+extern NSString *const ProviderIDKimi;
 extern NSString *const ProviderIDOpenAI;
+extern NSString *const ProviderIDAnthropic;
 extern NSString *const ProviderIDOllama;
 
 @interface SettingsViewController : UIViewController
@@ -69,6 +79,14 @@ extern NSString *const ProviderIDOllama;
 + (NSString *)defaultModelForProvider:(NSString *)providerID;
 // v261025-7: default endpoint per provider (ModelAddViewController form).
 + (NSString *)defaultBaseURLForProvider:(NSString *)providerID;
+// v261025-8: does this provider speak the Anthropic /v1/messages format?
+// (All others use the OpenAI-compatible /v1/chat/completions format.)
++ (BOOL)providerUsesAnthropicFormat:(NSString *)providerID;
+// v261025-8: quick-pick model lists for the add-model form.
+// kind: "chat" | "image". Returns NSString model ids.
++ (NSArray *)commonModelsForProvider:(NSString *)providerID kind:(NSString *)kind;
+// v261025-8: does this provider have an image-generation endpoint?
++ (BOOL)providerSupportsImageGen:(NSString *)providerID;
 
 // Default seed list of saved models per provider (v261024-15).
 // Used by ModelManagementViewController when the user has no saved list yet.

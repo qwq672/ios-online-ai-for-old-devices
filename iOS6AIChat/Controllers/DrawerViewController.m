@@ -90,7 +90,8 @@ enum {
 static NSInteger const kMaxRecent = 6;
 
 @interface DrawerViewController () <UITableViewDataSource, UITableViewDelegate,
-                                     UITextFieldDelegate> {
+                                     UITextFieldDelegate,
+                                     UIActionSheetDelegate, UIAlertViewDelegate> {
     UINavigationController *_mainNav;
 
     // Full-screen sheet (slides from above the screen).
@@ -113,6 +114,10 @@ static NSInteger const kMaxRecent = 6;
     // user said the chips looked unfinished and the truncated "你…" text
     // was ugly). Snapshot-once-per-open, like the old chip list.
     NSArray     *_recentConversations;
+
+    // v261025-8: long-press-to-delete state — the conversation id pending
+    // confirmation (ActionSheet tag 750 → Alert tag 751 chain).
+    NSString    *_pendingDeleteConversationID;
 
     // Search state.
     NSString    *_searchQuery;    // nil/empty → menu mode
@@ -167,6 +172,8 @@ static NSInteger const kMaxRecent = 6;
     // v261025-5: removed _stripSlot / _stripScroll releases (the chip
     // strip is gone).
     [_recentConversations release];
+    // v261025-8: long-press delete state.
+    [_pendingDeleteConversationID release];
     [_searchQuery release];
     [_searchResults release];
     [super dealloc];
@@ -583,11 +590,59 @@ static NSInteger const kMaxRecent = 6;
     }
 }
 
-// v261025-5: the chip-tap handler `_openConversationAfterClose:` is gone;
-// its replacement `_openRecentConvAfterClose:` lives in the
-// "Recent-conversations list" section below (same deferred-open behaviour).
+// v261025-8: attach the long-press delete gesture to a conversation-row
+// cell. Idempotent — the shared kConvCellID pool means the same cell can
+// pass through here in both search and recent modes, so check the
+// existing recognizers first.
+- (void)_installDeleteGestureOnCell:(UITableViewCell *)cell
+{
+    if (!cell) return;
+    if ([cell.gestureRecognizers count] > 0) return;   // already installed
+    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc]
+        initWithTarget:self action:@selector(_conversationLongPressed:)];
+    lp.minimumPressDuration = 0.6f;
+    [cell addGestureRecognizer:lp];
+    [lp release];
+}
 
-#pragma mark - Recent-conversations list (v261025-5 — replaces chips strip)
+// v261025-8: long-press on a conversation row (search result or recent
+// list) → ActionSheet → confirmation alert → delete from the store.
+- (void)_conversationLongPressed:(UILongPressGestureRecognizer *)gesture
+{
+    if (gesture.state != UIGestureRecognizerStateBegan) return;
+    UITableViewCell *cell = (UITableViewCell *)gesture.view;
+    if (![cell isKindOfClass:[UITableViewCell class]]) return;
+    NSIndexPath *ip = [_menuTable indexPathForCell:cell];
+    if (!ip) return;
+    Conversation *conv = nil;
+    if (_searchQuery.length > 0) {
+        if (ip.row >= 0 && ip.row < (NSInteger)[_searchResults count]) {
+            conv = [_searchResults objectAtIndex:ip.row];
+        }
+    } else if (ip.section == kMenuSectionRecent) {
+        if (ip.row >= 0 && ip.row < (NSInteger)[_recentConversations count]) {
+            conv = [_recentConversations objectAtIndex:ip.row];
+        }
+    }
+    if (!conv || !conv.conversationID) return;
+
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"MenuSheet long-press delete → conversation %@", conv.conversationID]];
+    if (_pendingDeleteConversationID != conv.conversationID) {
+        [_pendingDeleteConversationID release];
+        _pendingDeleteConversationID = [conv.conversationID retain];
+    }
+    UIActionSheet *sheet = [[[UIActionSheet alloc]
+        initWithTitle:[NSString stringWithFormat:@"%@ \"%@\"",
+                       NSLocalizedString(@"删除对话", nil),
+                       conv.displayTitle ?: @"(无标题)"]
+             delegate:self
+    cancelButtonTitle:NSLocalizedString(@"取消", nil)
+    destructiveButtonTitle:NSLocalizedString(@"删除对话", nil)
+         otherButtonTitles:nil] autorelease];
+    sheet.tag = 750;
+    [sheet showInView:_sheetView];
+}
 
 // Rebuild the snapshot of recent conversations shown in section
 // kMenuSectionRecent. Called once per sheet open + once on theme change.
@@ -843,6 +898,7 @@ replacementString:(NSString *)string
             [self _installCardBackgroundOnCell:cell];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+            [self _installDeleteGestureOnCell:cell];   // v261025-8
         }
         [self _applyCardBackgroundOnCell:cell tableView:tableView];
         // v261025-7: explicit CLEAR label backgrounds — iOS 6 sometimes
@@ -875,6 +931,7 @@ replacementString:(NSString *)string
             [self _installCardBackgroundOnCell:cell];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+            [self _installDeleteGestureOnCell:cell];   // v261025-8
         }
         [self _applyCardBackgroundOnCell:cell tableView:tableView];
         // v261025-7: explicit CLEAR label backgrounds (dark-mode white
@@ -956,6 +1013,72 @@ heightForRowAtIndexPath:(NSIndexPath *)indexPath
         case 5:  return NSLocalizedString(@"导出对话", nil);
         default: return @"";
     }
+}
+
+#pragma mark - v261025-8 ActionSheet / Alert delegates (delete conversation)
+
+- (void)actionSheet:(UIActionSheet *)actionSheet clickedButtonAtIndex:(NSInteger)buttonIndex
+{
+    if (actionSheet.tag != 750) return;
+    // iOS 6 index rules: compare against destructiveButtonIndex /
+    // cancelButtonIndex instead of hard-coding positions (the cancel
+    // button's index varies with how the sheet was constructed).
+    if (buttonIndex != actionSheet.destructiveButtonIndex) {
+        [[Logger sharedLogger] info:@"MenuSheet delete conversation — cancelled (sheet)"];
+        return;
+    }
+    NSString *cid = _pendingDeleteConversationID;
+    if (!cid || cid.length == 0) return;
+    Conversation *conv = [[ConversationStore sharedStore] conversationWithID:cid];
+    NSString *title = conv.displayTitle ?: @"(无标题)";
+    // Second confirmation (destructive, unrecoverable).
+    UIAlertView *av = [[[UIAlertView alloc]
+        initWithTitle:NSLocalizedString(@"确认删除对话?", nil)
+              message:[NSString stringWithFormat:@"%@ \"%@\"",
+                       NSLocalizedString(@"删除后无法恢复", nil), title]
+             delegate:self
+    cancelButtonTitle:NSLocalizedString(@"取消", nil)
+    otherButtonTitles:NSLocalizedString(@"删除", nil), nil] autorelease];
+    av.tag = 751;
+    [av show];
+}
+
+- (void)alertView:(UIAlertView *)alertView clickedButtonAtIndex:(NSInteger)buttonIndex
+{
+    if (alertView.tag != 751) return;
+    if (buttonIndex != 1) {
+        [[Logger sharedLogger] info:@"MenuSheet delete conversation — cancelled (alert)"];
+        [_pendingDeleteConversationID release];
+        _pendingDeleteConversationID = nil;
+        return;
+    }
+    NSString *cid = _pendingDeleteConversationID;
+    if (!cid || cid.length == 0) return;
+    // v261025-8: if the user is deleting the conversation that is CURRENTLY
+    // open in the root ChatVC, reset the chat FIRST — otherwise the ChatVC's
+    // in-memory Conversation would re-save (resurrect) the deleted .conv
+    // file on the next appendMessage.
+    ChatViewController *chat = nil;
+    if ([_mainNav.viewControllers count] > 0) {
+        chat = [_mainNav.viewControllers objectAtIndex:0];
+    }
+    if ([chat isKindOfClass:[ChatViewController class]] &&
+        [chat.conversation.conversationID isEqualToString:cid]) {
+        [[Logger sharedLogger] info:@"MenuSheet deleting the ACTIVE conversation — resetting ChatVC"];
+        [chat startNewConversation];
+    }
+    [[ConversationStore sharedStore] deleteConversationWithID:cid];
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"MenuSheet deleted conversation %@", cid]];
+    // Refresh both lists + the table.
+    [self _rebuildRecentList];
+    if (_searchQuery.length > 0) {
+        // Re-run the search so the deleted row disappears from results.
+        [self _applySearchQuery:_searchQuery];
+    }
+    [_menuTable reloadData];
+    [_pendingDeleteConversationID release];
+    _pendingDeleteConversationID = nil;
 }
 
 #pragma mark - Menu table (delegate)

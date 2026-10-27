@@ -58,6 +58,7 @@
         case IconTypePerson:       [self _drawPerson:ctx cx:cx cy:cy w:w h:h]; break;
         case IconTypeDoc:          [self _drawDoc:ctx cx:cx cy:cy w:w h:h]; break;
         case IconTypeExport:       [self _drawExport:ctx cx:cx cy:cy w:w h:h]; break;
+        case IconTypeImageGen:      [self _drawImageGen:ctx cx:cx cy:cy w:w h:h]; break;
     }
 
     UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
@@ -90,6 +91,59 @@
     UIImage *tinted = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     return tinted;
+}
+
+#pragma mark - Image generation (v261025-8)
+
+// A classic "photo" glyph: rounded-rect frame + small sun (top-left) +
+// mountain silhouette (two overlapping triangles). Reads instantly as
+// "picture / 生图" next to the DT/Web toggles in the composer.
++ (void)_drawImageGen:(CGContextRef)ctx cx:(CGFloat)cx cy:(CGFloat)cy w:(CGFloat)w h:(CGFloat)h
+{
+    CGFloat m = MIN(w, h);
+    // Photo frame — rounded rect inset ~15%.
+    CGFloat fw = w * 0.78f, fh = h * 0.66f;
+    CGRect frame = CGRectMake(cx - fw / 2, cy - fh / 2, fw, fh);
+    CGFloat r = m * 0.09f;
+    CGContextBeginPath(ctx);
+    CGContextMoveToPoint(ctx, frame.origin.x + r, frame.origin.y);
+    CGContextAddArcToPoint(ctx, frame.origin.x + fw, frame.origin.y,
+                            frame.origin.x + fw, frame.origin.y + fh, r);
+    CGContextAddArcToPoint(ctx, frame.origin.x + fw, frame.origin.y + fh,
+                            frame.origin.x, frame.origin.y + fh, r);
+    CGContextAddArcToPoint(ctx, frame.origin.x, frame.origin.y + fh,
+                            frame.origin.x, frame.origin.y, r);
+    CGContextAddArcToPoint(ctx, frame.origin.x, frame.origin.y,
+                            frame.origin.x + fw, frame.origin.y, r);
+    CGContextClosePath(ctx);
+    // Hollow frame: stroke the border instead of filling the whole rect.
+    CGContextSetLineWidth(ctx, m * 0.09f);
+    CGContextStrokePath(ctx);
+
+    // Sun — small filled circle in the top-left third of the frame.
+    CGFloat sunR = m * 0.075f;
+    CGRect sunRect = CGRectMake(frame.origin.x + fw * 0.22f - sunR,
+                                frame.origin.y + fh * 0.30f - sunR,
+                                sunR * 2, sunR * 2);
+    CGContextFillEllipseInRect(ctx, sunRect);
+
+    // Mountain — big + small triangle rising from the frame's bottom edge.
+    CGFloat base = frame.origin.y + fh - m * 0.04f;   // sit just inside
+    CGContextBeginPath(ctx);
+    CGContextMoveToPoint(ctx, frame.origin.x + fw * 0.10f, base);
+    CGContextAddLineToPoint(ctx, frame.origin.x + fw * 0.40f,
+                            frame.origin.y + fh * 0.48f);
+    CGContextAddLineToPoint(ctx, frame.origin.x + fw * 0.58f, base);
+    CGContextClosePath(ctx);
+    CGContextFillPath(ctx);
+
+    CGContextBeginPath(ctx);
+    CGContextMoveToPoint(ctx, frame.origin.x + fw * 0.48f, base);
+    CGContextAddLineToPoint(ctx, frame.origin.x + fw * 0.68f,
+                             frame.origin.y + fh * 0.62f);
+    CGContextAddLineToPoint(ctx, frame.origin.x + fw * 0.90f, base);
+    CGContextClosePath(ctx);
+    CGContextFillPath(ctx);
 }
 
 #pragma mark - Lightbulb

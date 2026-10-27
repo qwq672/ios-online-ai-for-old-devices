@@ -57,9 +57,16 @@ NSString *const SettingsKeyUseTransitModels = @"useTransitModels";
 // Stored as an NSDate; formatted for display in the toggle row's footer.
 NSString *const SettingsKeyTransitModelsLastSearch = @"transitModelsLastSearch";
 
-NSString *const ProviderIDZhipu  = @"zhipu";
-NSString *const ProviderIDOpenAI = @"openai";
-NSString *const ProviderIDOllama = @"ollama";
+NSString *const ProviderIDZhipu    = @"zhipu";
+NSString *const ProviderIDDeepSeek = @"deepseek";
+NSString *const ProviderIDKimi     = @"kimi";
+NSString *const ProviderIDOpenAI   = @"openai";
+NSString *const ProviderIDAnthropic = @"anthropic";
+NSString *const ProviderIDOllama   = @"ollama";
+
+// v261025-8: the active image-generation model (kind="image" entry).
+// Parallel to SettingsKeyModel (chat model).
+NSString *const SettingsKeyImageGenModel = @"imageGenModel";
 
 NSString *const iOS6ThemeDidChangeNotification = @"iOS6ThemeDidChangeNotification";
 
@@ -228,22 +235,31 @@ enum {
 
 + (NSArray *)availableProviderIDs
 {
-    return @[ProviderIDOpenAI, ProviderIDZhipu, ProviderIDOllama];
+    // v261025-8: full provider roster. Order = display order in pickers.
+    return @[ProviderIDZhipu, ProviderIDDeepSeek, ProviderIDKimi,
+             ProviderIDOpenAI, ProviderIDAnthropic, ProviderIDOllama];
 }
 
 + (NSString *)displayNameForProvider:(NSString *)providerID
 {
-    if ([providerID isEqualToString:ProviderIDZhipu])  return @"智谱";
-    if ([providerID isEqualToString:ProviderIDOpenAI]) return @"OpenAI";
-    if ([providerID isEqualToString:ProviderIDOllama]) return @"Ollama";
+    if ([providerID isEqualToString:ProviderIDZhipu])     return @"智谱";
+    if ([providerID isEqualToString:ProviderIDDeepSeek])  return @"DeepSeek";
+    if ([providerID isEqualToString:ProviderIDKimi])      return @"Kimi";
+    if ([providerID isEqualToString:ProviderIDOpenAI])    return @"OpenAI";
+    if ([providerID isEqualToString:ProviderIDAnthropic]) return @"Anthropic";
+    if ([providerID isEqualToString:ProviderIDOllama])    return @"Ollama";
+    if ([providerID isEqualToString:@"custom"])           return @"自定义";
     return providerID ?: @"Custom";
 }
 
 + (NSString *)defaultModelForProvider:(NSString *)providerID
 {
-    if ([providerID isEqualToString:ProviderIDZhipu])  return @"glm-4-flash";
-    if ([providerID isEqualToString:ProviderIDOpenAI]) return @"gpt-4o-mini";
-    if ([providerID isEqualToString:ProviderIDOllama]) return @"llama3.2";
+    if ([providerID isEqualToString:ProviderIDZhipu])     return @"glm-4-flash";
+    if ([providerID isEqualToString:ProviderIDDeepSeek])  return @"deepseek-chat";
+    if ([providerID isEqualToString:ProviderIDKimi])      return @"moonshot-v1-8k";
+    if ([providerID isEqualToString:ProviderIDOpenAI])    return @"gpt-4o-mini";
+    if ([providerID isEqualToString:ProviderIDAnthropic]) return @"claude-3-5-haiku-20241022";
+    if ([providerID isEqualToString:ProviderIDOllama])    return @"llama3.2";
     return @"gpt-4o-mini";
 }
 
@@ -255,11 +271,76 @@ enum {
     if ([providerID isEqualToString:ProviderIDZhipu]) {
         return @"https://open.bigmodel.cn/api/paas/v4";
     }
+    if ([providerID isEqualToString:ProviderIDDeepSeek]) {
+        return @"https://api.deepseek.com";
+    }
+    if ([providerID isEqualToString:ProviderIDKimi]) {
+        return @"https://api.moonshot.cn/v1";
+    }
+    if ([providerID isEqualToString:ProviderIDAnthropic]) {
+        return @"https://api.anthropic.com";
+    }
     if ([providerID isEqualToString:ProviderIDOllama]) {
         return @"http://localhost:11434";
     }
     // default + ProviderIDOpenAI
     return @"https://api.openai.com";
+}
+
+// v261025-8: Anthropic speaks its own /v1/messages format; every other
+// provider (incl. Ollama's OpenAI-compat endpoint and all the Chinese
+// vendors) is OpenAI-compatible. NetworkService branches on this.
++ (BOOL)providerUsesAnthropicFormat:(NSString *)providerID
+{
+    return [providerID isEqualToString:ProviderIDAnthropic];
+}
+
+// v261025-8: quick-pick model list for the add-model form (and the
+// ModelMgmt /v1/models search fallback). kind = "chat" | "image".
++ (NSArray *)commonModelsForProvider:(NSString *)providerID kind:(NSString *)kind
+{
+    BOOL image = [kind isEqualToString:@"image"];
+    if (image) {
+        // Only Zhipu + OpenAI (and custom endpoints) have image-gen APIs.
+        if ([providerID isEqualToString:ProviderIDZhipu]) {
+            return @[@"cogview-3plus", @"cogview-4-250304", @"cogview-3-flash"];
+        }
+        if ([providerID isEqualToString:ProviderIDOpenAI]) {
+            return @[@"gpt-image-1", @"dall-e-3", @"dall-e-2"];
+        }
+        return @[];
+    }
+    if ([providerID isEqualToString:ProviderIDZhipu]) {
+        return @[@"glm-4-plus", @"glm-4-air", @"glm-4-flash", @"glm-4-long",
+                 @"glm-4-flashx", @"glm-4v"];
+    }
+    if ([providerID isEqualToString:ProviderIDDeepSeek]) {
+        return @[@"deepseek-chat", @"deepseek-reasoner"];
+    }
+    if ([providerID isEqualToString:ProviderIDKimi]) {
+        return @[@"moonshot-v1-8k", @"moonshot-v1-32k", @"moonshot-v1-128k",
+                 @"kimi-latest"];
+    }
+    if ([providerID isEqualToString:ProviderIDOpenAI]) {
+        return @[@"gpt-4o", @"gpt-4o-mini", @"gpt-4.1", @"gpt-4.1-mini",
+                 @"o4-mini", @"gpt-3.5-turbo"];
+    }
+    if ([providerID isEqualToString:ProviderIDAnthropic]) {
+        return @[@"claude-sonnet-4-20250514", @"claude-3-5-haiku-20241022",
+                 @"claude-3-5-sonnet-20241022", @"claude-3-haiku-20240307"];
+    }
+    if ([providerID isEqualToString:ProviderIDOllama]) {
+        return @[@"llama3.2", @"qwen2.5", @"phi3", @"gemma2"];
+    }
+    return @[];
+}
+
+// v261025-8: does this provider have an image-generation endpoint?
++ (BOOL)providerSupportsImageGen:(NSString *)providerID
+{
+    return [providerID isEqualToString:ProviderIDZhipu] ||
+           [providerID isEqualToString:ProviderIDOpenAI] ||
+           [providerID isEqualToString:@"custom"];
 }
 
 - (void)resetToDefaults
@@ -327,7 +408,10 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         case kSectionTheme:     return 3;  // dark mode, font size, image compression
         case kSectionTransit:    return 6;  // 使用中转 / Transit URL / Provider / 中转网络搜索 / 中转默认模型 / 中转自带模型
         case kSectionDirect:     return 2;
-        case kSectionModel:      return 4;  // Model + 搜索 / hint / 支持图片识别 / 支持思考 (v261024-15: 管理 move to ModelManagementVC)
+        // v261025-8: 模型管理入口（模型/生图模型/能力开关全部集中在
+        // ModelManagementViewController —— 设置页不再重复一份模型表单，
+        // 两处同时维护正是“逻辑乱”的根源）。
+        case kSectionModel:      return 1;
         case kSectionWebSearch:  return 3;
         case kSectionPrompt:     return 1;
         case kSectionAdvanced:   return 1;  // 流式输出
@@ -403,9 +487,9 @@ titleForFooterInSection:(NSInteger)section
         case kSectionTransit:
             return NSLocalizedString(@"中转是预制可关闭的开关。开则所有 AI 请求经中转服务器路由，iOS 6 上规避 TLS 兼容问题。关则直连。中转搜索独立控制 Tavily 走不走中转。默认 api-ai.awa.lat，可自建：github.com/qwq672/online-ai-transit-server", nil);
         case kSectionDirect:
-            return NSLocalizedString(@"直连后端配置。BaseURL 必须 OpenAI 兼容格式。API Key 作 Authorization: Bearer 发出。即使开启中转也可保留此处配置作为回退。", nil);
+            return NSLocalizedString(@"全局默认连接：模型条目未单独指定 BaseURL / API Key 时回退到这里。Anthropic 格式（a/）会自动改用 /v1/messages 协议。", nil);
         case kSectionModel:
-            return NSLocalizedString(@"点「搜索」从 /v1/models 拉取可选模型；也可手填。已保存模型管理请进 管理页 → 模型管理。", nil);
+            return NSLocalizedString(@"对话模型与生图模型都在「模型管理」里添加、分组、切换和测试（支持 智谱 / DeepSeek / Kimi / OpenAI / Anthropic / Ollama）。", nil);
         case kSectionWebSearch:
             return NSLocalizedString(@"开关后 AI 自主决定是否调用 Tavily 搜索（tool_calls 模式）。结果数 1-8。", nil);
         case kSectionAdvanced:
@@ -576,8 +660,17 @@ titleForFooterInSection:(NSInteger)section
     if ([providerID isEqualToString:ProviderIDZhipu]) {
         return @[@"glm-4-plus", @"glm-4-air", @"glm-4-flash", @"glm-4-long"];
     }
+    if ([providerID isEqualToString:ProviderIDDeepSeek]) {
+        return @[@"deepseek-chat", @"deepseek-reasoner"];
+    }
+    if ([providerID isEqualToString:ProviderIDKimi]) {
+        return @[@"moonshot-v1-8k", @"moonshot-v1-32k"];
+    }
     if ([providerID isEqualToString:ProviderIDOpenAI]) {
         return @[@"gpt-4o", @"gpt-4o-mini", @"gpt-4-turbo", @"gpt-3.5-turbo"];
+    }
+    if ([providerID isEqualToString:ProviderIDAnthropic]) {
+        return @[@"claude-3-5-haiku-20241022", @"claude-3-5-sonnet-20241022"];
     }
     if ([providerID isEqualToString:ProviderIDOllama]) {
         return @[@"llama3.2", @"qwen2.5", @"phi3", @"gemma2"];
@@ -677,21 +770,27 @@ titleForFooterInSection:(NSInteger)section
         [cell.contentView addSubview:tf];
         return cell;
     }
-    // row 2: Provider segmented control.
+    // row 2: Provider picker — v261025-8 改成点击行弹 UIActionSheet。
+    // 提供商已扩展到 6 家（智谱/DeepSeek/Kimi/OpenAI/Anthropic/Ollama），
+    // 分段控件放不下；action sheet 每项一行更清楚，还能带副标题。
+    // 该 provider 是「全局默认」—— 模型条目未指定自己的 provider 时用它。
     if (row == 2) {
-    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"Provider", nil)]];
-    UISegmentedControl *seg = [self _themedSegmentedControlWithItems:@[@"OpenAI", @"智谱", @"Ollama"]];
-    NSInteger provIdx = 0;
-    if ([_provider isEqualToString:ProviderIDZhipu]) provIdx = 1;
-    else if ([_provider isEqualToString:ProviderIDOllama]) provIdx = 2;
-    seg.selectedSegmentIndex = provIdx;
-    [seg addTarget:self action:@selector(_providerChanged:)
-     forControlEvents:UIControlEventValueChanged];
-    seg.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    CGRect f = cell.contentView.bounds;
-    seg.frame = CGRectMake(f.size.width - 165 - kPad, (kRowH - 30) / 2, 165, 30);
-    [cell.contentView addSubview:seg];
-    return cell;
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"默认提供商", nil)]];
+        NSString *provName = [SettingsViewController displayNameForProvider:_provider];
+        UILabel *provVal = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
+        provVal.text = provName ?: @"OpenAI";
+        provVal.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
+        provVal.textColor = [iOS6Theme secondaryTextColor];
+        provVal.backgroundColor = [UIColor clearColor];
+        provVal.textAlignment = NSTextAlignmentRight;
+        provVal.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        CGRect pvF = cell.contentView.bounds;
+        provVal.frame = CGRectMake(kPad + kLabelWidth + 8, 0,
+                                   pvF.size.width - kPad - kLabelWidth - 8 - kPad - 26, kRowH);
+        [cell.contentView addSubview:provVal];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+        return cell;
     }
     if (row == 3) {
         // 中转网络搜索服务 toggle (default ON).
@@ -773,66 +872,14 @@ titleForFooterInSection:(NSInteger)section
 
 - (UITableViewCell *)_modelCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
 {
-    if (row == 0) {
-        // Model text field + 搜索 button on the right.
-        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"Model", nil)]];
-        CGRect f = cell.contentView.bounds;
-        // Text field with right side reserved for the search button.
-        CGFloat searchBtnW = 56.0f;
-        CGRect tfFrame = CGRectMake(kPad + kLabelWidth + 8, (kRowH - 30) / 2,
-                                     f.size.width - kPad - kLabelWidth - 8 - kPad - searchBtnW - 8, 30);
-        UITextField *tf = [self _textFieldWithFrame:tfFrame key:SettingsKeyModel placeholder:@"gpt-4o-mini" isSecure:NO keyboardType:UIKeyboardTypeDefault];
-        tf.text = [settings objectForKey:SettingsKeyModel];
-        [cell.contentView addSubview:tf];
-
-        UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
-        [btn setTitle:NSLocalizedString(@"搜索", nil) forState:UIControlStateNormal];
-        [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        btn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
-        btn.backgroundColor = [iOS6Theme tintColor];
-        btn.layer.cornerRadius = 6.0f;
-        btn.layer.masksToBounds = YES;
-        btn.frame = CGRectMake(f.size.width - searchBtnW - kPad, (kRowH - 28) / 2, searchBtnW, 28);
-        btn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-        [btn addTarget:self action:@selector(_searchAvailableModels)
-         forControlEvents:UIControlEventTouchUpInside];
-        [cell.contentView addSubview:btn];
-        return cell;
-    }
-    if (row == 1) {
-        // Hint row about how to use search.
-        cell.textLabel.text = NSLocalizedString(@"点「搜索」可自动列出 /v1/models 的模型；也可手填", nil);
-        cell.textLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
-        cell.textLabel.textColor = [iOS6Theme secondaryTextColor];
-        cell.textLabel.numberOfLines = 2;
-        cell.selectionStyle = UITableViewCellSelectionStyleNone;
-        return cell;
-    }
-    // row 2: "model supports images" toggle.
-    if (row == 2) {
-        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"支持图片识别", nil)]];
-        UISwitch *imgSw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-        BOOL imgSupport = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelSupportsImages];
-        [imgSw setOn:imgSupport animated:NO];
-        [imgSw addTarget:self action:@selector(_imageSupportToggle:)
-         forControlEvents:UIControlEventValueChanged];
-        imgSw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-        CGRect imgSwF = cell.contentView.bounds;
-        imgSw.frame = CGRectMake(imgSwF.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
-        [cell.contentView addSubview:imgSw];
-        return cell;
-    }
-    // row 3: "model supports thinking" toggle (moved from Advanced section).
-    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"支持思考", nil)]];
-    UISwitch *thinkSw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-    BOOL thinkSupport = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelSupportsThinking];
-    [thinkSw setOn:thinkSupport animated:NO];
-    [thinkSw addTarget:self action:@selector(_thinkingSupportToggle:)
-     forControlEvents:UIControlEventValueChanged];
-    thinkSw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    CGRect thinkSwF = cell.contentView.bounds;
-    thinkSw.frame = CGRectMake(thinkSwF.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
-    [cell.contentView addSubview:thinkSw];
+    // v261025-8: 单一入口行 —— 模型的增删改查、分组、生图模型、能力
+    // 开关全部集中在 ModelManagementViewController。设置页旧的
+    // “Model 手填 + /v1/models 搜索 + 能力开关”三套东西和模型管理页
+    // 重复且易失同步 —— 全部移除，只剩这一行入口。
+    cell.textLabel.text = NSLocalizedString(@"模型管理…", nil);
+    cell.textLabel.textColor = [iOS6Theme tintColor];
+    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    cell.selectionStyle = UITableViewCellSelectionStyleBlue;
     return cell;
 }
 
@@ -1000,144 +1047,47 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     if (logical == kSectionReset) {
         [self resetToDefaults];
     }
+    // v261025-8: 模型管理入口行 → push ModelManagementViewController。
+    else if (logical == kSectionModel) {
+        ModelManagementViewController *mm = [[[ModelManagementViewController alloc] init] autorelease];
+        [self.navigationController pushViewController:mm animated:YES];
+    }
+    // v261025-8: 默认提供商行 → 弹提供商选择 sheet（tag 450）。
+    else if (logical == kSectionTransit && indexPath.row == 2) {
+        [self _presentProviderSheet];
+    }
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
 }
 
-- (void)_searchAvailableModels
+// v261025-8: provider picker — 6 家 + 自定义，action sheet 每项一行。
+- (void)_presentProviderSheet
 {
-    NSDictionary *settings = [SettingsViewController loadSettings];
-    BOOL useTransit = [[settings objectForKey:SettingsKeyUseTransit] boolValue];
-    NSString *transitURL = [settings objectForKey:SettingsKeyTransitURL];
-    NSString *baseURL = [settings objectForKey:SettingsKeyBaseURL];
-    NSString *provider = [settings objectForKey:SettingsKeyProvider];
-    NSString *apiKey = [settings objectForKey:SettingsKeyAPIKey];
-
-    [[Logger sharedLogger] info:[NSString stringWithFormat:
-        @"Settings search models — transit=%d provider=%@", (int)useTransit, provider ?: @"?"]];
-
-    UIAlertView *loading = [[[UIAlertView alloc]
-        initWithTitle:NSLocalizedString(@"搜索中…", nil)
-              message:NSLocalizedString(@"正在从 /v1/models 拉取", nil)
-             delegate:nil
-    cancelButtonTitle:nil
-    otherButtonTitles:nil] autorelease];
-    [loading show];
-
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // v261025-1: @autoreleasepool — no pool on GCD worker threads.
-        @autoreleasepool {
-            NetworkService *svc = [[[NetworkService alloc] init] autorelease];
-            NSError *err = nil;
-            NSArray *models = [svc listModelsWithUseTransit:useTransit
-                                                  transitURL:transitURL
-                                                    baseURL:baseURL
-                                                    provider:provider
-                                                     apiKey:apiKey
-                                                       error:&err];
-            NSArray *resultsCopy = [models retain];
-            NSError *errCopy = [err retain];
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [loading dismissWithClickedButtonIndex:-1 animated:NO];
-                if (errCopy || !resultsCopy || [resultsCopy count] == 0) {
-                    NSString *errDesc = [errCopy localizedDescription];
-                    [[Logger sharedLogger] error:[NSString stringWithFormat:
-                        @"Settings search failed — %@",
-                        errDesc ?: @"no models / empty response"]];
-                    UIAlertView *fail = [[[UIAlertView alloc]
-                        initWithTitle:NSLocalizedString(@"未拉到模型", nil)
-                              message:errDesc ?: NSLocalizedString(@"服务器无返回，请检查 BaseURL / API Key", nil)
-                             delegate:nil
-                    cancelButtonTitle:NSLocalizedString(@"好", nil)
-                    otherButtonTitles:nil] autorelease];
-                    [errCopy release];
-                    [resultsCopy release];
-                    [fail show];
-                    return;
-                }
-                [errCopy release];
-                // v261025-1: type-filter + defer sheet to the next runloop
-                // turn (dismiss-then-show-same-tick is the iOS 6 alert/
-                // sheet window-stack corruptor).
-                NSInteger limit = MIN([resultsCopy count], (NSUInteger)8);
-                NSMutableArray *picked = [NSMutableArray array];
-                for (NSInteger i = 0; i < limit; i++) {
-                    NSString *mid = [resultsCopy objectAtIndex:i];
-                    if ([mid isKindOfClass:[NSString class]]) [picked addObject:mid];
-                }
-                self.availableModels = [NSMutableArray arrayWithArray:picked];
-                [[Logger sharedLogger] info:[NSString stringWithFormat:
-                    @"Settings search OK — %lu models", (unsigned long)[picked count]]];
-                [resultsCopy release];
-                [self performSelector:@selector(_presentModelSheet)
-                           withObject:nil
-                           afterDelay:0.1];
-            });
-        }
-    });
-}
-
-- (void)_presentModelSheet
-{
-    // Runs on main, one runloop turn AFTER the loading alert was dismissed.
-    if ([_availableModels count] == 0) return;
     UIActionSheet *sheet = [[[UIActionSheet alloc]
-        initWithTitle:NSLocalizedString(@"选择模型", nil)
-             delegate:self
-    cancelButtonTitle:NSLocalizedString(@"取消", nil)
-destructiveButtonTitle:nil
+        initWithTitle:NSLocalizedString(@"选择默认提供商", nil)
+                 delegate:self
+        cancelButtonTitle:NSLocalizedString(@"取消", nil)
+    destructiveButtonTitle:nil
         otherButtonTitles:nil] autorelease];
     if ([iOS6Theme isDarkMode]) {
         sheet.actionSheetStyle = UIActionSheetStyleBlackOpaque;
     } else {
         sheet.actionSheetStyle = UIActionSheetStyleAutomatic;
     }
-    NSInteger limit = MIN([_availableModels count], (NSUInteger)8);
-    for (NSInteger i = 0; i < limit; i++) {
-        [sheet addButtonWithTitle:[_availableModels objectAtIndex:i]];
+    for (NSString *pid in [SettingsViewController availableProviderIDs]) {
+        [sheet addButtonWithTitle:[SettingsViewController displayNameForProvider:pid]];
     }
-    [sheet setTag:400];
+    [sheet addButtonWithTitle:NSLocalizedString(@"自定义", nil)];
+    [sheet setTag:450];
     [sheet showInView:self.view];
 }
 
-// Handle UIActionSheet for /v1/models search (tag 400).
-// (v261024-15: model-list pick/delete moved to ModelManagementViewController.)
-- (void)actionSheet:(UIActionSheet *)actionSheet
-clickedButtonAtIndex:(NSInteger)buttonIndex
-{
-    // v261025-2: same fix as ModelMgmt — iOS 6 cancel occupies index 0,
-    // real model buttons live at index 1..N. The old code let "取消"
-    // (buttonIndex 0) silently overwrite the default model with the
-    // first search result.
-    if (actionSheet.tag != 400) return;
-    if (buttonIndex == actionSheet.cancelButtonIndex) return;
-    if (buttonIndex < 1) return;
-    NSInteger modelIndex = buttonIndex - 1;
-    if (modelIndex >= (NSInteger)[_availableModels count]) return;
-    NSString *chosen = [_availableModels objectAtIndex:modelIndex];
-    if (![chosen isKindOfClass:[NSString class]] || chosen.length == 0) return;
-    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    [d setObject:chosen forKey:SettingsKeyModel];
-    [d synchronize];
-    [_fields release];
-    _fields = [[NSMutableDictionary alloc] init];
-    [_tableView reloadData];
-}
+// v261025-8: /v1/models 搜索 + tag-400 模型选择 sheet 已随设置页模型表单一起移除
+// —— 模型搜索/选择/管理统一在 ModelManagementViewController。
 
 #pragma mark - Toggle handlers
 
-- (IBAction)_imageSupportToggle:(UISwitch *)sw
-{
-    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyModelSupportsImages];
-    [[NSUserDefaults standardUserDefaults] synchronize];
-    // Post notification so ComposerView updates image button visibility.
-    [[NSNotificationCenter defaultCenter] postNotificationName:@"iOS6ThemeDidChangeNotification" object:nil];
-}
-
-- (IBAction)_thinkingSupportToggle:(UISwitch *)sw
-{
-    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyModelSupportsThinking];
-    [[NSUserDefaults standardUserDefaults] synchronize];
-}
+// v261025-8: 图片识别/思考开关已移至 ModelManagementViewController 的能力段
+// （与设置页重复维护正是逻辑乱源），对应 handler 一并移除。
 
 - (IBAction)_streamingOutputToggle:(UISwitch *)sw
 {
@@ -1266,27 +1216,53 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     [self.tableView reloadData];
 }
 
-- (IBAction)_providerChanged:(UISegmentedControl *)seg
+// v261025-8: provider picker sheet (tag 450). iOS 6 cancel occupies
+// index 0; provider options live at 1..N (6 providers + 自定义 at 7).
+- (void)actionSheet:(UIActionSheet *)actionSheet
+clickedButtonAtIndex:(NSInteger)buttonIndex
 {
+    if (actionSheet.tag != 450) return;
+    if (buttonIndex == actionSheet.cancelButtonIndex) return;
     NSArray *providers = [SettingsViewController availableProviderIDs];
-    // v261025-1: guard against UISegmentedControlNoSegment (-1) — during
-    // cell reuse the index can transiently be -1; objectAtIndex with a
-    // wrapped huge NSUInteger is an instant crash.
-    if (seg.selectedSegmentIndex < 0 ||
-        (NSUInteger)seg.selectedSegmentIndex >= [providers count]) {
-        return;
+    NSInteger modelIndex = buttonIndex - 1;
+    NSString *newProv = nil;
+    if (modelIndex >= 0 && modelIndex < (NSInteger)[providers count]) {
+        newProv = [providers objectAtIndex:modelIndex];
+    } else if (modelIndex == (NSInteger)[providers count]) {
+        newProv = @"custom";
     }
-    NSString *newProv = [providers objectAtIndex:seg.selectedSegmentIndex];
-    if (![newProv isKindOfClass:[NSString class]]) return;
+    if (![newProv isKindOfClass:[NSString class]] || newProv.length == 0) return;
+    [self _applyGlobalProvider:newProv];
+}
+
+// Shared apply: persist provider (+ default model + default baseURL when
+// the current one is empty or still an untouched provider default).
+- (void)_applyGlobalProvider:(NSString *)newProv
+{
     self.provider = newProv;
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
     [d setObject:newProv forKey:SettingsKeyProvider];
     [d setObject:[SettingsViewController defaultModelForProvider:newProv]
       forKey:SettingsKeyModel];
+    // v261025-8: 全局 BaseURL 跟随新提供商 —— 仅当它为空或仍是某家的
+    // 默认值时（用户手填的自定义 URL 永不覆盖）。
+    NSString *curBase = [d stringForKey:SettingsKeyBaseURL] ?: @"";
+    BOOL isDefaultURL = (curBase.length == 0);
+    for (NSString *p in [SettingsViewController availableProviderIDs]) {
+        if ([curBase isEqualToString:[SettingsViewController defaultBaseURLForProvider:p]]) {
+            isDefaultURL = YES;
+            break;
+        }
+    }
+    if (isDefaultURL) {
+        [d setObject:[SettingsViewController defaultBaseURLForProvider:newProv]
+          forKey:SettingsKeyBaseURL];
+    }
     [d synchronize];
     [_fields release];
     _fields = [[NSMutableDictionary alloc] init];
     [_tableView reloadData];
+    [[Logger sharedLogger] info:[NSString stringWithFormat:@"Settings global provider → %@", newProv]];
 }
 
 - (IBAction)_webSearchToggle:(UISwitch *)sw

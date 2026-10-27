@@ -25,6 +25,15 @@ typedef enum {
 @property (nonatomic, strong) NSDate       *createdAt;
 @property (nonatomic, copy)   NSString     *messageID;   // UUID
 
+// v261025-8: image-generation result. When the composer's 生图 toggle is
+// ON, the send path calls the image-generation API instead of the chat
+// stream; the returned PNG is written to Documents/genimg/<file> and this
+// field holds the FILE NAME (not a full path — the sandbox container
+// changes between app updates). The message renders as an image bubble.
+// content (if non-empty) renders as a small caption under the image
+// (typically the prompt the user typed).
+@property (nonatomic, copy)   NSString     *generatedImagePath;
+
 // v261025-6: variant pager — when the user taps "重新生成", the OLD AI
 // response (content + thinking) is snapshot into a variant dict and pushed
 // onto `variants`. The user can then navigate ‹ 1/N › to compare responses.
@@ -41,6 +50,16 @@ typedef enum {
 + (Message *)messageWithRole:(MessageRole)role content:(NSString *)content;
 - (BOOL)isUser;
 - (BOOL)isAssistant;
+
+// v261025-8: is this an image-generation result message? (generatedImagePath
+// non-empty). Convenience for cell rendering / height calc / export.
+- (BOOL)isImageGenResult;
+
+// v261025-8: absolute path for the generated image inside the current
+// sandbox's Documents/genimg directory. Returns nil when the message has
+// no image. The file may not exist (e.g. conversation moved between
+// devices via export) — callers must handle a nil UIImage.
++ (NSString *)absolutePathForGeneratedImage:(NSString *)fileName;
 
 // v261025-6: variant helpers.
 // Push the current LIVE content+thinking onto variants array (used when
