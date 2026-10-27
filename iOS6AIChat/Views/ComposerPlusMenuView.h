@@ -13,9 +13,8 @@
 //      row 2: 生图模式 (UISwitch)  ← ON 时输入框变蓝 (delegate 通知)
 //    Section 1 - 动作 (tap → action)
 //      row 0: 📷 上传/识别图片
-//      row 1: 🔄 切换模型 → 子菜单 (starred 模型列表 + "更多...")
-//      row 2: 👤 切换角色 → 子菜单 (所有角色 + "更多...")
-//      row 3: 🗑 清空当前对话
+//      (v261025-11 精简: 清空对话/更多模型/更多角色 三行已删 — 后两者与
+//       切换模型/切换角色 段末尾的 "更多…" 行完全重复)
 //
 //  呈现: 全屏蒙层 (半透明黑) + 屏幕下 1/3 的圆角白底菜单。
 //  关闭: 点蒙层 / 上滑手势 / 选中模型后自动 / 切到其他 action 后自动。
@@ -38,7 +37,6 @@
   imageGenEnabledChanged:(BOOL)enabled;
 // tap actions — delegate handles the actual picker / navigation / alert.
 - (void)plusMenuDidTapImageUpload:(ComposerPlusMenuView *)menu;
-- (void)plusMenuDidTapClearConversation:(ComposerPlusMenuView *)menu;
 - (void)plusMenuDidTapMoreModels:(ComposerPlusMenuView *)menu;
 - (void)plusMenuDidTapMoreCharacters:(ComposerPlusMenuView *)menu;
 // user picked a specific model / character from the inline submenu.

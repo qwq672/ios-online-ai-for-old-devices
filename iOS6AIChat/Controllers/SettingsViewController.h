@@ -46,6 +46,19 @@ extern NSString *const SettingsKeyTransitModelsLastSearch;
 // the model list). Parallel to SettingsKeyModel which tracks the chat model.
 extern NSString *const SettingsKeyImageGenModel;
 
+// v261025-11: global image-generation FEATURE switch (default ON).
+// When OFF: the composer 加号 menu hides the 生图模式 toggle, ModelMgmt
+// hides the image-model row, and sends never route to the image API.
+extern NSString *const SettingsKeyImageGenFeatureEnabled;
+
+// v261025-11: model-autonomous capability switches (default OFF).
+// "支持自主联网搜索" — the model has built-in web search (no Tavily
+// tool-calls needed); when ON we append a system-prompt hint telling the
+// model to use its own search.
+// "支持自主读取URL" — the model can fetch URLs by itself; same prompt hint.
+extern NSString *const SettingsKeyModelAutonomousWebSearch;
+extern NSString *const SettingsKeyModelAutonomousURLReading;
+
 // v261025-9: the two-tier provider list (new structure, replaces
 // SettingsKeyModelList for fresh installs; old key is auto-migrated on
 // first read of +[ModelManagementViewController savedProviders]).

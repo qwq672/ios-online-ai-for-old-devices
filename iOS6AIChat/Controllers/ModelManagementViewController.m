@@ -1028,7 +1028,15 @@ enum {
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
-    if (section == 0) return 2;                      // 对话模型 + 生图模型
+    if (section == 0) {
+        // v261025-11 (#7): the 生图模型 row (and its section-0 companion
+        // layout) hides when the global image-gen feature switch is OFF.
+        BOOL igFeature = [[NSUserDefaults standardUserDefaults]
+            objectForKey:SettingsKeyImageGenFeatureEnabled]
+            ? [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyImageGenFeatureEnabled]
+            : YES;
+        return igFeature ? 2 : 1;   // 对话模型 (+ 生图模型 when feature ON)
+    }
     NSInteger pIdx = [self _providerIndexForSection:section];
     if (pIdx != NSNotFound) {
         NSDictionary *p = [_providerEntries objectAtIndex:pIdx];
@@ -1118,6 +1126,14 @@ enum {
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
     if (section == 0) {
+        // v261025-11: image-gen feature OFF → the hint never mentions 生图.
+        BOOL igFeature = [[NSUserDefaults standardUserDefaults]
+            objectForKey:SettingsKeyImageGenFeatureEnabled]
+            ? [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyImageGenFeatureEnabled]
+            : YES;
+        if (!igFeature) {
+            return NSLocalizedString(@"点「测试」验证连接；点「搜索」从 /v1/models 拉取可选用模型。", nil);
+        }
         if ([self _hasAnyImageEntry]) {
             return NSLocalizedString(@"点「测试」验证连接；点「搜索」从 /v1/models 拉取可选用模型。", nil);
         }

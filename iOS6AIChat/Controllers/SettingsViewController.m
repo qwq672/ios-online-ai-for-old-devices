@@ -68,6 +68,13 @@ NSString *const ProviderIDOllama   = @"ollama";
 // Parallel to SettingsKeyModel (chat model).
 NSString *const SettingsKeyImageGenModel = @"imageGenModel";
 
+// v261025-11: global image-gen feature switch (default ON).
+NSString *const SettingsKeyImageGenFeatureEnabled = @"imageGenFeatureEnabled";
+
+// v261025-11: model-autonomous capability switches (default OFF).
+NSString *const SettingsKeyModelAutonomousWebSearch = @"modelAutonomousWebSearch";
+NSString *const SettingsKeyModelAutonomousURLReading = @"modelAutonomousURLReading";
+
 // v261025-9: the new two-tier provider list (replaces the flat
 // SettingsKeyModelList for fresh installs). Migration is automatic on the
 // first read of +[ModelManagementViewController savedProviders]: if the
@@ -464,7 +471,11 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                                 SettingsKeyModelList,    // also reset saved model list
                                 SettingsKeyTemperature, SettingsKeySystemPrompt,
                                 SettingsKeyWebSearchEnabled, SettingsKeyTavilyAPIKey,
-                                SettingsKeyTavilyMaxResults]) {
+                                SettingsKeyTavilyMaxResults,
+                                // v261025-11: the three new switches reset too.
+                                SettingsKeyImageGenFeatureEnabled,
+                                SettingsKeyModelAutonomousWebSearch,
+                                SettingsKeyModelAutonomousURLReading]) {
             [d removeObjectForKey:key];
         }
         [d synchronize];
@@ -497,13 +508,19 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     NSInteger logical = [self _logicalSectionForDisplayed:section];
     switch (logical) {
         case kSectionTheme:     return 3;  // dark mode, font size, image compression
-        case kSectionTransit:    return 6;  // 使用中转 / Transit URL / Provider / 中转网络搜索 / 中转默认模型 / 中转自带模型
+        // v261025-11 去重: 6->4 — 删「默认提供商」(与两层 provider 条目体系
+        // 重复, 全局 provider 只剩 fallback 用途) 和「中转默认模型」
+        // (每个模型条目都有明确 id, 让服务器选默认已无意义; NetworkService
+        // 读不到该 key 默认 NO, 行为不变)。
+        case kSectionTransit:    return 4;  // 使用中转 / Transit URL / 中转搜索 / 中转自带模型
         case kSectionDirect:     return 2;
         // v261025-8: 模型管理入口（模型/生图模型/能力开关全部集中在
         // ModelManagementViewController —— 设置页不再重复一份模型表单，
         // 两处同时维护正是“逻辑乱”的根源）。
-        case kSectionModel:      return 1;
-        case kSectionWebSearch:  return 3;
+        // v261025-11: +1 行「生成图片」全局功能开关 (#7)。
+        case kSectionModel:      return 2;
+        // v261025-11: +2 行「支持自主联网搜索」/「支持自主读取URL」(#9)。
+        case kSectionWebSearch:  return 5;
         case kSectionPrompt:     return 1;
         case kSectionAdvanced:   return 1;  // 流式输出
         case kSectionAbout:      return 5;  // author / email / version / github / license
@@ -861,29 +878,9 @@ titleForFooterInSection:(NSInteger)section
         [cell.contentView addSubview:tf];
         return cell;
     }
-    // row 2: Provider picker — v261025-8 改成点击行弹 UIActionSheet。
-    // 提供商已扩展到 6 家（智谱/DeepSeek/Kimi/OpenAI/Anthropic/Ollama），
-    // 分段控件放不下；action sheet 每项一行更清楚，还能带副标题。
-    // 该 provider 是「全局默认」—— 模型条目未指定自己的 provider 时用它。
+    // v261025-11 去重: row 2 is now 中转网络搜索 (默认提供商 row removed —
+    // superseded by the two-tier provider entries in ModelMgmt).
     if (row == 2) {
-        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"默认提供商", nil)]];
-        NSString *provName = [SettingsViewController displayNameForProvider:_provider];
-        UILabel *provVal = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
-        provVal.text = provName ?: @"OpenAI";
-        provVal.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
-        provVal.textColor = [iOS6Theme secondaryTextColor];
-        provVal.backgroundColor = [UIColor clearColor];
-        provVal.textAlignment = NSTextAlignmentRight;
-        provVal.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-        CGRect pvF = cell.contentView.bounds;
-        provVal.frame = CGRectMake(kPad + kLabelWidth + 8, 0,
-                                   pvF.size.width - kPad - kLabelWidth - 8 - kPad - 26, kRowH);
-        [cell.contentView addSubview:provVal];
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        cell.selectionStyle = UITableViewCellSelectionStyleBlue;
-        return cell;
-    }
-    if (row == 3) {
         // 中转网络搜索服务 toggle (default ON).
         [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"中转搜索", nil)]];
         UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
@@ -900,20 +897,9 @@ titleForFooterInSection:(NSInteger)section
         [cell.contentView addSubview:sw];
         return cell;
     }
-    if (row == 4) {
-        // 中转默认模型 toggle (default OFF).
-        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"中转默认模型", nil)]];
-        UISwitch *sw2 = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-        BOOL useServerModel = [[NSUserDefaults standardUserDefaults] boolForKey:@"useServerModel"];
-        [sw2 setOn:useServerModel animated:NO];
-        [sw2 addTarget:self action:@selector(_useServerModelToggle:)
-         forControlEvents:UIControlEventValueChanged];
-        sw2.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-        CGRect f4 = cell.contentView.bounds;
-        sw2.frame = CGRectMake(f4.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
-        [cell.contentView addSubview:sw2];
-        return cell;
-    }
+    // v261025-11 去重: row 3 is now 中转自带模型 (中转默认模型 row removed —
+    // every model entry carries an explicit id in the two-tier structure;
+    // NetworkService's useServerModel read defaults to NO, unchanged).
     // v261025-3 row 5: 中转自带模型 toggle (default OFF) + 上次搜索时间。
     // ON  → fetch GET /v1/transit/models; if enabled, bulk-add models to
     //         local storage with source="transit". If disabled, prompt
@@ -963,14 +949,33 @@ titleForFooterInSection:(NSInteger)section
 
 - (UITableViewCell *)_modelCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
 {
-    // v261025-8: 单一入口行 —— 模型的增删改查、分组、生图模型、能力
-    // 开关全部集中在 ModelManagementViewController。设置页旧的
-    // “Model 手填 + /v1/models 搜索 + 能力开关”三套东西和模型管理页
-    // 重复且易失同步 —— 全部移除，只剩这一行入口。
-    cell.textLabel.text = NSLocalizedString(@"模型管理…", nil);
-    cell.textLabel.textColor = [iOS6Theme tintColor];
-    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-    cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+    if (row == 0) {
+        // v261025-8: 单一入口行 —— 模型的增删改查、分组、生图模型、能力
+        // 开关全部集中在 ModelManagementViewController。设置页旧的
+        // “Model 手填 + /v1/models 搜索 + 能力开关”三套东西和模型管理页
+        // 重复且易失同步 —— 全部移除，只剩这一行入口。
+        cell.textLabel.text = NSLocalizedString(@"模型管理…", nil);
+        cell.textLabel.textColor = [iOS6Theme tintColor];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+        return cell;
+    }
+    // v261025-11 row 1: 生成图片 全局功能开关 (#7, default ON).
+    // OFF → composer 加号菜单隐藏生图 toggle、ModelMgmt 隐藏生图模型行、
+    // 发送永远不走生图 API。
+    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"生成图片", nil)]];
+    UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+    BOOL igFeature = [[NSUserDefaults standardUserDefaults]
+        objectForKey:SettingsKeyImageGenFeatureEnabled]
+        ? [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyImageGenFeatureEnabled]
+        : YES;
+    [sw setOn:igFeature animated:NO];
+    [sw addTarget:self action:@selector(_imageGenFeatureToggle:)
+     forControlEvents:UIControlEventValueChanged];
+    sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    CGRect f = cell.contentView.bounds;
+    sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+    [cell.contentView addSubview:sw];
     return cell;
 }
 
@@ -999,6 +1004,36 @@ titleForFooterInSection:(NSInteger)section
         UITextField *tf = [self _textFieldWithFrame:tfFrame key:SettingsKeyTavilyAPIKey placeholder:@"tvly-..." isSecure:YES keyboardType:UIKeyboardTypeDefault];
         tf.text = [settings objectForKey:SettingsKeyTavilyAPIKey];
         [cell.contentView addSubview:tf];
+        return cell;
+    }
+    // v261025-11 rows 3-4 (#9): model-autonomous capability switches.
+    // These are NOT the Tavily tool-call path — they tell models with
+    // built-in browsing / URL-reading (via system prompt hints) to use
+    // their own abilities instead of (or alongside) tool calls.
+    if (row == 3) {
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"自主联网搜索", nil)]];
+        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+        BOOL on = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelAutonomousWebSearch];
+        [sw setOn:on animated:NO];
+        [sw addTarget:self action:@selector(_autoWebSearchToggle:)
+         forControlEvents:UIControlEventValueChanged];
+        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f = cell.contentView.bounds;
+        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+        [cell.contentView addSubview:sw];
+        return cell;
+    }
+    if (row == 4) {
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"自主读取URL", nil)]];
+        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+        BOOL on = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelAutonomousURLReading];
+        [sw setOn:on animated:NO];
+        [sw addTarget:self action:@selector(_autoURLReadToggle:)
+         forControlEvents:UIControlEventValueChanged];
+        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f = cell.contentView.bounds;
+        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+        [cell.contentView addSubview:sw];
         return cell;
     }
     // row 2: max results stepper + value label.
@@ -1143,10 +1178,7 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
         ModelManagementViewController *mm = [[[ModelManagementViewController alloc] init] autorelease];
         [self.navigationController pushViewController:mm animated:YES];
     }
-    // v261025-8: 默认提供商行 → 弹提供商选择 sheet（tag 450）。
-    else if (logical == kSectionTransit && indexPath.row == 2) {
-        [self _presentProviderSheet];
-    }
+    // v261025-11: 默认提供商行已删（去重）— provider sheet 触发随之移除。
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
 }
 
@@ -1186,9 +1218,35 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
+// v261025-11: useServerModel toggle row was removed from the UI (去重) —
+// the handler stays so old builds' persisted state still resolves, and the
+// default (key absent = NO) keeps NetworkService's behavior unchanged.
 - (IBAction)_useServerModelToggle:(UISwitch *)sw
 {
     [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"useServerModel"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+// v261025-11 (#7): global image-gen feature switch.
+- (IBAction)_imageGenFeatureToggle:(UISwitch *)sw
+{
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyImageGenFeatureEnabled];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    // Broadcast a theme change so every visible surface (composer badge,
+    // plus-menu rows, ModelMgmt 生图 row) refreshes immediately.
+    [[NSNotificationCenter defaultCenter] postNotificationName:iOS6ThemeDidChangeNotification
+                                                        object:nil];
+}
+
+// v261025-11 (#9): model-autonomous capability switches.
+- (IBAction)_autoWebSearchToggle:(UISwitch *)sw
+{
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyModelAutonomousWebSearch];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+- (IBAction)_autoURLReadToggle:(UISwitch *)sw
+{
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyModelAutonomousURLReading];
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 

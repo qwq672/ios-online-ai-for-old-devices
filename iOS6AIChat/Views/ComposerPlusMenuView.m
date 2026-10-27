@@ -23,9 +23,11 @@ enum {
 
 enum {
     kPMActionImageUpload = 0,
-    kPMActionClearConversation,
-    kPMActionMoreModels,
-    kPMActionMoreCharacters,
+    // v261025-11 精简 (user feedback #6): dropped kPMActionClearConversation
+    // (low-frequency + destructive — history long-press delete covers it)
+    // and kPMActionMoreModels / kPMActionMoreCharacters (exact duplicates
+    // of the trailing "更多…" row already present in the 切换模型 /
+    // 切换角色 sections). The action section now holds image upload only.
     kPMActionCount
 };
 
@@ -115,15 +117,23 @@ enum {
         _dimLayer = [[UIView alloc] initWithFrame:parentView.bounds];
         _dimLayer.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
                                       UIViewAutoresizingFlexibleHeight);
-        _dimLayer.backgroundColor = [UIColor colorWithRed:0.0f green:0.0f
-                                                    blue:0.0f alpha:0.4f];
         _dimLayer.opaque = NO;
         // Tap to dismiss.
         UITapGestureRecognizer *tap = [[[UITapGestureRecognizer alloc]
             initWithTarget:self action:@selector(dismissAnimated)] autorelease];
         [_dimLayer addGestureRecognizer:tap];
     }
+    // v261025-11 BUG FIX ("半屏菜单的遮罩没了"): the old code animated
+    // _dimLayer.alpha to 1.0 INSIDE the slide-up block — but after the
+    // previous dismissAnimated left it at 0.0, the beginAnimations combo
+    // on a freshly re-added subview could settle at 0 on iOS 6 (and the
+    // 0.4 black was nearly invisible over the dark-mode charcoal chat
+    // backdrop anyway). Fix: set alpha = 1.0 OUTSIDE the animation block
+    // (guaranteed visible), and use a deeper 0.55 tint in dark mode.
+    _dimLayer.backgroundColor = [UIColor colorWithRed:0.0f green:0.0f blue:0.0f
+                                                 alpha:([iOS6Theme isDarkMode] ? 0.55f : 0.4f)];
     _dimLayer.frame = parentView.bounds;
+    _dimLayer.alpha = 1.0f;
     [parentView addSubview:_dimLayer];
     // Place the menu panel at the bottom, offscreen to start.
     CGRect pb = parentView.bounds;
@@ -141,8 +151,6 @@ enum {
     CGRect f = self.frame;
     f.origin.y = pb.size.height - menuH;
     self.frame = f;
-    // Fade in dim.
-    _dimLayer.alpha = 1.0f;
     [UIView commitAnimations];
 }
 
@@ -200,7 +208,13 @@ enum {
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
-    if (section == kPMSectionToggles) return 3;
+    // v261025-11: image-gen toggle row only shows when the global
+    // image-gen FEATURE switch is ON (Settings #7). Default ON.
+    BOOL igFeature = [[NSUserDefaults standardUserDefaults]
+        objectForKey:SettingsKeyImageGenFeatureEnabled]
+        ? [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyImageGenFeatureEnabled]
+        : YES;
+    if (section == kPMSectionToggles) return igFeature ? 3 : 2;
     if (section == kPMSectionActions) return kPMActionCount;
     if (section == kPMSectionModels) {
         // starredChatModels + starredImageModels + 1 row for "更多...".
@@ -298,6 +312,8 @@ enum {
             on = [ComposerView webSearchEnabled];
             tag = 201;
         } else {
+            // v261025-11: only reachable when the image-gen feature
+            // switch is ON (numberOfRows hides the row otherwise).
             label = NSLocalizedString(@"生图模式", nil);
             on = [ComposerView imageGenEnabled];
             tag = 202;
@@ -332,24 +348,8 @@ enum {
     }
 
     if (indexPath.section == kPMSectionActions) {
-        switch (indexPath.row) {
-            case kPMActionImageUpload:
-                cell.textLabel.text = NSLocalizedString(@"📷 上传/识别图片", nil);
-                break;
-            case kPMActionClearConversation:
-                cell.textLabel.text = NSLocalizedString(@"🗑 清空当前对话", nil);
-                cell.textLabel.textColor = [UIColor redColor];
-                break;
-            case kPMActionMoreModels:
-                cell.textLabel.text = NSLocalizedString(@"更多模型…", nil);
-                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-                cell.textLabel.textColor = [iOS6Theme tintColor];
-                break;
-            case kPMActionMoreCharacters:
-                cell.textLabel.text = NSLocalizedString(@"更多角色…", nil);
-                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-                cell.textLabel.textColor = [iOS6Theme tintColor];
-                break;
+        if (indexPath.row == kPMActionImageUpload) {
+            cell.textLabel.text = NSLocalizedString(@"📷 上传/识别图片", nil);
         }
         return cell;
     }
@@ -412,31 +412,11 @@ enum {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     if (indexPath.section == kPMSectionToggles) return;  // toggle via UISwitch
     if (indexPath.section == kPMSectionActions) {
-        switch (indexPath.row) {
-            case kPMActionImageUpload:
-                if ([_delegate respondsToSelector:@selector(plusMenuDidTapImageUpload:)]) {
-                    [_delegate plusMenuDidTapImageUpload:self];
-                }
-                [self dismissAnimated];
-                return;
-            case kPMActionClearConversation:
-                if ([_delegate respondsToSelector:@selector(plusMenuDidTapClearConversation:)]) {
-                    [_delegate plusMenuDidTapClearConversation:self];
-                }
-                [self dismissAnimated];
-                return;
-            case kPMActionMoreModels:
-                if ([_delegate respondsToSelector:@selector(plusMenuDidTapMoreModels:)]) {
-                    [_delegate plusMenuDidTapMoreModels:self];
-                }
-                [self dismissAnimated];
-                return;
-            case kPMActionMoreCharacters:
-                if ([_delegate respondsToSelector:@selector(plusMenuDidTapMoreCharacters:)]) {
-                    [_delegate plusMenuDidTapMoreCharacters:self];
-                }
-                [self dismissAnimated];
-                return;
+        if (indexPath.row == kPMActionImageUpload) {
+            if ([_delegate respondsToSelector:@selector(plusMenuDidTapImageUpload:)]) {
+                [_delegate plusMenuDidTapImageUpload:self];
+            }
+            [self dismissAnimated];
         }
         return;
     }

@@ -129,7 +129,8 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 // lineFragmentPadding 5pt per side (NOT settable pre-iOS 7).
 + (CGFloat)unifiedTextWidthForOuterWidth:(CGFloat)outerWidth
 {
-    CGFloat pad = 12.0f;
+    // v261025-11 紧凑化: pad 12→8 (气泡可占屏更宽, 3GS 上多 8pt)。
+    CGFloat pad = 8.0f;
     CGFloat maxBubbleWidth = outerWidth - 2 * pad;
     maxBubbleWidth = MIN(maxBubbleWidth, 280.0f);
     CGFloat w = maxBubbleWidth - 2 * 4 - 2 * 10 - 2 * 5;  // = maxBubbleWidth - 38
@@ -364,7 +365,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         // v261025-4 SIGSEGV crash family was this exact bug.
         _thinkingBgUIColor = [[iOS6Theme thinkingBackgroundColor] retain];
         _thinkingBlock.backgroundColor = _thinkingBgUIColor;
-        _thinkingBlock.layer.cornerRadius = 6.0f;
+        _thinkingBlock.layer.cornerRadius = 10.0f;   // v261025-11: 6->10, harmonized with outer bubble R14
         _thinkingBlock.layer.borderWidth = 1.0f;
         _thinkingBorderUIColor = [[iOS6Theme thinkingBorderColor] retain];
         _thinkingBlock.layer.borderColor = [_thinkingBorderUIColor CGColor];
@@ -845,10 +846,10 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 
 - (void)_layoutInternal
 {
-    CGFloat pad = 12.0f;
+    CGFloat pad = 8.0f;               // v261025-11: 12->8
     CGFloat bubbleInnerHPad = 10.0f;
-    CGFloat bubbleInnerVPad = 7.0f;
-    CGFloat verticalPad = 6.0f;
+    CGFloat bubbleInnerVPad = 5.0f;   // v261025-11: 7->5
+    CGFloat verticalPad = 3.0f;       // v261025-11: 6->3
     CGFloat maxBubbleWidth = self.bounds.size.width - 2 * pad;
     maxBubbleWidth = MIN(maxBubbleWidth, 280.0f);
 
@@ -951,7 +952,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // clipped by the bubble's tail drawing — iOS 6 boundingRectWithSize
     // systematically under-reports CJK line heights by 1-3pt per line.
     CGFloat tailHeight = 6.0f;
-    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + tailHeight + 12
+    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + tailHeight + 9
                           + thinkingH + imagesH + genImgH;
     if (bubbleHeight < 40) bubbleHeight = 40;
 
@@ -1076,9 +1077,9 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         return [cached floatValue];
     }
 
-    CGFloat pad = 12.0f;
-    CGFloat bubbleInnerVPad = 7.0f;
-    CGFloat verticalPad = 6.0f;
+    CGFloat pad = 8.0f;               // v261025-11: 12->8 (sync with _layoutInternal)
+    CGFloat bubbleInnerVPad = 5.0f;   // v261025-11: 7->5
+    CGFloat verticalPad = 3.0f;       // v261025-11: 6->3
     // v261024-16: unified width — MUST match _applyMessageInternal and
     // _layoutInternal so the row height reflects the rendered wrap.
     CGFloat availTextWidth = [ChatMessageCell unifiedTextWidthForOuterWidth:width];
@@ -1160,7 +1161,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         CGFloat genImgH = gimgW;   // square estimate (AspectFit if not)
         CGFloat captionH = textRect.size.height;
         if (captionH < 20) captionH = 20;
-        CGFloat genBubbleHeight = genImgH + captionH + 2 * bubbleInnerVPad + 6 + 12;
+        CGFloat genBubbleHeight = genImgH + captionH + 2 * bubbleInnerVPad + 6 + 9;
         CGFloat genResult = genBubbleHeight + 2 * verticalPad + 26;  // buttons
         if (genResult < 50) genResult = 50;
         [gHeightCache setObject:[NSNumber numberWithFloat:genResult] forKey:cacheKey];
@@ -1176,7 +1177,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // the same 26pt action-button allowance as AI messages.
     BOOL hasActionButtons = (message.content.length > 0);  // both roles
     CGFloat buttonH = hasActionButtons ? 26 : 0;
-    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + 6 + 12
+    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + 6 + 9
                           + thinkingH + imagesH;
     CGFloat result = bubbleHeight + 2 * verticalPad + buttonH;
     if (result < 50) result = 50;

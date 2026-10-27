@@ -361,17 +361,16 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
 - (void)_installDrawerButton
 {
-    // iOS 6 renders bar-button images as-is (no auto tint like iOS 7+),
-    // so the icon is drawn in the current bar-item tint colour and
-    // re-created whenever the theme flips.
-    UIImage *menuIcon = [IconDrawing imageForType:IconTypeHamburger
-                                            size:CGSizeMake(22, 22)
-                                           color:[iOS6Theme barItemTintColor]];
+    // v261025-11 (#12): the hand-drawn hamburger icon looked off (user
+    // report "菜单按钮的图标太奇怪"). A plain TEXT bar button is the most
+    // native iOS 6 idiom — pre-iOS-7 Apple apps used titled bordered
+    // buttons, not hamburger glyphs. Matches the drawer navbar's
+    // "+ 新对话" bordered style.
     UIBarButtonItem *menuBtn =
-        [[[UIBarButtonItem alloc] initWithImage:menuIcon
-                                          style:UIBarButtonItemStyleBordered
-                                         target:self
-                                         action:@selector(_toggleDrawer)] autorelease];
+        [[[UIBarButtonItem alloc] initWithTitle:NSLocalizedString(@"菜单", nil)
+                                         style:UIBarButtonItemStyleBordered
+                                        target:self
+                                        action:@selector(_toggleDrawer)] autorelease];
     self.navigationItem.leftBarButtonItem = menuBtn;
 }
 
@@ -623,31 +622,6 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     // ComposerView owns the UIImagePickerController delegate + the
     // _pendingImages array; just hand the picker presentation over.
     [_composer presentImagePickerFromViewController:self];
-}
-
-- (void)plusMenuDidTapClearConversation:(ComposerPlusMenuView *)menu
-{
-    // Confirm before clearing the active conversation.
-    if (!_conversation || _conversation.messages.count == 0) {
-        // Nothing to clear — just dismiss (already auto-dismissed by menu,
-        // but show a hint alert for UX).
-        UIAlertView *av = [[[UIAlertView alloc]
-            initWithTitle:NSLocalizedString(@"当前对话为空", nil)
-                  message:nil
-                 delegate:nil
-        cancelButtonTitle:NSLocalizedString(@"好", nil)
-        otherButtonTitles:nil] autorelease];
-        [av show];
-        return;
-    }
-    UIAlertView *av = [[[UIAlertView alloc]
-        initWithTitle:NSLocalizedString(@"清空当前对话?", nil)
-              message:NSLocalizedString(@"所有消息将删除且不可撤销。", nil)
-             delegate:self
-    cancelButtonTitle:NSLocalizedString(@"取消", nil)
-    otherButtonTitles:NSLocalizedString(@"清空", nil), nil] autorelease];
-    [av setTag:750];
-    [av show];
 }
 
 - (void)plusMenuDidTapMoreModels:(ComposerPlusMenuView *)menu
@@ -1028,6 +1002,24 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     if (deepThinking) {
         systemPrompt = [NSString stringWithFormat:
             @"%@ Think step by step before answering. Reasoning goes in reasoning_content, not in the answer.",
+            systemPrompt];
+    }
+
+    // v261025-11 (#9): model-autonomous capability hints. These target
+    // models with BUILT-IN browsing/URL-reading (no tool_calls needed) —
+    // the system prompt tells the model it may (and should) use its own
+    // abilities for fresh information instead of relying on the client's
+    // Tavily tool calls.
+    BOOL autoWeb = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelAutonomousWebSearch];
+    BOOL autoURL = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelAutonomousURLReading];
+    if (autoWeb) {
+        systemPrompt = [NSString stringWithFormat:
+            @"%@ You have built-in web search capability — proactively search the web for current information when it would improve your answer.",
+            systemPrompt];
+    }
+    if (autoURL) {
+        systemPrompt = [NSString stringWithFormat:
+            @"%@ You can read URLs directly — when the user mentions a link or asks about a web page, fetch and use its actual content.",
             systemPrompt];
     }
 
@@ -1658,18 +1650,6 @@ didFailForConversationID:(NSString *)conversationID
 - (void)alertView:(UIAlertView *)alertView
 clickedButtonAtIndex:(NSInteger)buttonIndex
 {
-    // v261025-10: tag 750 = 清空当前对话确认.
-    if (alertView.tag == 750) {
-        if (buttonIndex != 1) return;   // 取消
-        if (_conversation) {
-            [_conversation.messages removeAllObjects];
-            [[ConversationStore sharedStore] saveConversation:_conversation];
-            [self _reload];
-            [self _updateEmptyPlaceholder];
-            [[Logger sharedLogger] info:@"CHAT ⊕ cleared current conversation"];
-        }
-        return;
-    }
     if (alertView.tag != 600) return;
     // buttonIndex 0 = 取消, 1 = 发送.
     if (buttonIndex != 1) {

@@ -967,9 +967,15 @@ static const uint8_t kNoiseCells[24] = {
         }
         // 2) Fixed-height gloss band (y 2..26 — inside the top cap so it
         //    never stretches): white 0.62 → 0.
+        //    v261025-11: DARK MODE tuned — 0.62 white over the dark
+        //    charcoal/green bubbles read as a glaring white band (user
+        //    report "深色模式下的聊天气泡高光看着奇怪"). Dark uses a much
+        //    softer 0.22 (user) / 0.16 (assistant) gloss; light keeps
+        //    the classic 0.62.
+        CGFloat glossA = dark ? (isUser ? 0.22f : 0.16f) : 0.62f;
         CGColorSpaceRef gs = CGColorSpaceCreateDeviceRGB();
         if (gs) {
-            CGColorRef g0 = CGColorRetain([UIColor colorWithWhite:1.0f alpha:0.62f].CGColor);
+            CGColorRef g0 = CGColorRetain([UIColor colorWithWhite:1.0f alpha:glossA].CGColor);
             CGColorRef g1 = CGColorRetain([UIColor colorWithWhite:1.0f alpha:0.0f].CGColor);
             if (g0 && g1) {
                 const void *vals[] = { g0, g1 };
@@ -992,8 +998,13 @@ static const uint8_t kNoiseCells[24] = {
             CGColorSpaceRelease(gs);
         }
         // 3) 1px inner top highlight.
+        //    v261025-11: DARK MODE tuned — 0.85 white on dark assistant
+        //    bubbles was a harsh bright line. Dark: 0.38 (user) / 0.30
+        //    (assistant); light keeps 0.55 / 0.85.
+        CGFloat hlA = dark ? (isUser ? 0.38f : 0.30f)
+                           : (isUser ? 0.55f : 0.85f);
         CGContextSetStrokeColorWithColor(ctx, [UIColor colorWithWhite:1.0f
-            alpha:(isUser ? 0.55f : 0.85f)].CGColor);
+            alpha:hlA].CGColor);
         CGContextSetLineWidth(ctx, 1.0f);
         CGContextMoveToPoint(ctx, body.origin.x + 5.0f, body.origin.y + 1.5f);
         CGContextAddLineToPoint(ctx, body.origin.x + body.size.width - 5.0f,

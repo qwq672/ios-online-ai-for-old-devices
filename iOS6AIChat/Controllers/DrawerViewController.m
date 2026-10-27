@@ -96,10 +96,13 @@ static NSInteger const kMaxRecent = 6;
 
     // Full-screen sheet (slides from above the screen).
     UIView      *_sheetView;
-    UIImageView *_sheetBar;        // leather top bar
-    UIButton    *_doneButton;
-    UIButton    *_newChatButton;
-    UILabel     *_sheetTitle;
+    // v261025-11 (#12): the hand-rolled leather bar (UIImageView + custom
+    // glass buttons + embossed title label) replaced with a NATIVE iOS 6
+    // UINavigationBar — system-drawn gradient/bevel in both themes, native
+    // bar-button-item styling, zero custom chrome to maintain.
+    UINavigationBar *_navBar;
+    BOOL _recentExpanded;          // v261025-11 (#5): 显示更多… toggle
+    NSInteger _recentTotalCount;   // v261025-11 (#5): total usable convs
 
     // Search.
     UITextField *_searchField;
@@ -161,10 +164,7 @@ static NSInteger const kMaxRecent = 6;
     [_pendingPushVC release];
     [_mainNav release];
     [_sheetView release];
-    [_sheetBar release];
-    [_doneButton release];
-    [_newChatButton release];
-    [_sheetTitle release];
+    [_navBar release];   // v261025-11: replaces sheetBar/doneButton/newChatButton/sheetTitle
     [_searchField release];
     [_searchSlot release];
     [_menuTable release];
@@ -230,72 +230,35 @@ static NSInteger const kMaxRecent = 6;
     _sheetView.hidden = YES;
     [self.view addSubview:_sheetView];
 
-    // --- Leather top bar --------------------------------------------------
-    _sheetBar = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, W, kSheetBarH)];
-    _sheetBar.image = [iOS6Theme menuLeatherBarImage];
-    _sheetBar.userInteractionEnabled = YES;
-    _sheetBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [_sheetView addSubview:_sheetBar];
+    // --- v261025-11 (#12): NATIVE iOS 6 UINavigationBar --------------------
+    // Replaces the hand-rolled leather UIImageView + custom glass buttons
+    // + embossed title (4 hand-maintained views → 1 system bar). The system
+    // draws the gradient/bevel correctly in BOTH themes; bar buttons get
+    // native Done / Bordered styling for free.
+    _navBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 20.0f, W, 44.0f)];
+    _navBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    // Dark mode → black translucent style; light → default (blue-gradient).
+    if ([iOS6Theme isDarkMode]) {
+        _navBar.barStyle = UIBarStyleBlack;
+    } else {
+        _navBar.barStyle = UIBarStyleDefault;
+    }
+    [_sheetView addSubview:_navBar];
 
-    // 完成 (Done) — bordered translucent glass bar button, left.
-    // v261025-6: 按钮 Y 从 30 → 20 (kSheetBarH=50, status bar 20pt 占据 0-20,
-    // 可见皮革区 20-50 共 30pt，按钮高 30pt 恰好填满)。
-    // v261025-7 CRITICAL: buttonWithType: returns AUTORELEASED (+0);
-    // retain here or dealloc over-releases (same crash family as
-    // ChatMessageCell — see that file's writeup).
-    _doneButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
-    _doneButton.frame = CGRectMake(8.0f, 20.0f, 64.0f, 30.0f);
-    _doneButton.autoresizingMask = UIViewAutoresizingFlexibleRightMargin;
-    _doneButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [_doneButton setTitle:NSLocalizedString(@"完成", nil)
-                  forState:UIControlStateNormal];
-    [_doneButton setTitleColor:[UIColor whiteColor]
-                      forState:UIControlStateNormal];
-    [_doneButton setTitleColor:[UIColor colorWithWhite:1.0f alpha:0.55f]
-                      forState:UIControlStateHighlighted];
-    _doneButton.titleLabel.shadowColor = [UIColor colorWithWhite:0.0f alpha:0.5f];
-    _doneButton.titleLabel.shadowOffset = CGSizeMake(0, 1);
-    _doneButton.backgroundColor = [UIColor clearColor];
-    [_doneButton setBackgroundImage:[self _sheetBarButtonImageOfSize:_doneButton.frame.size]
-                          forState:UIControlStateNormal];
-    [_doneButton addTarget:self action:@selector(_doneTapped)
-          forControlEvents:UIControlEventTouchUpInside];
-    [_sheetBar addSubview:_doneButton];
-
-    // 新对话 (New chat) — bordered glass bar button, right.
-    // NOTE: plain ASCII "+" — U+271A heavy-cross may lack a glyph in
-    // iOS 6 Helvetica; never gamble on exotic codepoints there.
-    _newChatButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
-    _newChatButton.frame = CGRectMake(W - 8.0f - 72.0f, 20.0f, 72.0f, 30.0f);
-    _newChatButton.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    _newChatButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [_newChatButton setTitle:NSLocalizedString(@"+ 新对话", nil)
-                  forState:UIControlStateNormal];
-    [_newChatButton setTitleColor:[UIColor whiteColor]
-                        forState:UIControlStateNormal];
-    [_newChatButton setTitleColor:[UIColor colorWithWhite:1.0f alpha:0.55f]
-                        forState:UIControlStateHighlighted];
-    _newChatButton.titleLabel.shadowColor = [UIColor colorWithWhite:0.0f alpha:0.5f];
-    _newChatButton.titleLabel.shadowOffset = CGSizeMake(0, 1);
-    _newChatButton.backgroundColor = [UIColor clearColor];
-    [_newChatButton setBackgroundImage:[self _sheetBarButtonImageOfSize:_newChatButton.frame.size]
-                          forState:UIControlStateNormal];
-    [_newChatButton addTarget:self action:@selector(_newChatTapped)
-          forControlEvents:UIControlEventTouchUpInside];
-    [_sheetBar addSubview:_newChatButton];
-
-    // Centered embossed title.
-    _sheetTitle = [[UILabel alloc] initWithFrame:CGRectMake(80, 20, W - 160, 30)];
-    _sheetTitle.text = NSLocalizedString(@"菜单", nil);
-    _sheetTitle.textAlignment = NSTextAlignmentCenter;
-    _sheetTitle.font = [UIFont boldSystemFontOfSize:19];
-    _sheetTitle.backgroundColor = [UIColor clearColor];
-    _sheetTitle.textColor = [UIColor whiteColor];
-    _sheetTitle.shadowColor = [UIColor colorWithWhite:0.0f alpha:0.65f];
-    _sheetTitle.shadowOffset = CGSizeMake(0, 1);
-    _sheetTitle.autoresizingMask = (UIViewAutoresizingFlexibleLeftMargin |
-                                    UIViewAutoresizingFlexibleRightMargin);
-    [_sheetBar addSubview:_sheetTitle];
+    UINavigationItem *item = [[[UINavigationItem alloc]
+        initWithTitle:NSLocalizedString(@"菜单", nil)] autorelease];
+    // Left: native Done bar button (system-drawn, classic iOS 6 blue).
+    item.leftBarButtonItem = [[[UIBarButtonItem alloc]
+        initWithBarButtonSystemItem:UIBarButtonSystemItemDone
+                             target:self
+                             action:@selector(_doneTapped)] autorelease];
+    // Right: bordered bar button (native style, not custom-drawn).
+    item.rightBarButtonItem = [[[UIBarButtonItem alloc]
+        initWithTitle:NSLocalizedString(@"+ 新对话", nil)
+                style:UIBarButtonItemStyleBordered
+               target:self
+               action:@selector(_newChatTapped)] autorelease];
+    [_navBar pushNavigationItem:item animated:NO];
 
     // --- Search slot -------------------------------------------------------
     _searchSlot = [[UIImageView alloc] initWithFrame:CGRectMake(10, kSearchY, W - 20, kSearchH)];
@@ -343,57 +306,20 @@ static NSInteger const kMaxRecent = 6;
     [self _styleSheet];
 }
 
-// Bordered translucent-glass bar button for the leather bar. Dark glass
-// with a light hairline — matches the graphite bar in BOTH themes
-// (the sheet's bar is always graphite, Reminders reference).
-- (UIImage *)_sheetBarButtonImageOfSize:(CGSize)size
-{
-    if (size.width < 4 || size.height < 4) return nil;
-    CGFloat scale = [UIScreen mainScreen].scale;
-    if (scale < 1) scale = 1;
-    UIGraphicsBeginImageContextWithOptions(size, NO, scale);
-    CGContextRef ctx = UIGraphicsGetCurrentContext();
-    if (!ctx) {
-        UIGraphicsEndImageContext();
-        return nil;
-    }
-    CGFloat r = 5.0f;
-    CGRect rect = CGRectMake(0.5f, 0.5f, size.width - 1.0f, size.height - 1.0f);
-    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:rect cornerRadius:r];
-
-    CGContextSaveGState(ctx);
-    CGContextAddPath(ctx, path.CGPath);
-    CGContextClip(ctx);
-    [iOS6Theme drawLinearGradientInRect:rect context:ctx
-        topColor:[iOS6Theme colorWithHex:@"#5E5E66"]
-        bottomColor:[iOS6Theme colorWithHex:@"#2E2E34"]];
-    [iOS6Theme drawGlossInRect:CGRectMake(0, 0, size.width, size.height * 0.5f)
-                        context:ctx];
-    CGContextRestoreGState(ctx);
-
-    // Light hairline border + inner top highlight.
-    CGContextSetStrokeColorWithColor(ctx, [iOS6Theme colorWithHex:@"#8A8A92"].CGColor);
-    CGContextSetLineWidth(ctx, 1.0f);
-    CGContextAddPath(ctx, path.CGPath);
-    CGContextStrokePath(ctx);
-    CGContextSetStrokeColorWithColor(ctx, [UIColor colorWithWhite:1.0f alpha:0.35f].CGColor);
-    CGContextMoveToPoint(ctx, 3, 1.5f);
-    CGContextAddLineToPoint(ctx, size.width - 3, 1.5f);
-    CGContextStrokePath(ctx);
-
-    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    return img;   // autoreleased; drawn once per button creation
-}
 
 - (void)_styleSheet
 {
-    if (!_sheetView || !_menuTable || !_searchField || !_sheetTitle) {
+    if (!_sheetView || !_menuTable || !_searchField || !_navBar) {
         NSLog(@"[MenuSheet] _styleSheet: missing subview — skip");
         return;
     }
     _sheetView.backgroundColor = [iOS6Theme pinstripeBackground];
-    _sheetBar.image = [iOS6Theme menuLeatherBarImage];
+    // v261025-11 (#12): native navbar re-styles on theme flip.
+    if ([iOS6Theme isDarkMode]) {
+        _navBar.barStyle = UIBarStyleBlack;
+    } else {
+        _navBar.barStyle = UIBarStyleDefault;
+    }
     _searchSlot.image = [iOS6Theme stretchableRecessedSlotImage];
     // v261025-5: _stripSlot removed (chips strip gone).
 
@@ -657,7 +583,10 @@ static NSInteger const kMaxRecent = 6;
             [usable addObject:c];
         }
     }
-    if ([usable count] > kMaxRecent) {
+    // v261025-11 (#5): track the TOTAL usable count so the menu knows
+    // whether to render the "显示更多…" row; when expanded, show all.
+    _recentTotalCount = (NSInteger)[usable count];
+    if (!_recentExpanded && [usable count] > kMaxRecent) {
         usable = [[[usable subarrayWithRange:NSMakeRange(0, kMaxRecent)] copy] autorelease];
     }
     [_recentConversations release];
@@ -844,7 +773,13 @@ replacementString:(NSString *)string
     //   2 = recent (最近对话, 0..kMaxRecent 行)
     if (section == kMenuSectionChat)    return kMenuRowChatCount;
     if (section == kMenuSectionManage)  return kMenuRowManageCount;
-    return (NSInteger)[_recentConversations count];  // kMenuSectionRecent
+    // v261025-11 (#5): +1 row for "显示更多…" when collapsed and there
+    // are more conversations than kMaxRecent.
+    {
+        NSInteger rows = (NSInteger)[_recentConversations count];
+        if (!_recentExpanded && _recentTotalCount > kMaxRecent) rows += 1;
+        return rows;
+    }
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
@@ -920,6 +855,28 @@ replacementString:(NSString *)string
     // v261025-5: section kMenuSectionRecent — recent conversation row
     // (also subtitle cell: title + relative date).
     if (indexPath.section == kMenuSectionRecent) {
+        // v261025-11 (#5): the trailing "显示更多…" row (rendered when
+        // collapsed + more conversations exist).
+        if (indexPath.row >= (NSInteger)[_recentConversations count]) {
+            UITableViewCell *moreCell = [tableView dequeueReusableCellWithIdentifier:kMenuCellID];
+            if (!moreCell) {
+                moreCell = [[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
+                                              reuseIdentifier:kMenuCellID] autorelease];
+                moreCell.selectionStyle = UITableViewCellSelectionStyleBlue;
+            }
+            [self _applyCardBackgroundOnCell:moreCell tableView:tableView];
+            moreCell.textLabel.backgroundColor = [UIColor clearColor];
+            moreCell.textLabel.opaque = NO;
+            moreCell.accessoryType = UITableViewCellAccessoryNone;
+            moreCell.textLabel.text = [NSString stringWithFormat:
+                NSLocalizedString(@"显示更多…（还有 %d 个对话）", nil),
+                (int)(_recentTotalCount - kMaxRecent)];
+            moreCell.textLabel.font = [UIFont boldSystemFontOfSize:15];
+            moreCell.textLabel.textColor = [iOS6Theme tintColor];
+            moreCell.textLabel.textAlignment = NSTextAlignmentCenter;
+            moreCell.imageView.image = nil;
+            return moreCell;
+        }
         Conversation *conv = nil;
         if (indexPath.row < (NSInteger)[_recentConversations count]) {
             conv = [_recentConversations objectAtIndex:indexPath.row];
@@ -1108,6 +1065,14 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     // the root ChatVC (no separate HistoryVC push — the menu IS the
     // history list now).
     if (indexPath.section == kMenuSectionRecent) {
+        // v261025-11 (#5): the trailing row is "显示更多…" — expand instead
+        // of opening a conversation.
+        if (indexPath.row >= (NSInteger)[_recentConversations count]) {
+            _recentExpanded = YES;
+            [self _rebuildRecentList];
+            [_menuTable reloadData];
+            return;
+        }
         if (indexPath.row < 0 || indexPath.row >= (NSInteger)[_recentConversations count]) return;
         [[Logger sharedLogger] info:[NSString stringWithFormat:@"MenuSheet recent → row %d", (int)indexPath.row]];
         [self closeSidebarAnimated:YES];

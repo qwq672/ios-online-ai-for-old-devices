@@ -10,6 +10,8 @@
 #import "iOS6Theme.h"
 #import "IconDrawing.h"
 #import "NSDataBase64.h"
+// v261025-11: SettingsKeyImageGenFeatureEnabled (global image-gen switch).
+#import "SettingsViewController.h"
 #import <QuartzCore/QuartzCore.h>
 
 NSString *const ComposerViewSendMessageNotification = @"ComposerViewSendMessageNotification";
@@ -109,7 +111,14 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
                 forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_sendButton];
 
-        _isStreaming = NO;
+        // v261025-11 BUG FIX ("进入app后发送按钮不见了"): the old code did
+        // `_isStreaming = NO;` as a BARE ivar write — bypassing the
+        // setIsStreaming: setter where the send button's icon + green-glass
+        // background are applied. The v261025-10 rewrite also dropped the
+        // _refreshToggleVisuals fallback that used to re-apply the send
+        // button's visuals, so the button had NO image and NO background
+        // → completely invisible. Route through the setter instead.
+        [self setIsStreaming:NO];
 
         // v261025-10: image-gen background tint color (light blue).
         // Retained for the same reason as the border ivar.
@@ -271,8 +280,24 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 + (void)setDeepThinkingEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyDeepThinking]; [[NSUserDefaults standardUserDefaults] synchronize]; }
 + (BOOL)webSearchEnabled { NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyWebSearch]; return n ? [n boolValue] : NO; }
 + (void)setWebSearchEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyWebSearch]; [[NSUserDefaults standardUserDefaults] synchronize]; }
-+ (BOOL)imageGenEnabled { NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyImageGen]; return n ? [n boolValue] : NO; }
-+ (void)setImageGenEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyImageGen]; [[NSUserDefaults standardUserDefaults] synchronize]; }
++ (BOOL)imageGenEnabled {
+    // v261025-11: the global image-gen FEATURE switch (Settings #7, default
+    // ON) gates the per-conversation toggle — when the feature is OFF the
+    // composer toggle, the menu row, the badge count and the send path all
+    // read OFF automatically from this single point.
+    NSNumber *feat = [[NSUserDefaults standardUserDefaults] objectForKey:SettingsKeyImageGenFeatureEnabled];
+    if (feat && ![feat boolValue]) return NO;
+    NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyImageGen];
+    return n ? [n boolValue] : NO;
+}
++ (void)setImageGenEnabled:(BOOL)e {
+    // Silently no-op when the feature switch is OFF — nothing can turn the
+    // toggle back on until the user re-enables the feature in Settings.
+    NSNumber *feat = [[NSUserDefaults standardUserDefaults] objectForKey:SettingsKeyImageGenFeatureEnabled];
+    if (feat && ![feat boolValue]) return;
+    [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyImageGen];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
 
 // v261025-10: how many toggles are currently ON.
 + (NSInteger)activeToggleCount
