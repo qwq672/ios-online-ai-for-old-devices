@@ -68,6 +68,22 @@ NSString *const ProviderIDOllama   = @"ollama";
 // Parallel to SettingsKeyModel (chat model).
 NSString *const SettingsKeyImageGenModel = @"imageGenModel";
 
+// v261025-9: the new two-tier provider list (replaces the flat
+// SettingsKeyModelList for fresh installs). Migration is automatic on the
+// first read of +[ModelManagementViewController savedProviders]: if the
+// new key is empty but the old key has data, the flat entries are
+// grouped by (provider, baseURL, apiKey) and lifted into provider entries.
+NSString *const SettingsKeyProviderList = @"providerList";
+
+// v261025-9: template ids are identical to the v261025-8 provider ids.
+// "custom" is a new addition.
+NSString *const ProviderTemplateCustom = @"custom";
+
+// v261025-9: API format ids.
+NSString *const ProviderFormatOpenAI    = @"openai";
+NSString *const ProviderFormatAnthropic = @"anthropic";
+NSString *const ProviderFormatOllama    = @"ollama";
+
 NSString *const iOS6ThemeDidChangeNotification = @"iOS6ThemeDidChangeNotification";
 
 static NSString *const kDefaultTransitURL = @"https://ai-transit.awa.lat";
@@ -340,7 +356,82 @@ enum {
 {
     return [providerID isEqualToString:ProviderIDZhipu] ||
            [providerID isEqualToString:ProviderIDOpenAI] ||
-           [providerID isEqualToString:@"custom"];
+           [providerID isEqualToString:ProviderTemplateCustom];
+}
+
+// v261025-9: template roster (display order). All seven — six known
+// providers plus "custom". Mirrors availableProviderIDs + custom appended.
++ (NSArray *)availableTemplateIDs
+{
+    return [NSArray arrayWithObjects:
+            ProviderIDZhipu, ProviderIDDeepSeek, ProviderIDKimi,
+            ProviderIDOpenAI, ProviderIDAnthropic, ProviderIDOllama,
+            ProviderTemplateCustom, nil];
+}
+
+// v261025-9: template → canonical API format. "custom" defaults to openai
+// (the most common case for OpenAI-compat custom endpoints; the form lets
+// the user override to anthropic or ollama manually).
++ (NSString *)formatForTemplate:(NSString *)templateID
+{
+    if (![templateID isKindOfClass:[NSString class]] || templateID.length == 0) {
+        return ProviderFormatOpenAI;
+    }
+    if ([templateID isEqualToString:ProviderIDAnthropic]) return ProviderFormatAnthropic;
+    if ([templateID isEqualToString:ProviderIDOllama])    return ProviderFormatOllama;
+    return ProviderFormatOpenAI;
+}
+
+// v261025-9: format → matching templates. Used by the add-provider form to
+// filter the template picker after the user picks a format segment.
++ (NSArray *)templatesForFormat:(NSString *)formatID
+{
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *t in [self availableTemplateIDs]) {
+        if ([[self formatForTemplate:t] isEqualToString:formatID]) {
+            [out addObject:t];
+        }
+    }
+    return out;
+}
+
+// v261025-9: template → default baseURL. Thin wrapper over the existing
+// defaultBaseURLForProvider: for the known six; custom → @"" (empty).
++ (NSString *)defaultBaseURLForTemplate:(NSString *)templateID
+{
+    if ([templateID isEqualToString:ProviderTemplateCustom]) return @"";
+    return [self defaultBaseURLForProvider:templateID];
+}
+
+// v261025-9: reverse-map a typed baseURL → which template (if any) it
+// matches. Returns ProviderTemplateCustom when no template's default
+// matches. Trims trailing slashes for the comparison.
++ (NSString *)templateForBaseURL:(NSString *)baseURL
+{
+    if (![baseURL isKindOfClass:[NSString class]] || baseURL.length == 0) {
+        return ProviderTemplateCustom;
+    }
+    NSString *trimmed = [baseURL stringByTrimmingCharactersInSet:
+                         [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+    for (NSString *t in [self availableTemplateIDs]) {
+        if ([t isEqualToString:ProviderTemplateCustom]) continue;
+        NSString *def = [self defaultBaseURLForTemplate:t];
+        if (def.length == 0) continue;
+        NSString *defTrim = [def stringByTrimmingCharactersInSet:
+                             [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+        if ([trimmed isEqualToString:defTrim]) return t;
+    }
+    return ProviderTemplateCustom;
+}
+
+// v261025-9: human-friendly name for a template id. Thin wrapper over
+// displayNameForProvider: (which already handles the custom case).
++ (NSString *)displayNameForTemplate:(NSString *)templateID
+{
+    if ([templateID isEqualToString:ProviderTemplateCustom]) {
+        return NSLocalizedString(@"自定义", nil);
+    }
+    return [self displayNameForProvider:templateID];
 }
 
 - (void)resetToDefaults

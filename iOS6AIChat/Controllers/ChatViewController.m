@@ -626,7 +626,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     NSString *transitURL = [settings objectForKey:SettingsKeyTransitURL];
     BOOL useTransit = [[settings objectForKey:SettingsKeyUseTransit] boolValue];
     NSString *imgModel = [iconn objectForKey:@"model"];
-    NSString *provider = [iconn objectForKey:@"provider"];
+    NSString *provider = [iconn objectForKey:@"template"];
     NSString *baseURL  = [iconn objectForKey:@"baseURL"];
     NSString *apiKey   = [iconn objectForKey:@"apiKey"];
 
@@ -881,7 +881,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     // profiles (the two-tier ModelManagement) actually drive the chat.
     NSDictionary *conn   = [ModelManagementViewController resolvedConnectionForChat];
     NSString *baseURL    = [conn objectForKey:@"baseURL"];
-    NSString *provider   = [conn objectForKey:@"provider"];
+    NSString *provider   = [conn objectForKey:@"template"];
     NSString *apiKey     = [conn objectForKey:@"apiKey"];
     NSString *model      = [conn objectForKey:@"model"];
     CGFloat temperature  = [[settings objectForKey:SettingsKeyTemperature] floatValue];

@@ -46,7 +46,15 @@ extern NSString *const SettingsKeyTransitModelsLastSearch;
 // the model list). Parallel to SettingsKeyModel which tracks the chat model.
 extern NSString *const SettingsKeyImageGenModel;
 
-// Provider IDs.
+// v261025-9: the two-tier provider list (new structure, replaces
+// SettingsKeyModelList for fresh installs; old key is auto-migrated on
+// first read of +[ModelManagementViewController savedProviders]).
+// Schema:
+//   [{ id, format, template, displayName, baseURL, apiKey, collapsed,
+//      models: [{ id, starred, kind, displayName }] }]
+extern NSString *const SettingsKeyProviderList;
+
+// Provider IDs (a.k.a. "templates" in v261025-9 two-tier nomenclature).
 // v261025-8: 用户明确了提供商概念 —— DeepSeek / BigModel(智谱) / Kimi 这类是
 // 「模型提供商」；OpenAI / Anthropic / Ollama 这类既是提供商也定义了
 // 「API 格式」。App 内统一用 provider id 表达，NetworkService 再把
@@ -57,6 +65,21 @@ extern NSString *const ProviderIDKimi;
 extern NSString *const ProviderIDOpenAI;
 extern NSString *const ProviderIDAnthropic;
 extern NSString *const ProviderIDOllama;
+// v261025-9: "custom" is a template id meaning "user-supplied endpoint that
+// doesn't match any known template" (form auto-selects it when the typed
+// baseURL matches no template default).
+extern NSString *const ProviderTemplateCustom;
+
+// v261025-9: API formats (the OTHER tier — what wire protocol to speak).
+//   openai    = /v1/chat/completions (OpenAI / 智谱 / DeepSeek / Kimi /
+//               Ollama's OpenAI-compat /v1 endpoint / any custom OpenAI-compat)
+//   anthropic = /v1/messages (Anthropic only)
+//   ollama    = /api/chat (Ollama native — NOT yet implemented in
+//               NetworkService as of v9; ollama templates still go through
+//               the openai-compat /v1 path. Future work.)
+extern NSString *const ProviderFormatOpenAI;
+extern NSString *const ProviderFormatAnthropic;
+extern NSString *const ProviderFormatOllama;
 
 @interface SettingsViewController : UIViewController
                               <UITableViewDataSource,
@@ -87,6 +110,26 @@ extern NSString *const ProviderIDOllama;
 + (NSArray *)commonModelsForProvider:(NSString *)providerID kind:(NSString *)kind;
 // v261025-8: does this provider have an image-generation endpoint?
 + (BOOL)providerSupportsImageGen:(NSString *)providerID;
+
+// v261025-9: two-tier helpers (format ↔ template).
+// All seven template ids in display order: zhipu/deepseek/kimi/openai/
+// anthropic/ollama/custom.
++ (NSArray *)availableTemplateIDs;
+// Map a template id → its canonical API format. "custom" defaults to openai
+// (the most common case; the user can override format manually in the form).
++ (NSString *)formatForTemplate:(NSString *)templateID;
+// Templates that match a given format (e.g. openai → zhipu/deepseek/kimi/
+// openai/ollama/custom; anthropic → anthropic; ollama → ollama).
++ (NSArray *)templatesForFormat:(NSString *)formatID;
+// Default endpoint for a template. Same values as defaultBaseURLForProvider:
+// (kept as a thin wrapper for naming consistency with the new vocabulary).
++ (NSString *)defaultBaseURLForTemplate:(NSString *)templateID;
+// Reverse-map a typed baseURL → which template (if any) it matches.
+// Returns ProviderTemplateCustom when no template's default matches.
++ (NSString *)templateForBaseURL:(NSString *)baseURL;
+// Human-friendly name for a template id (same as displayNameForProvider:
+// plus the "custom" case). Thin wrapper.
++ (NSString *)displayNameForTemplate:(NSString *)templateID;
 
 // Default seed list of saved models per provider (v261024-15).
 // Used by ModelManagementViewController when the user has no saved list yet.

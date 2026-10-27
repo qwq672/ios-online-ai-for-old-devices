@@ -2,12 +2,17 @@
 //  ModelManagementViewController.m
 //  iOS6AIChat
 //
-//  v261024-15: independent model management page.
-//    Sections:
-//      0) 当前默认模型 + 搜索 /v1/models 按钮
-//      1) 已保存模型列表 (tap = 设为默认, swipe = 删除)
-//      2) 添加新模型 (alert 输入)
-//      3) 能力开关 (支持图片识别 / 支持思考)
+//  v261025-9: TWO-TIER provider/model management (rewritten).
+//    Section 0:   当前默认 (resolved chat model + 生图 model + 测试/搜索)
+//    Sections 1..N: one section PER PROVIDER ENTRY (collapsible).
+//                   Header tap = toggle collapse; row tap = set active;
+//                   star button on row = toggle starred;
+//                   DetailDisclosure on header = push ProviderEditViewController
+//                   swipe-row = delete that model
+//    Section N+1: + 添加模型供应商 (→ pushes ModelAddViewController)
+//    Section N+2: 能力开关 (图片识别 / 思考)
+//
+//  See the .h file for the v261025-9 entry schema and migration logic.
 //
 
 #import "ModelManagementViewController.h"
@@ -15,32 +20,30 @@
 #import "SettingsViewController.h"
 #import "NetworkService.h"
 #import "ModelAddViewController.h"
+#import "ProviderEditViewController.h"
 #import "Logger.h"
 #import <QuartzCore/QuartzCore.h>
 
-static NSString *const kCellReuseID = @"ModelMgmtCell";
+static NSString *const kCellReuseID   = @"ModelMgmtCell";
+static NSString *const kHeaderReuseID = @"ModelMgmtHeader";
 
 enum {
     kMMSectionCurrent = 0,   // 当前默认 (resolved active entry) + 测试/搜索
-    // v261025-7: provider group sections live between Current and Add.
-    // Their count is dynamic (_providerGroups.count).
-    kMMSectionAdd = 100,    // 添加 (+ 添加模型 → ModelAddViewController)
+    // v261025-9: provider-entry group sections live between Current and Add.
+    // Their count is dynamic (_providerEntries.count).
+    kMMSectionAdd = 100,    // 添加 (+ 添加模型供应商 → ModelAddViewController)
     kMMSectionCaps,          // 能力开关 (图片识别 / 思考)
     kMMSectionCount
 };
 
-// v261025-7: provider display order for the group sections.
-static NSArray *kProviderOrder = nil;
-
 @interface ModelManagementViewController () {
     NSMutableArray *_availableModels;   // for /v1/models search action sheet
-    NSString *_pendingAddModel;          // for tag-300 alert (LEGACY — add now goes through ModelAddVC; kept harmless)
-    NSString *_pendingDeleteModel;       // for tag-700 alert (confirm delete)
-    // v261025-3: transit bundled-model search state.
-    BOOL _transitSearchInProgress;       // YES while a search is in-flight
-    BOOL _transitSearchCancelled;        // YES if user tapped 取消 on the loading alert
-    // v261025-7: provider → entries groups for the two-tier list.
-    NSMutableArray *_providerGroups;     // array of {provider, entries(NSArray)}
+    NSString *_pendingDeleteModel;       // for tag-700 alert (confirm delete single model)
+    NSString *_pendingDeleteProviderID;  // for tag-710 alert (confirm delete whole provider)
+    BOOL _transitSearchInProgress;
+    BOOL _transitSearchCancelled;
+    // v261025-9: live cache of savedProviders (rebuilt on every viewWillAppear).
+    NSArray *_providerEntries;
 }
 @end
 
@@ -48,182 +51,587 @@ static NSArray *kProviderOrder = nil;
 
 @synthesize tableView=_tableView, availableModels=_availableModels;
 
-+ (NSArray *)_providerOrder
+#pragma mark - v261025-9 Two-tier provider persistence
+
+// Generate a stable UUID string (used as provider entry id on creation).
++ (NSString *)newProviderUUID
 {
-    if (!kProviderOrder) {
-        kProviderOrder = [[NSArray arrayWithObjects:
-                           ProviderIDZhipu, ProviderIDOpenAI, ProviderIDOllama, @"custom", nil] retain];
-    }
-    return kProviderOrder;
+    CFUUIDRef uuid = CFUUIDCreate(kCFAllocatorDefault);
+    CFStringRef s = CFUUIDCreateString(kCFAllocatorDefault, uuid);
+    CFRelease(uuid);
+    NSString *nsStr = (NSString *)s;   // toll-free bridged
+    // s is a +1 retain (CFCreate); we want an autorelease return.
+    return [nsStr autorelease];
 }
 
-#pragma mark - Model list persistence (class helpers)
-
-// v261025-3 storage format: JSON array of dicts:
-//   [{"id":"gpt-4o","source":"user"}, {"id":"glm-4-flash","source":"transit"}]
-// source values: "user" (manually added) | "transit" (auto-added from the
-// transit server's bundled list — bulk-removed when the user toggles
-// "transit default model" OFF in Settings).
-//
-// Old format (pre-v261025-3) was a flat JSON array of strings — we
-// auto-migrate it to the dict format on first read, marking each
-// migrated entry as source="user" (since the user manually added them
-// or they were provider-seed defaults).
-
-+ (NSArray *)savedModelEntries
+// Read the new two-tier structure from NSUserDefaults. Auto-migrates the
+// legacy flat SettingsKeyModelList when the new key is empty.
++ (NSArray *)savedProviders
 {
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    NSString *json = [d stringForKey:SettingsKeyModelList];
-    if (!json || json.length == 0) {
-        // First launch: seed provider defaults as source="user".
-        NSString *provider = [d stringForKey:SettingsKeyProvider] ?: ProviderIDOpenAI;
-        NSArray *seedIDs = [SettingsViewController _defaultModelListForProvider:provider];
-        NSMutableArray *seed = [NSMutableArray arrayWithCapacity:[seedIDs count]];
-        for (NSString *mid in seedIDs) {
-            [seed addObject:[NSDictionary dictionaryWithObjectsAndKeys:
-                             mid, @"id",
-                             @"user", @"source", nil]];
-        }
-        [self saveModelEntries:seed];
-        return seed;
+    NSString *json = [d stringForKey:SettingsKeyProviderList];
+    if (json.length == 0) {
+        // Try the legacy flat list and migrate it.
+        NSArray *migrated = [self _migrateLegacyFlatEntries];
+        if (migrated) return migrated;
+        // Nothing to migrate from either - seed an empty array.
+        return [NSArray array];
     }
     NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];
     NSError *err = nil;
     id parsed = [NSJSONSerialization JSONObjectWithData:data options:0 error:&err];
     if (err || ![parsed isKindOfClass:[NSArray class]]) {
-        // Corrupt → re-seed.
-        NSString *provider = [d stringForKey:SettingsKeyProvider] ?: ProviderIDOpenAI;
-        NSArray *seedIDs = [SettingsViewController _defaultModelListForProvider:provider];
-        NSMutableArray *seed = [NSMutableArray arrayWithCapacity:[seedIDs count]];
-        for (NSString *mid in seedIDs) {
-            [seed addObject:[NSDictionary dictionaryWithObjectsAndKeys:
-                             mid, @"id",
-                             @"user", @"source", nil]];
-        }
-        [self saveModelEntries:seed];
-        return seed;
+        // Corrupt new key - try migrating the legacy list as a fallback.
+        NSArray *migrated = [self _migrateLegacyFlatEntries];
+        if (migrated) return migrated;
+        return [NSArray array];
     }
-    // Migrate: if parsed contains bare NSStrings (old format) or dicts
-    // missing source, convert to canonical {id, source} form.
-    // v261025-7: dicts that ALREADY have valid id+source (and possibly the
-    // new provider/baseURL/apiKey/displayName keys) pass through UNTOUCHED
-    // — the old code rebuilt them as bare {id, source}, which would strip
-    // the provider-management data on first read.
-    BOOL migrated = NO;
-    NSMutableArray *entries = [NSMutableArray arrayWithCapacity:[parsed count]];
-    for (id e in parsed) {
-        if ([e isKindOfClass:[NSString class]] && [(NSString *)e length] > 0) {
-            [entries addObject:[NSDictionary dictionaryWithObjectsAndKeys:
-                                e, @"id",
-                                @"user", @"source", nil]];
-            migrated = YES;
-        } else if ([e isKindOfClass:[NSDictionary class]]) {
-            NSString *mid = [e objectForKey:@"id"];
-            NSString *src = [e objectForKey:@"source"];
-            if (![mid isKindOfClass:[NSString class]] || mid.length == 0) continue;
-            if (![src isKindOfClass:[NSString class]] || src.length == 0) {
-                // Missing source → mutate a copy with source=user, keep the
-                // other keys (provider/baseURL/apiKey/displayName) intact.
-                NSMutableDictionary *m = [NSMutableDictionary dictionaryWithDictionary:(NSDictionary *)e];
-                [m setObject:@"user" forKey:@"source"];
-                [entries addObject:m];
-                migrated = YES;
-            } else {
-                [entries addObject:e];
-            }
-        }
-    }
-    if (migrated) [self saveModelEntries:entries];
-    return entries;
+    return parsed;
 }
 
-// Back-compat shim: return only the IDs (NSStrings) — old callers
-// (e.g. SettingsVC fallback logic) expect a flat array of model-id
-// strings. New callers should use savedModelEntries directly.
-+ (NSArray *)savedModelList
+// Persist the new two-tier structure.
++ (void)saveProviders:(NSArray *)providers
 {
-    NSArray *entries = [self savedModelEntries];
-    NSMutableArray *out = [NSMutableArray arrayWithCapacity:[entries count]];
-    for (NSDictionary *e in entries) {
-        NSString *mid = [e objectForKey:@"id"];
-        if ([mid isKindOfClass:[NSString class]] && mid.length > 0) {
-            [out addObject:mid];
-        }
-    }
-    return out;
-}
-
-+ (void)saveModelEntries:(NSArray *)entries
-{
-    // De-duplicate by id; first occurrence wins.
-    // v261025-7: ALSO preserve the new per-entry keys (provider / baseURL /
-    // apiKey / displayName). The old sanitizer dropped unknown keys, which
-    // would silently strip the provider-management data on every save.
+    // De-duplicate by id (keep first occurrence); sanitize each entry.
     NSMutableArray *seen = [NSMutableArray array];
-    NSMutableArray *clean = [NSMutableArray arrayWithCapacity:[entries count]];
-    for (id e in entries) {
+    NSMutableArray *clean = [NSMutableArray arrayWithCapacity:[providers count]];
+    for (id p in providers) {
+        if (![p isKindOfClass:[NSDictionary class]]) continue;
+        NSString *pid = [p objectForKey:@"id"];
+        if (![pid isKindOfClass:[NSString class]] || pid.length == 0) {
+            // Assign a fresh UUID if missing.
+            pid = [self newProviderUUID];
+        }
+        if ([seen containsObject:pid]) continue;
+        [seen addObject:pid];
+        NSMutableDictionary *e = [NSMutableDictionary dictionaryWithDictionary:p];
+        [e setObject:pid forKey:@"id"];
+        // Sanitize format / template / displayName / baseURL / apiKey.
+        NSString *fmt = [e objectForKey:@"format"];
+        if (![fmt isKindOfClass:[NSString class]] || fmt.length == 0) {
+            fmt = ProviderFormatOpenAI;
+        }
+        [e setObject:fmt forKey:@"format"];
+        NSString *tpl = [e objectForKey:@"template"];
+        if (![tpl isKindOfClass:[NSString class]] || tpl.length == 0) {
+            tpl = ProviderTemplateCustom;
+        }
+        [e setObject:tpl forKey:@"template"];
+        NSString *dn = [e objectForKey:@"displayName"];
+        if (![dn isKindOfClass:[NSString class]] || dn.length == 0) {
+            dn = [SettingsViewController displayNameForTemplate:tpl];
+        }
+        [e setObject:dn forKey:@"displayName"];
+        NSString *b = [e objectForKey:@"baseURL"];
+        if (![b isKindOfClass:[NSString class]]) {
+            [e setObject:@"" forKey:@"baseURL"];
+        } else {
+            [e setObject:b forKey:@"baseURL"];
+        }
+        NSString *k = [e objectForKey:@"apiKey"];
+        if (![k isKindOfClass:[NSString class]]) {
+            [e setObject:@"" forKey:@"apiKey"];
+        } else {
+            [e setObject:k forKey:@"apiKey"];
+        }
+        NSNumber *collapsed = [e objectForKey:@"collapsed"];
+        if (![collapsed isKindOfClass:[NSNumber class]]) {
+            [e setObject:[NSNumber numberWithBool:NO] forKey:@"collapsed"];
+        }
+        // Sanitize models array.
+        id mObj = [e objectForKey:@"models"];
+        if (![mObj isKindOfClass:[NSArray class]]) {
+            [e setObject:[NSArray array] forKey:@"models"];
+        } else {
+            NSMutableArray *cleanModels = [NSMutableArray array];
+            NSMutableArray *seenMIDs = [NSMutableArray array];
+            for (id m in (NSArray *)mObj) {
+                if (![m isKindOfClass:[NSDictionary class]]) continue;
+                NSString *mid = [m objectForKey:@"id"];
+                if (![mid isKindOfClass:[NSString class]] || mid.length == 0) continue;
+                if ([seenMIDs containsObject:mid]) continue;
+                [seenMIDs addObject:mid];
+                NSMutableDictionary *mc = [NSMutableDictionary dictionaryWithDictionary:m];
+                [mc setObject:mid forKey:@"id"];
+                NSNumber *st = [mc objectForKey:@"starred"];
+                if (![st isKindOfClass:[NSNumber class]]) {
+                    [mc setObject:[NSNumber numberWithBool:NO] forKey:@"starred"];
+                }
+                NSString *kind = [mc objectForKey:@"kind"];
+                if (![kind isKindOfClass:[NSString class]] || kind.length == 0) {
+                    [mc setObject:@"chat" forKey:@"kind"];
+                }
+                // displayName optional - drop if not a string.
+                id dnM = [mc objectForKey:@"displayName"];
+                if (![dnM isKindOfClass:[NSString class]] || [(NSString *)dnM length] == 0) {
+                    [mc removeObjectForKey:@"displayName"];
+                }
+                [cleanModels addObject:mc];
+            }
+            [e setObject:[NSArray arrayWithArray:cleanModels] forKey:@"models"];
+        }
+        [clean addObject:e];
+    }
+    NSError *err = nil;
+    NSData *data = [NSJSONSerialization dataWithJSONObject:clean options:0 error:&err];
+    if (data) {
+        NSString *j = [[[NSString alloc] initWithData:data
+                                           encoding:NSUTF8StringEncoding] autorelease];
+        [[NSUserDefaults standardUserDefaults] setObject:j
+                                                  forKey:SettingsKeyProviderList];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    }
+}
+
+// Migrate legacy SettingsKeyModelList flat entries → new two-tier structure.
+// Returns the migrated array (and persists it), or nil when there's no
+// legacy list to migrate.
++ (NSArray *)_migrateLegacyFlatEntries
+{
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    NSString *json = [d stringForKey:SettingsKeyModelList];
+    if (json.length == 0) return nil;
+    NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];
+    NSError *err = nil;
+    id parsed = [NSJSONSerialization JSONObjectWithData:data options:0 error:&err];
+    if (err || ![parsed isKindOfClass:[NSArray class]] || [parsed count] == 0) return nil;
+    // Group by (provider, baseURL, apiKey).
+    NSMutableArray *groups = [NSMutableArray array];
+    for (id e in parsed) {
         NSString *mid = nil;
-        NSString *src = @"user";
-        NSString *provider = nil;
-        NSString *baseURL = nil;
-        NSString *apiKey = nil;
-        NSString *displayName = nil;
-        NSString *kind = nil;
+        NSString *provider = ProviderIDOpenAI;
+        NSString *baseURL = @"";
+        NSString *apiKey = @"";
+        NSString *displayName = @"";
+        NSString *kind = @"chat";
         if ([e isKindOfClass:[NSDictionary class]]) {
             mid = [e objectForKey:@"id"];
-            id srcObj = [e objectForKey:@"source"];
-            if ([srcObj isKindOfClass:[NSString class]] && [(NSString *)srcObj length] > 0) {
-                src = srcObj;
-            }
             id p = [e objectForKey:@"provider"];
             if ([p isKindOfClass:[NSString class]] && [(NSString *)p length] > 0) provider = p;
             id b = [e objectForKey:@"baseURL"];
-            if ([b isKindOfClass:[NSString class]] && [(NSString *)b length] > 0) baseURL = b;
+            if ([b isKindOfClass:[NSString class]]) baseURL = b;
             id k = [e objectForKey:@"apiKey"];
-            if ([k isKindOfClass:[NSString class]] && [(NSString *)k length] > 0) apiKey = k;
-            id d = [e objectForKey:@"displayName"];
-            if ([d isKindOfClass:[NSString class]] && [(NSString *)d length] > 0) displayName = d;
-            // v261025-8: image-generation entries (kind="image") must
-            // survive the save round-trip — the composer's 生图 mode looks
-            // them up via SettingsKeyImageGenModel.
+            if ([k isKindOfClass:[NSString class]]) apiKey = k;
+            id dn = [e objectForKey:@"displayName"];
+            if ([dn isKindOfClass:[NSString class]]) displayName = dn;
             id kk = [e objectForKey:@"kind"];
             if ([kk isKindOfClass:[NSString class]] && [(NSString *)kk length] > 0) kind = kk;
         } else if ([e isKindOfClass:[NSString class]]) {
             mid = e;
         }
         if (![mid isKindOfClass:[NSString class]] || mid.length == 0) continue;
-        if ([seen containsObject:mid]) continue;
-        [seen addObject:mid];
-        NSMutableDictionary *entry = [NSMutableDictionary dictionaryWithObjectsAndKeys:
-                          mid, @"id",
-                          src, @"source", nil];
-        // v261025-7: only attach the keys that are actually set — entries
-        // without them resolve from global settings (backward compatible).
-        if (provider)    [entry setObject:provider forKey:@"provider"];
-        if (baseURL)     [entry setObject:baseURL forKey:@"baseURL"];
-        if (apiKey)      [entry setObject:apiKey forKey:@"apiKey"];
-        if (displayName) [entry setObject:displayName forKey:@"displayName"];
-        if (kind)        [entry setObject:kind forKey:@"kind"];
-        [clean addObject:entry];
+        // Find existing group.
+        NSMutableDictionary *g = nil;
+        for (NSMutableDictionary *gg in groups) {
+            NSString *gp = [gg objectForKey:@"template"];
+            NSString *gb = [gg objectForKey:@"baseURL"];
+            NSString *gk = [gg objectForKey:@"apiKey"];
+            if ([gp isEqualToString:provider] &&
+                [gb isEqualToString:baseURL] &&
+                [gk isEqualToString:apiKey]) {
+                g = gg;
+                break;
+            }
+        }
+        if (!g) {
+            g = [NSMutableDictionary dictionary];
+            [g setObject:[self newProviderUUID] forKey:@"id"];
+            [g setObject:[SettingsViewController formatForTemplate:provider] forKey:@"format"];
+            [g setObject:provider forKey:@"template"];
+            [g setObject:[SettingsViewController displayNameForTemplate:provider] forKey:@"displayName"];
+            [g setObject:baseURL forKey:@"baseURL"];
+            [g setObject:apiKey forKey:@"apiKey"];
+            [g setObject:[NSNumber numberWithBool:NO] forKey:@"collapsed"];
+            [g setObject:[NSMutableArray array] forKey:@"models"];
+            [groups addObject:g];
+        }
+        NSMutableDictionary *mc = [NSMutableDictionary dictionary];
+        [mc setObject:mid forKey:@"id"];
+        [mc setObject:[NSNumber numberWithBool:NO] forKey:@"starred"];
+        [mc setObject:kind forKey:@"kind"];
+        if (displayName.length > 0) [mc setObject:displayName forKey:@"displayName"];
+        [[g objectForKey:@"models"] addObject:mc];
     }
-    NSError *err = nil;
-    NSData *data = [NSJSONSerialization dataWithJSONObject:clean options:0 error:&err];
-    if (err || !data) {
-        // Fallback: CSV of just IDs (loses source info but preserves
-        // the list across a corrupting JSON failure).
-        NSString *csv = [seen componentsJoinedByString:@","];
-        [[NSUserDefaults standardUserDefaults] setObject:csv
-                                                  forKey:SettingsKeyModelList];
-    } else {
-        NSString *json = [[[NSString alloc] initWithData:data
-                                                encoding:NSUTF8StringEncoding] autorelease];
-        [[NSUserDefaults standardUserDefaults] setObject:json
-                                                  forKey:SettingsKeyModelList];
-    }
-    [[NSUserDefaults standardUserDefaults] synchronize];
+    NSArray *result = [NSArray arrayWithArray:groups];
+    [self saveProviders:result];
+    // Clear the legacy key so we don't re-migrate (it stays around for
+    // one more downgrade-compat launch, then is dropped on next save).
+    return result;
 }
 
-// Back-compat shim: save an array of IDs (all become source="user").
+// Look up the provider entry owning a given model id.
++ (NSDictionary *)providerEntryContainingModel:(NSString *)modelID
+{
+    if (![modelID isKindOfClass:[NSString class]] || modelID.length == 0) return nil;
+    for (NSDictionary *p in [self savedProviders]) {
+        NSArray *models = [p objectForKey:@"models"];
+        if (![models isKindOfClass:[NSArray class]]) continue;
+        for (NSDictionary *m in models) {
+            NSString *mid = [m objectForKey:@"id"];
+            if ([mid isKindOfClass:[NSString class]] && [mid isEqualToString:modelID]) {
+                return p;
+            }
+        }
+    }
+    return nil;
+}
+
++ (void)toggleCollapsedForProviderID:(NSString *)providerUUID
+{
+    if (![providerUUID isKindOfClass:[NSString class]] || providerUUID.length == 0) return;
+    NSMutableArray *arr = [[self savedProviders] mutableCopy];
+    for (NSInteger i = 0; i < (NSInteger)[arr count]; i++) {
+        NSDictionary *p = [arr objectAtIndex:i];
+        if ([[p objectForKey:@"id"] isEqualToString:providerUUID]) {
+            NSMutableDictionary *m = [NSMutableDictionary dictionaryWithDictionary:p];
+            BOOL was = [[m objectForKey:@"collapsed"] boolValue];
+            [m setObject:[NSNumber numberWithBool:!was] forKey:@"collapsed"];
+            [arr replaceObjectAtIndex:i withObject:m];
+            [arr autorelease];
+            [self saveProviders:arr];
+            return;
+        }
+    }
+    [arr autorelease];
+}
+
++ (void)toggleStarredForModel:(NSString *)modelID
+                inProviderID:(NSString *)providerUUID
+{
+    if (!modelID.length || !providerUUID.length) return;
+    NSMutableArray *arr = [[self savedProviders] mutableCopy];
+    for (NSInteger i = 0; i < (NSInteger)[arr count]; i++) {
+        NSDictionary *p = [arr objectAtIndex:i];
+        if (![[p objectForKey:@"id"] isEqualToString:providerUUID]) continue;
+        NSMutableDictionary *pm = [NSMutableDictionary dictionaryWithDictionary:p];
+        NSMutableArray *models = [[p objectForKey:@"models"] mutableCopy];
+        for (NSInteger j = 0; j < (NSInteger)[models count]; j++) {
+            NSDictionary *m = [models objectAtIndex:j];
+            if (![[m objectForKey:@"id"] isEqualToString:modelID]) continue;
+            NSMutableDictionary *mm = [NSMutableDictionary dictionaryWithDictionary:m];
+            BOOL was = [[mm objectForKey:@"starred"] boolValue];
+            [mm setObject:[NSNumber numberWithBool:!was] forKey:@"starred"];
+            [models replaceObjectAtIndex:j withObject:mm];
+            break;
+        }
+        [pm setObject:models forKey:@"models"];
+        [models release];
+        [arr replaceObjectAtIndex:i withObject:pm];
+        [arr autorelease];
+        [self saveProviders:arr];
+        return;
+    }
+    [arr autorelease];
+}
+
++ (void)setActiveModel:(NSString *)modelID
+{
+    if (![modelID isKindOfClass:[NSString class]] || modelID.length == 0) return;
+    NSDictionary *p = [self providerEntryContainingModel:modelID];
+    NSString *key = SettingsKeyModel;
+    for (NSDictionary *m in [p objectForKey:@"models"]) {
+        if ([[[m objectForKey:@"id"] isEqualToString:modelID] boolValue]) {
+            if ([[m objectForKey:@"kind"] isEqualToString:@"image"]) {
+                key = SettingsKeyImageGenModel;
+            }
+            break;
+        }
+    }
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    [d setObject:modelID forKey:key];
+    [d synchronize];
+}
+
++ (void)addModel:(NSString *)modelID
+            kind:(NSString *)kind
+    toProviderID:(NSString *)providerUUID
+{
+    if (!modelID.length || !providerUUID.length) return;
+    NSString *effectiveKind = ([kind isEqualToString:@"image"]) ? @"image" : @"chat";
+    NSMutableArray *arr = [[self savedProviders] mutableCopy];
+    for (NSInteger i = 0; i < (NSInteger)[arr count]; i++) {
+        NSDictionary *p = [arr objectAtIndex:i];
+        if (![[p objectForKey:@"id"] isEqualToString:providerUUID]) continue;
+        NSMutableDictionary *pm = [NSMutableDictionary dictionaryWithDictionary:p];
+        NSMutableArray *models = [[p objectForKey:@"models"] mutableCopy];
+        // Skip if already exists.
+        for (NSDictionary *m in models) {
+            if ([[[m objectForKey:@"id"] isEqualToString:modelID] boolValue]) {
+                [models release];
+                [arr autorelease];
+                return;
+            }
+        }
+        NSMutableDictionary *nm = [NSMutableDictionary dictionary];
+        [nm setObject:modelID forKey:@"id"];
+        [nm setObject:[NSNumber numberWithBool:NO] forKey:@"starred"];
+        [nm setObject:effectiveKind forKey:@"kind"];
+        [models addObject:nm];
+        [pm setObject:models forKey:@"models"];
+        [models release];
+        [arr replaceObjectAtIndex:i withObject:pm];
+        [arr autorelease];
+        [self saveProviders:arr];
+        return;
+    }
+    [arr autorelease];
+}
+
++ (void)removeModel:(NSString *)modelID
+     fromProviderID:(NSString *)providerUUID
+{
+    if (!modelID.length || !providerUUID.length) return;
+    NSMutableArray *arr = [[self savedProviders] mutableCopy];
+    for (NSInteger i = 0; i < (NSInteger)[arr count]; i++) {
+        NSDictionary *p = [arr objectAtIndex:i];
+        if (![[p objectForKey:@"id"] isEqualToString:providerUUID]) continue;
+        NSMutableDictionary *pm = [NSMutableDictionary dictionaryWithDictionary:p];
+        NSMutableArray *models = [[p objectForKey:@"models"] mutableCopy];
+        for (NSInteger j = 0; j < (NSInteger)[models count]; j++) {
+            NSDictionary *m = [models objectAtIndex:j];
+            if ([[[m objectForKey:@"id"] isEqualToString:modelID] boolValue]) {
+                [models removeObjectAtIndex:j];
+                break;
+            }
+        }
+        [pm setObject:models forKey:@"models"];
+        [models release];
+        [arr replaceObjectAtIndex:i withObject:pm];
+        [arr autorelease];
+        [self saveProviders:arr];
+        // Clear active pointers if they referenced the removed model.
+        NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+        NSString *curChat = [d stringForKey:SettingsKeyModel];
+        if (curChat && [curChat isEqualToString:modelID]) {
+            [d removeObjectForKey:SettingsKeyModel];
+            [d synchronize];
+        }
+        NSString *curImg = [d stringForKey:SettingsKeyImageGenModel];
+        if (curImg && [curImg isEqualToString:modelID]) {
+            [d removeObjectForKey:SettingsKeyImageGenModel];
+            [d synchronize];
+        }
+        return;
+    }
+    [arr autorelease];
+}
+
++ (void)replaceProviderWithID:(NSString *)providerUUID
+                    newEntry:(NSDictionary *)newEntry
+{
+    if (!providerUUID.length || ![newEntry isKindOfClass:[NSDictionary class]]) return;
+    NSMutableArray *arr = [[self savedProviders] mutableCopy];
+    for (NSInteger i = 0; i < (NSInteger)[arr count]; i++) {
+        if ([[[arr objectAtIndex:i] objectForKey:@"id"] isEqualToString:providerUUID]) {
+            NSMutableDictionary *m = [NSMutableDictionary dictionaryWithDictionary:newEntry];
+            [m setObject:providerUUID forKey:@"id"];
+            [arr replaceObjectAtIndex:i withObject:m];
+            [arr autorelease];
+            [self saveProviders:arr];
+            return;
+        }
+    }
+    // Not found - append.
+    NSMutableDictionary *m = [NSMutableDictionary dictionaryWithDictionary:newEntry];
+    [m setObject:providerUUID forKey:@"id"];
+    [arr addObject:m];
+    [arr autorelease];
+    [self saveProviders:arr];
+}
+
++ (void)removeProviderWithID:(NSString *)providerUUID
+{
+    if (!providerUUID.length) return;
+    NSMutableArray *arr = [[self savedProviders] mutableCopy];
+    NSMutableArray *clean = [NSMutableArray array];
+    NSDictionary *removed = nil;
+    for (NSDictionary *p in arr) {
+        if ([[p objectForKey:@"id"] isEqualToString:providerUUID]) {
+            removed = p;
+            continue;
+        }
+        [clean addObject:p];
+    }
+    [arr autorelease];
+    [self saveProviders:clean];
+    // Clear active pointers if they pointed at one of this provider's models.
+    if (removed) {
+        NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+        NSString *curChat = [d stringForKey:SettingsKeyModel];
+        NSString *curImg = [d stringForKey:SettingsKeyImageGenModel];
+        NSArray *models = [removed objectForKey:@"models"];
+        for (NSDictionary *m in models) {
+            NSString *mid = [m objectForKey:@"id"];
+            if (curChat && [curChat isEqualToString:mid]) {
+                [d removeObjectForKey:SettingsKeyModel];
+            }
+            if (curImg && [curImg isEqualToString:mid]) {
+                [d removeObjectForKey:SettingsKeyImageGenModel];
+            }
+        }
+        [d synchronize];
+    }
+}
+
+#pragma mark - Legacy back-compat shims (v261025-7 callers)
+
+// Build a FLAT view of all models across all providers, each carrying its
+// parent provider's connection info. This is what old callers
+// (savedModelEntries / savedModelList / saveModelEntries / addModelEntry /
+//  removeModel / addTransitModels / removeAllTransitModels /
+//  sourceForModel) used to read.
++ (NSArray *)savedModelEntries
+{
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSDictionary *p in [self savedProviders]) {
+        NSString *provider = [p objectForKey:@"template"];
+        NSString *baseURL = [p objectForKey:@"baseURL"];
+        NSString *apiKey = [p objectForKey:@"apiKey"];
+        NSString *providerUUID = [p objectForKey:@"id"];
+        NSArray *models = [p objectForKey:@"models"];
+        for (NSDictionary *m in models) {
+            NSString *mid = [m objectForKey:@"id"];
+            if (![mid isKindOfClass:[NSString class]] || mid.length == 0) continue;
+            NSMutableDictionary *e = [NSMutableDictionary dictionary];
+            [e setObject:mid forKey:@"id"];
+            [e setObject:provider ?: ProviderIDOpenAI forKey:@"provider"];
+            if (baseURL.length > 0) [e setObject:baseURL forKey:@"baseURL"];
+            if (apiKey.length > 0) [e setObject:apiKey forKey:@"apiKey"];
+            [e setObject:providerUUID ?: @"" forKey:@"providerUUID"];
+            NSString *kind = [m objectForKey:@"kind"];
+            if ([kind isKindOfClass:[NSString class]] && kind.length > 0) {
+                [e setObject:kind forKey:@"kind"];
+            }
+            NSString *dn = [m objectForKey:@"displayName"];
+            if ([dn isKindOfClass:[NSString class]] && dn.length > 0) {
+                [e setObject:dn forKey:@"displayName"];
+            }
+            BOOL starred = [[m objectForKey:@"starred"] boolValue];
+            [e setObject:[NSNumber numberWithBool:starred] forKey:@"starred"];
+            [e setObject:@"user" forKey:@"source"];
+            [out addObject:e];
+        }
+    }
+    // First-launch seeding: if both keys were empty, seed with the global
+    // provider's defaults so the user has something to pick from.
+    if ([out count] == 0) {
+        NSString *provider = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyProvider] ?: ProviderIDOpenAI;
+        NSArray *seedIDs = [SettingsViewController _defaultModelListForProvider:provider];
+        NSString *baseURL = [SettingsViewController defaultBaseURLForProvider:provider];
+        NSString *pid = [self newProviderUUID];
+        NSMutableArray *models = [NSMutableArray array];
+        for (NSString *mid in seedIDs) {
+            NSMutableDictionary *mc = [NSMutableDictionary dictionary];
+            [mc setObject:mid forKey:@"id"];
+            [mc setObject:[NSNumber numberWithBool:NO] forKey:@"starred"];
+            [mc setObject:@"chat" forKey:@"kind"];
+            [models addObject:mc];
+            // Also push into the flat view we return.
+            NSMutableDictionary *e = [NSMutableDictionary dictionary];
+            [e setObject:mid forKey:@"id"];
+            [e setObject:provider forKey:@"provider"];
+            if (baseURL.length > 0) [e setObject:baseURL forKey:@"baseURL"];
+            [e setObject:pid forKey:@"providerUUID"];
+            [e setObject:@"user" forKey:@"source"];
+            [out addObject:e];
+        }
+        // Persist as a single provider entry.
+        NSDictionary *seedProvider = [NSDictionary dictionaryWithObjectsAndKeys:
+                                       pid, @"id",
+                                       [SettingsViewController formatForTemplate:provider], @"format",
+                                       provider, @"template",
+                                       [SettingsViewController displayNameForTemplate:provider], @"displayName",
+                                       baseURL, @"baseURL",
+                                       @"", @"apiKey",
+                                       [NSNumber numberWithBool:NO], @"collapsed",
+                                       [NSArray arrayWithArray:models], @"models",
+                                       nil];
+        [self saveProviders:[NSArray arrayWithObject:seedProvider]];
+    }
+    return out;
+}
+
++ (NSArray *)savedModelList
+{
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSDictionary *e in [self savedModelEntries]) {
+        NSString *mid = [e objectForKey:@"id"];
+        if ([mid isKindOfClass:[NSString class]]) [out addObject:mid];
+    }
+    return out;
+}
+
+// Merges a flat entry into the matching provider entry (creating one if
+// needed). Used by /v1/models search "add" + the legacy bare-id add path.
++ (void)saveModelEntries:(NSArray *)entries
+{
+    // Group the supplied flat entries by (provider, baseURL, apiKey) and
+    // merge them into the existing provider list. Existing models inside
+    // each provider are preserved; supplied entries are added if missing.
+    NSMutableArray *existing = [[self savedProviders] mutableCopy];
+    for (NSDictionary *e in entries) {
+        NSString *mid = [e objectForKey:@"id"];
+        if (![mid isKindOfClass:[NSString class]] || mid.length == 0) continue;
+        NSString *provider = [e objectForKey:@"provider"];
+        if (![provider isKindOfClass:[NSString class]] || provider.length == 0) {
+            provider = ProviderIDOpenAI;
+        }
+        NSString *baseURL = [e objectForKey:@"baseURL"];
+        if (![baseURL isKindOfClass:[NSString class]]) baseURL = @"";
+        NSString *apiKey = [e objectForKey:@"apiKey"];
+        if (![apiKey isKindOfClass:[NSString class]]) apiKey = @"";
+        NSString *kind = [e objectForKey:@"kind"];
+        if (![kind isKindOfClass:[NSString class]] || kind.length == 0) kind = @"chat";
+        NSString *displayName = [e objectForKey:@"displayName"];
+        BOOL starred = [[e objectForKey:@"starred"] boolValue];
+        // Find a matching provider entry.
+        NSMutableDictionary *g = nil;
+        for (NSMutableDictionary *gg in existing) {
+            NSString *gp = [gg objectForKey:@"template"];
+            NSString *gb = [gg objectForKey:@"baseURL"];
+            NSString *gk = [gg objectForKey:@"apiKey"];
+            if ([gp isEqualToString:provider] &&
+                [gb isEqualToString:baseURL] &&
+                [gk isEqualToString:apiKey]) {
+                g = gg;
+                break;
+            }
+        }
+        if (!g) {
+            g = [NSMutableDictionary dictionary];
+            [g setObject:[self newProviderUUID] forKey:@"id"];
+            [g setObject:[SettingsViewController formatForTemplate:provider] forKey:@"format"];
+            [g setObject:provider forKey:@"template"];
+            [g setObject:[SettingsViewController displayNameForTemplate:provider] forKey:@"displayName"];
+            [g setObject:baseURL forKey:@"baseURL"];
+            [g setObject:apiKey forKey:@"apiKey"];
+            [g setObject:[NSNumber numberWithBool:NO] forKey:@"collapsed"];
+            [g setObject:[NSMutableArray array] forKey:@"models"];
+            [existing addObject:g];
+        }
+        NSMutableArray *models = [[g objectForKey:@"models"] mutableCopy];
+        // Skip if the model already exists; otherwise append.
+        BOOL exists = NO;
+        for (NSDictionary *m in models) {
+            if ([[[m objectForKey:@"id"] isEqualToString:mid] boolValue]) { exists = YES; break; }
+        }
+        if (!exists) {
+            NSMutableDictionary *mc = [NSMutableDictionary dictionary];
+            [mc setObject:mid forKey:@"id"];
+            [mc setObject:[NSNumber numberWithBool:starred] forKey:@"starred"];
+            [mc setObject:kind forKey:@"kind"];
+            if ([displayName isKindOfClass:[NSString class]] && displayName.length > 0) {
+                [mc setObject:displayName forKey:@"displayName"];
+            }
+            [models addObject:mc];
+            [g setObject:models forKey:@"models"];
+        }
+        [models release];
+    }
+    [existing autorelease];
+    [self saveProviders:existing];
+}
+
 + (void)saveModelList:(NSArray *)list
 {
     NSMutableArray *entries = [NSMutableArray arrayWithCapacity:[list count]];
@@ -236,239 +644,237 @@ static NSArray *kProviderOrder = nil;
     [self saveModelEntries:entries];
 }
 
-// v261025-7: bare-id add (legacy path — still used by the /v1/models search
-// sheet when the user picks a result). Creates a minimal entry with
-// source=user and NO provider overrides (resolves from global settings).
+// Legacy bare-id add: appends to the FIRST provider entry whose template
+// matches the global settings provider, or creates a new provider entry.
 + (void)addModel:(NSString *)model
 {
-    if (!model || model.length == 0) return;
-    NSArray *cur = [self savedModelEntries];
-    for (NSDictionary *e in cur) {
-        NSString *mid = [e objectForKey:@"id"];
-        if ([mid isKindOfClass:[NSString class]] && [mid isEqualToString:model]) return;
-    }
-    NSMutableArray *arr = [NSMutableArray arrayWithArray:cur];
-    [arr addObject:[NSDictionary dictionaryWithObjectsAndKeys:
-                    model, @"id",
-                    @"user", @"source", nil]];
-    [self saveModelEntries:arr];
+    if (!model.length) return;
+    // De-dupe across all providers.
+    if ([self providerEntryContainingModel:model]) return;
+    NSString *provider = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyProvider] ?: ProviderIDOpenAI;
+    NSString *baseURL = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyBaseURL] ?: [SettingsViewController defaultBaseURLForProvider:provider];
+    if (!baseURL.length) baseURL = [SettingsViewController defaultBaseURLForProvider:provider];
+    NSString *apiKey = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyAPIKey] ?: @"";
+    [self saveModelEntries:[NSArray arrayWithObject:
+        [NSDictionary dictionaryWithObjectsAndKeys:
+            model, @"id",
+            provider, @"provider",
+            baseURL, @"baseURL",
+            apiKey, @"apiKey",
+            @"chat", @"kind",
+            @"user", @"source", nil]]];
 }
 
-// v261025-7: full-entry add. Merges the caller's dict with defaults; keeps
-// existing entries untouched. De-duplicates by id.
 + (void)addModelEntry:(NSDictionary *)entry
 {
     if (![entry isKindOfClass:[NSDictionary class]]) return;
     NSString *mid = [entry objectForKey:@"id"];
     if (![mid isKindOfClass:[NSString class]] || mid.length == 0) return;
-    NSArray *cur = [self savedModelEntries];
-    for (NSDictionary *e in cur) {
-        NSString *eid = [e objectForKey:@"id"];
-        if ([eid isKindOfClass:[NSString class]] && [eid isEqualToString:mid]) {
-            // Already exists — replace it (the add page doubles as edit).
-            NSMutableArray *arr = [NSMutableArray arrayWithArray:cur];
-            [arr replaceObjectAtIndex:[arr indexOfObject:e] withObject:entry];
-            [self saveModelEntries:arr];
-            return;
-        }
-    }
-    NSMutableArray *arr = [NSMutableArray arrayWithArray:cur];
-    [arr addObject:entry];
-    [self saveModelEntries:arr];
+    // Use saveModelEntries: which merges and de-dupes.
+    [self saveModelEntries:[NSArray arrayWithObject:entry]];
 }
 
-// v261025-7: resolve the connection the CHAT path should use. Merges the
-// ACTIVE entry's overrides (provider / baseURL / apiKey) with the global
-// settings defaults. Entries from pre-v261025-7 files have no overrides —
-// they fall through to the global settings exactly as before.
++ (void)removeModel:(NSString *)model
+{
+    if (!model.length) return;
+    NSDictionary *p = [self providerEntryContainingModel:model];
+    if (!p) return;
+    [self removeModel:model fromProviderID:[p objectForKey:@"id"]];
+}
+
++ (void)addTransitModels:(NSArray *)modelIDs
+{
+    if (!modelIDs || [modelIDs count] == 0) return;
+    // Transit models go into the "transit" pseudo-provider entry. We use
+    // template="custom", displayName="中转自带", baseURL=transitURL.
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    NSString *transitURL = [d stringForKey:SettingsKeyTransitURL];
+    if (!transitURL.length) transitURL = @"https://ai-transit.awa.lat";
+    NSMutableArray *existing = [[self savedProviders] mutableCopy];
+    // Find or create the transit provider entry.
+    NSMutableDictionary *g = nil;
+    for (NSMutableDictionary *gg in existing) {
+        NSString *t = [gg objectForKey:@"template"];
+        NSString *b = [gg objectForKey:@"baseURL"];
+        if ([t isEqualToString:ProviderTemplateCustom] && [b isEqualToString:transitURL]) {
+            g = gg;
+            break;
+        }
+    }
+    if (!g) {
+        g = [NSMutableDictionary dictionary];
+        [g setObject:[self newProviderUUID] forKey:@"id"];
+        [g setObject:ProviderFormatOpenAI forKey:@"format"];
+        [g setObject:ProviderTemplateCustom forKey:@"template"];
+        [g setObject:NSLocalizedString(@"中转自带", nil) forKey:@"displayName"];
+        [g setObject:transitURL forKey:@"baseURL"];
+        [g setObject:@"" forKey:@"apiKey"];
+        [g setObject:[NSNumber numberWithBool:NO] forKey:@"collapsed"];
+        [g setObject:[NSMutableArray array] forKey:@"models"];
+        [existing addObject:g];
+    }
+    NSMutableArray *models = [[g objectForKey:@"models"] mutableCopy];
+    for (NSString *mid in modelIDs) {
+        if (![mid isKindOfClass:[NSString class]] || mid.length == 0) continue;
+        BOOL exists = NO;
+        for (NSDictionary *m in models) {
+            if ([[[m objectForKey:@"id"] isEqualToString:mid] boolValue]) { exists = YES; break; }
+        }
+        if (exists) continue;
+        NSMutableDictionary *mc = [NSMutableDictionary dictionary];
+        [mc setObject:mid forKey:@"id"];
+        [mc setObject:[NSNumber numberWithBool:NO] forKey:@"starred"];
+        [mc setObject:@"chat" forKey:@"kind"];
+        [models addObject:mc];
+    }
+    [g setObject:models forKey:@"models"];
+    [models release];
+    [existing autorelease];
+    [self saveProviders:existing];
+}
+
++ (void)removeAllTransitModels
+{
+    NSMutableArray *arr = [[self savedProviders] mutableCopy];
+    NSMutableArray *clean = [NSMutableArray array];
+    NSInteger removed = 0;
+    for (NSDictionary *p in arr) {
+        NSString *t = [p objectForKey:@"template"];
+        NSString *b = [p objectForKey:@"baseURL"];
+        NSString *dn = [p objectForKey:@"displayName"];
+        if ([t isEqualToString:ProviderTemplateCustom] &&
+            [dn isEqualToString:NSLocalizedString(@"中转自带", nil)] &&
+            [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyTransitURL]
+                ? [[[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyTransitURL] isEqualToString:b]
+                : YES) {
+            // This is the transit provider entry - drop it entirely.
+            removed += [[p objectForKey:@"models"] count];
+            continue;
+        }
+        [clean addObject:p];
+    }
+    [arr autorelease];
+    [self saveProviders:clean];
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"ModelMgmt removeAllTransitModels - %d models removed", (int)removed]];
+}
+
++ (NSString *)sourceForModel:(NSString *)model
+{
+    if (!model.length) return @"user";
+    NSDictionary *p = [self providerEntryContainingModel:model];
+    if (!p) return @"user";
+    NSString *dn = [p objectForKey:@"displayName"];
+    if ([dn isEqualToString:NSLocalizedString(@"中转自带", nil)]) return @"transit";
+    return @"user";
+}
+
+#pragma mark - v261025-9 resolved connection for the chat / image paths
+
+// Returns { format, template, baseURL, apiKey, model } for the ACTIVE chat
+// model. Falls back to global settings defaults when the active model can't
+// be found in any provider entry (legacy path).
 + (NSDictionary *)resolvedConnectionForChat
 {
     NSDictionary *settings = [SettingsViewController loadSettings];
     NSString *model = [settings objectForKey:SettingsKeyModel];
-    NSDictionary *entry = nil;
+    NSDictionary *provider = nil;
     if (model.length > 0) {
-        for (NSDictionary *e in [self savedModelEntries]) {
-            // v261025-8: NEVER resolve the chat path to an image-gen entry
-            // — a kind="image" model id in SettingsKeyModel would send
-            // chat-completion requests at an image API.
-            if ([self entryIsImageKind:e]) continue;
-            NSString *eid = [e objectForKey:@"id"];
-            if ([eid isKindOfClass:[NSString class]] && [eid isEqualToString:model]) {
-                entry = e;
-                break;
-            }
-        }
+        provider = [self providerEntryContainingModel:model];
     }
-    NSString *provider = [entry objectForKey:@"provider"];
-    if (![provider isKindOfClass:[NSString class]] || provider.length == 0) {
-        provider = [settings objectForKey:SettingsKeyProvider];
+    NSString *format = [provider objectForKey:@"format"];
+    if (![format isKindOfClass:[NSString class]] || format.length == 0) {
+        format = ProviderFormatOpenAI;
     }
-    NSString *baseURL = [entry objectForKey:@"baseURL"];
+    NSString *template = [provider objectForKey:@"template"];
+    if (![template isKindOfClass:[NSString class]] || template.length == 0) {
+        template = [settings objectForKey:SettingsKeyProvider];
+    }
+    NSString *baseURL = [provider objectForKey:@"baseURL"];
     if (![baseURL isKindOfClass:[NSString class]] || baseURL.length == 0) {
         baseURL = [settings objectForKey:SettingsKeyBaseURL];
     }
-    NSString *apiKey = [entry objectForKey:@"apiKey"];
+    NSString *apiKey = [provider objectForKey:@"apiKey"];
     if (![apiKey isKindOfClass:[NSString class]] || apiKey.length == 0) {
         apiKey = [settings objectForKey:SettingsKeyAPIKey];
     }
     return [NSDictionary dictionaryWithObjectsAndKeys:
-            provider ?: ProviderIDOpenAI, @"provider",
+            format, @"format",
+            template ?: ProviderIDOpenAI, @"template",
             baseURL   ?: @"https://api.openai.com", @"baseURL",
             apiKey    ?: @"", @"apiKey",
             model     ?: @"", @"model",
             nil];
 }
 
-// v261025-8: is this entry a 生图 model? (kind=="image"; absent = chat)
+// Returns { format, template, baseURL, apiKey, model } for the ACTIVE image
+// model. model is @"" when no image model is configured.
++ (NSDictionary *)resolvedConnectionForImageGen
+{
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    NSString *model = [d stringForKey:SettingsKeyImageGenModel];
+    NSDictionary *provider = nil;
+    if (model.length > 0) {
+        provider = [self providerEntryContainingModel:model];
+    }
+    // Fallback: pick the first image-kind model across all providers.
+    if (!provider) {
+        for (NSDictionary *p in [self savedProviders]) {
+            NSArray *models = [p objectForKey:@"models"];
+            for (NSDictionary *m in models) {
+                if ([[m objectForKey:@"kind"] isEqualToString:@"image"]) {
+                    provider = p;
+                    model = [m objectForKey:@"id"];
+                    if (model.length > 0) {
+                        [d setObject:model forKey:SettingsKeyImageGenModel];
+                        [d synchronize];
+                    }
+                    break;
+                }
+            }
+            if (provider) break;
+        }
+    }
+    if (!provider) {
+        // No image model configured anywhere.
+        return [NSDictionary dictionaryWithObjectsAndKeys:
+                ProviderFormatOpenAI, @"format",
+                ProviderIDZhipu, @"template",
+                @"", @"baseURL",
+                @"", @"apiKey",
+                @"", @"model",
+                nil];
+    }
+    NSString *format = [provider objectForKey:@"format"];
+    if (![format isKindOfClass:[NSString class]] || format.length == 0) format = ProviderFormatOpenAI;
+    NSString *template = [provider objectForKey:@"template"];
+    if (![template isKindOfClass:[NSString class]] || template.length == 0) template = ProviderIDZhipu;
+    NSString *baseURL = [provider objectForKey:@"baseURL"];
+    if (![baseURL isKindOfClass:[NSString class]]) baseURL = @"";
+    NSString *apiKey = [provider objectForKey:@"apiKey"];
+    if (![apiKey isKindOfClass:[NSString class]]) apiKey = @"";
+    return [NSDictionary dictionaryWithObjectsAndKeys:
+            format, @"format",
+            template, @"template",
+            baseURL, @"baseURL",
+            apiKey, @"apiKey",
+            model ?: @"", @"model",
+            nil];
+}
+
 + (BOOL)entryIsImageKind:(NSDictionary *)entry
 {
+    // entry here is a flat model entry (legacy callers).
     if (![entry isKindOfClass:[NSDictionary class]]) return NO;
     NSString *k = [entry objectForKey:@"kind"];
     return [k isKindOfClass:[NSString class]] && [k isEqualToString:@"image"];
 }
 
-// v261025-8: resolve the connection the IMAGE-GEN path should use.
-// Looks up the ACTIVE image model (SettingsKeyImageGenModel — set by
-// ModelAddViewController on save, or by tapping an image entry here).
-// model is @"" when no image model is configured — ChatViewController
-// prompts the user to add one in that case.
-+ (NSDictionary *)resolvedConnectionForImageGen
++ (BOOL)modelIsImageKind:(NSDictionary *)modelDict
 {
-    NSDictionary *settings = [SettingsViewController loadSettings];
-    NSString *model = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyImageGenModel];
-    NSDictionary *entry = nil;
-    if ([model isKindOfClass:[NSString class]] && model.length > 0) {
-        for (NSDictionary *e in [self savedModelEntries]) {
-            if (![self entryIsImageKind:e]) continue;   // image entries only
-            NSString *eid = [e objectForKey:@"id"];
-            if ([eid isKindOfClass:[NSString class]] && [eid isEqualToString:model]) {
-                entry = e;
-                break;
-            }
-        }
-    }
-    // Fallback: no stored key / stale id — use the FIRST image entry.
-    if (!entry) {
-        for (NSDictionary *e in [self savedModelEntries]) {
-            if ([self entryIsImageKind:e]) {
-                entry = e;
-                NSString *eid = [e objectForKey:@"id"];
-                if ([eid isKindOfClass:[NSString class]] && eid.length > 0) {
-                    model = eid;
-                    // Self-heal: persist so the composer + the section-0
-                    // row stay in sync.
-                    [[NSUserDefaults standardUserDefaults] setObject:eid
-                                                              forKey:SettingsKeyImageGenModel];
-                    [[NSUserDefaults standardUserDefaults] synchronize];
-                }
-                break;
-            }
-        }
-    }
-    NSString *provider = [entry objectForKey:@"provider"];
-    if (![provider isKindOfClass:[NSString class]] || provider.length == 0) {
-        provider = [settings objectForKey:SettingsKeyProvider];
-    }
-    NSString *baseURL = [entry objectForKey:@"baseURL"];
-    if (![baseURL isKindOfClass:[NSString class]] || baseURL.length == 0) {
-        baseURL = [settings objectForKey:SettingsKeyBaseURL];
-    }
-    NSString *apiKey = [entry objectForKey:@"apiKey"];
-    if (![apiKey isKindOfClass:[NSString class]] || apiKey.length == 0) {
-        apiKey = [settings objectForKey:SettingsKeyAPIKey];
-    }
-    return [NSDictionary dictionaryWithObjectsAndKeys:
-            provider ?: ProviderIDZhipu, @"provider",
-            baseURL   ?: @"", @"baseURL",
-            apiKey    ?: @"", @"apiKey",
-            model     ?: @"", @"model",
-            nil];
-}
-
-// v261025-7: which provider bucket does an entry belong to?
-+ (NSString *)_providerBucketForEntry:(NSDictionary *)entry
-{
-    NSString *p = [entry objectForKey:@"provider"];
-    if ([p isKindOfClass:[NSString class]] && p.length > 0) {
-        return p;
-    }
-    // No explicit provider → global settings provider at the time of read.
-    NSString *globalProvider = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyProvider];
-    return globalProvider.length > 0 ? globalProvider : ProviderIDOpenAI;
-}
-
-+ (void)removeModel:(NSString *)model
-{
-    if (!model || model.length == 0) return;
-    NSArray *cur = [self savedModelEntries];
-    NSMutableArray *arr = [NSMutableArray array];
-    for (NSDictionary *e in cur) {
-        NSString *mid = [e objectForKey:@"id"];
-        if (![mid isEqualToString:model]) [arr addObject:e];
-    }
-    [self saveModelEntries:arr];
-}
-
-// v261025-3: bulk-add transit-server bundled models.
-// - Skips models that already exist (by id, regardless of source).
-// - Each new model is added with source="transit".
-+ (void)addTransitModels:(NSArray *)modelIDs
-{
-    if (!modelIDs || [modelIDs count] == 0) return;
-    NSArray *cur = [self savedModelEntries];
-    NSMutableArray *arr = [NSMutableArray arrayWithArray:cur];
-    for (NSString *mid in modelIDs) {
-        if (![mid isKindOfClass:[NSString class]] || mid.length == 0) continue;
-        BOOL exists = NO;
-        for (NSDictionary *e in arr) {
-            NSString *eID = [e objectForKey:@"id"];
-            if ([eID isKindOfClass:[NSString class]] && [eID isEqualToString:mid]) {
-                exists = YES;
-                break;
-            }
-        }
-        if (exists) continue;
-        [arr addObject:[NSDictionary dictionaryWithObjectsAndKeys:
-                        mid, @"id",
-                        @"transit", @"source", nil]];
-    }
-    [self saveModelEntries:arr];
-}
-
-// v261025-3: bulk-remove all source="transit" models.
-// Called when the user toggles "transit default model" OFF in Settings.
-+ (void)removeAllTransitModels
-{
-    NSArray *cur = [self savedModelEntries];
-    NSMutableArray *arr = [NSMutableArray array];
-    NSInteger removedCount = 0;
-    for (NSDictionary *e in cur) {
-        NSString *src = [e objectForKey:@"source"];
-        if ([src isKindOfClass:[NSString class]] && [src isEqualToString:@"transit"]) {
-            removedCount++;
-            continue;
-        }
-        [arr addObject:e];
-    }
-    [self saveModelEntries:arr];
-    [[Logger sharedLogger] info:[NSString stringWithFormat:
-        @"ModelMgmt removeAllTransitModels — %d removed", (int)removedCount]];
-}
-
-// v261025-3: get the source ("user" | "transit") for a given model id.
-// Used by ModelMgmt cell UI to show the "中转" 角标.
-+ (NSString *)sourceForModel:(NSString *)model
-{
-    if (!model || model.length == 0) return @"user";
-    NSArray *cur = [self savedModelEntries];
-    for (NSDictionary *e in cur) {
-        NSString *mid = [e objectForKey:@"id"];
-        if ([mid isKindOfClass:[NSString class]] && [mid isEqualToString:model]) {
-            NSString *src = [e objectForKey:@"source"];
-            return [src isKindOfClass:[NSString class]] ? src : @"user";
-        }
-    }
-    return @"user";
+    if (![modelDict isKindOfClass:[NSDictionary class]]) return NO;
+    NSString *k = [modelDict objectForKey:@"kind"];
+    return [k isKindOfClass:[NSString class]] && [k isEqualToString:@"image"];
 }
 
 #pragma mark - Lifecycle
@@ -478,28 +884,20 @@ static NSArray *kProviderOrder = nil;
     if (self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil]) {
         self.title = NSLocalizedString(@"模型管理", nil);
         _availableModels = [[NSMutableArray array] retain];
-        _providerGroups = [[NSMutableArray array] retain];
+        _providerEntries = [[NSArray array] retain];
     }
     return self;
 }
 
 - (void)dealloc
 {
-    // v261025-1 CRITICAL: this dealloc was MISSING removeObserver — the
-    // theme-change observer registered in viewDidLoad stayed in the
-    // notification center as a ZOMBIE after the page was popped. The
-    // next iOS6ThemeDidChangeNotification (dark mode / font size / the
-    // image-support toggle on THIS VERY PAGE posts it!) messaged freed
-    // memory → SIGSEGV with NOTHING in the log.
     [[NSNotificationCenter defaultCenter] removeObserver:self];
-    // v261025-1: also drop any deferred sheet presentation still pending.
     [NSObject cancelPreviousPerformRequestsWithTarget:self];
     [_tableView release];
     [_availableModels release];
-    [_pendingAddModel release];
     [_pendingDeleteModel release];
-    // v261025-7: provider group cache.
-    [_providerGroups release];
+    [_pendingDeleteProviderID release];
+    [_providerEntries release];
     [super dealloc];
 }
 
@@ -516,6 +914,11 @@ static NSArray *kProviderOrder = nil;
     _tableView.backgroundColor = [UIColor clearColor];
     _tableView.backgroundView = nil;
     _tableView.opaque = NO;
+    // v261025-9: register a custom header class for reuse so the
+    // tap-to-collapse / DetailDisclosure work without rebuilding from
+    // scratch on every reload (and so we can find the disclosure button
+    // reliably for hit-testing).
+    [_tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:kCellReuseID];
     [self.view addSubview:_tableView];
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(_themeChanged)
@@ -528,7 +931,7 @@ static NSArray *kProviderOrder = nil;
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
     _tableView.backgroundColor = [UIColor clearColor];
     _tableView.backgroundView = nil;
-    [self _rebuildGroups];
+    [self _rebuildProviderCache];
     [_tableView reloadData];
 }
 
@@ -538,130 +941,123 @@ static NSArray *kProviderOrder = nil;
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
     _tableView.backgroundColor = [UIColor clearColor];
     _tableView.backgroundView = nil;
-    // v261025-7: rebuild groups every appear — the ModelAddViewController
-    // may have added/edited entries while we were covered.
-    [self _rebuildGroups];
+    [self _rebuildProviderCache];
     [_tableView reloadData];
 }
 
-// v261025-8: any image-gen entry saved at all? (Section-0 footer hint.)
 - (BOOL)_hasAnyImageEntry
 {
-    for (NSDictionary *e in [ModelManagementViewController savedModelEntries]) {
-        if ([ModelManagementViewController entryIsImageKind:e]) return YES;
+    for (NSDictionary *p in _providerEntries) {
+        for (NSDictionary *m in [p objectForKey:@"models"]) {
+            if ([[m objectForKey:@"kind"] isEqualToString:@"image"]) return YES;
+        }
     }
     return NO;
 }
 
-#pragma mark - v261025-7 Provider groups (two-tier structure)
+#pragma mark - Provider cache
 
-// Group saved entries by provider bucket into _providerGroups:
-//   [{ provider: "zhipu",   entries: [...] },
-//    { provider: "openai",  entries: [...] }, ...]
-// Providers appear in kProviderOrder order; the "custom" bucket collects
-// anything not matching a known provider id. Groups with zero entries are
-// omitted entirely.
-- (void)_rebuildGroups
+- (void)_rebuildProviderCache
 {
-    NSArray *all = [ModelManagementViewController savedModelEntries];
-    NSArray *order = [ModelManagementViewController _providerOrder];
-    NSMutableArray *groups = [NSMutableArray array];
-    for (NSString *prov in order) {
-        NSMutableArray *bucket = [NSMutableArray array];
-        for (NSDictionary *e in all) {
-            if (![e isKindOfClass:[NSDictionary class]]) continue;
-            NSString *bucketProv = [ModelManagementViewController _providerBucketForEntry:e];
-            BOOL isKnown = [bucketProv isEqualToString:prov];
-            // "custom" bucket swallows every non-zhipu/openai/ollama provider.
-            if ([prov isEqualToString:@"custom"]) {
-                isKnown = ([bucketProv isEqualToString:ProviderIDZhipu] ||
-                           [bucketProv isEqualToString:ProviderIDOpenAI] ||
-                           [bucketProv isEqualToString:ProviderIDOllama]) ? NO : YES;
-            }
-            if (isKnown) [bucket addObject:e];
-        }
-        if ([bucket count] > 0) {
-            [groups addObject:[NSDictionary dictionaryWithObjectsAndKeys:
-                               prov, @"provider",
-                               [NSArray arrayWithArray:bucket], @"entries",
-                               nil]];
-        }
-    }
-    [_providerGroups release];
-    _providerGroups = [groups retain];
+    NSArray *fresh = [ModelManagementViewController savedProviders];
+    [_providerEntries release];
+    _providerEntries = [fresh retain];
 }
 
-// Map a displayed section index → group index (or NSNotFound).
-- (NSInteger)_groupIndexForSection:(NSInteger)section
+// Map a displayed section index → provider entry index (NSNotFound if not).
+- (NSInteger)_providerIndexForSection:(NSInteger)section
 {
-    if (section < 1 || section > (NSInteger)[_providerGroups count]) return NSNotFound;
+    if (section < 1 || section > (NSInteger)[_providerEntries count]) return NSNotFound;
     return section - 1;
 }
 
-- (NSInteger)_sectionForAdd      { return 1 + (NSInteger)[_providerGroups count]; }
-- (NSInteger)_sectionForCaps     { return 2 + (NSInteger)[_providerGroups count]; }
-
-- (NSString *)_displayNameForProvider:(NSString *)provider
-{
-    NSString *n = [SettingsViewController displayNameForProvider:provider];
-    if ([provider isEqualToString:@"custom"]) return NSLocalizedString(@"自定义", nil);
-    return n;
-}
+- (NSInteger)_sectionForAdd  { return 1 + (NSInteger)[_providerEntries count]; }
+- (NSInteger)_sectionForCaps { return 2 + (NSInteger)[_providerEntries count]; }
 
 #pragma mark - Table data source
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
 {
-    // v261025-7: 1 (current) + N (provider groups) + 1 (add) + 1 (caps).
-    [self _rebuildGroupsIfNeeded];
-    return 1 + (NSInteger)[_providerGroups count] + 2;
-}
-
-// v261025-7: groups can be empty before the first rebuild (e.g. the table
-// asks before viewWillAppear on a fresh push).
-- (void)_rebuildGroupsIfNeeded
-{
-    if ([_providerGroups count] == 0) {
-        [self _rebuildGroups];
-    }
+    return 1 + (NSInteger)[_providerEntries count] + 2;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
-    [self _rebuildGroupsIfNeeded];
-    if (section == 0) return 2;                      // 对话模型 + 生图模型 (v261025-8)
-    NSInteger gIdx = [self _groupIndexForSection:section];
-    if (gIdx != NSNotFound) {
-        NSDictionary *g = [_providerGroups objectAtIndex:gIdx];
-        return (NSInteger)[[g objectForKey:@"entries"] count];
+    if (section == 0) return 2;                      // 对话模型 + 生图模型
+    NSInteger pIdx = [self _providerIndexForSection:section];
+    if (pIdx != NSNotFound) {
+        NSDictionary *p = [_providerEntries objectAtIndex:pIdx];
+        BOOL collapsed = [[p objectForKey:@"collapsed"] boolValue];
+        if (collapsed) return 0;
+        return (NSInteger)[[p objectForKey:@"models"] count];
     }
-    if (section == [self _sectionForAdd])  return 1;  // + 添加模型
-    if (section == [self _sectionForCaps]) return 2;  // 图片识别 / 思考
+    if (section == [self _sectionForAdd])  return 1;
+    if (section == [self _sectionForCaps]) return 2;
     return 0;
+}
+
+- (NSString *)_titleForHeaderInProviderSection:(NSInteger)pIdx
+{
+    if (pIdx < 0 || pIdx >= (NSInteger)[_providerEntries count]) return @"";
+    NSDictionary *p = [_providerEntries objectAtIndex:pIdx];
+    NSString *dn = [p objectForKey:@"displayName"];
+    NSInteger cnt = (NSInteger)[[p objectForKey:@"models"] count];
+    BOOL collapsed = [[p objectForKey:@"collapsed"] boolValue];
+    NSString *arrow = collapsed ? @"\u25B6" : @"\u25BC";  // ▶/▼
+    return [NSString stringWithFormat:@"%@  %@ (%d)", arrow, dn ?: @"?", (int)cnt];
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
 {
-    [self _rebuildGroupsIfNeeded];
     if (section == 0) return NSLocalizedString(@"当前默认模型", nil);
-    NSInteger gIdx = [self _groupIndexForSection:section];
-    if (gIdx != NSNotFound) {
-        NSDictionary *g = [_providerGroups objectAtIndex:gIdx];
-        NSString *prov = [g objectForKey:@"provider"];
-        NSInteger cnt = (NSInteger)[[g objectForKey:@"entries"] count];
-        return [NSString stringWithFormat:@"%@ (%d)",
-                [self _displayNameForProvider:prov], (int)cnt];
+    NSInteger pIdx = [self _providerIndexForSection:section];
+    if (pIdx != NSNotFound) {
+        return [self _titleForHeaderInProviderSection:pIdx];
     }
     if (section == [self _sectionForAdd]) return NSLocalizedString(@"添加", nil);
     if (section == [self _sectionForCaps]) return NSLocalizedString(@"能力（应用到所有模型）", nil);
     return @"";
 }
 
-// v261025-7: custom TRANSPARENT header/footer views — the iOS 6 system
-// grouped header/footer draws an opaque LIGHT strip that shows up as a
-// white bar behind the text in dark mode (user-reported).
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
 {
+    // Provider sections get a CUSTOM header view (with tap-to-collapse +
+    // an "编辑" DetailDisclosure button on the right).
+    NSInteger pIdx = [self _providerIndexForSection:section];
+    if (pIdx != NSNotFound) {
+        NSDictionary *p = [_providerEntries objectAtIndex:pIdx];
+        CGRect hFrame = CGRectMake(0, 0, tableView.bounds.size.width, 36);
+        UIView *hv = [[[UIView alloc] initWithFrame:hFrame] autorelease];
+        hv.backgroundColor = [UIColor clearColor];
+        hv.opaque = NO;
+        NSString *title = [self _titleForHeaderInProviderSection:pIdx];
+        UILabel *l = [[[UILabel alloc] initWithFrame:CGRectMake(12, 0,
+                            hFrame.size.width - 12 - 80, 36)] autorelease];
+        l.text = title;
+        l.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
+        l.textColor = [iOS6Theme secondaryTextColor];
+        l.backgroundColor = [UIColor clearColor];
+        l.opaque = NO;
+        l.adjustsFontSizeToFitWidth = YES;
+        l.minimumScaleFactor = 0.7f;
+        [hv addSubview:l];
+        // 编辑 button (right side).
+        UIButton *edit = [UIButton buttonWithType:UIButtonTypeDetailDisclosure];
+        edit.frame = CGRectMake(hFrame.size.width - 30 - 6, (36 - 24) / 2, 24, 24);
+        edit.tag = 1000 + pIdx;
+        [edit addTarget:self action:@selector(_editProviderTapped:)
+          forControlEvents:UIControlEventTouchUpInside];
+        [hv addSubview:edit];
+        // Tag the header view with the section index so a tap on the body
+        // (not on the button) toggles collapse.
+        hv.tag = 2000 + pIdx;
+        // Install a tap recognizer on the header view.
+        UITapGestureRecognizer *tr = [[[UITapGestureRecognizer alloc]
+            initWithTarget:self action:@selector(_headerTapped:)] autorelease];
+        [hv addGestureRecognizer:tr];
+        return hv;
+    }
+    // Other sections: use the shared theme header (transparent, dark-mode-safe).
     NSString *title = [self tableView:tableView titleForHeaderInSection:section];
     return [iOS6Theme groupedSectionHeaderViewWithTitle:title
                                                   width:tableView.bounds.size.width];
@@ -669,34 +1065,31 @@ static NSArray *kProviderOrder = nil;
 
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
 {
+    if ([self _providerIndexForSection:section] != NSNotFound) return 36.0f;
     NSString *title = [self tableView:tableView titleForHeaderInSection:section];
     return (title.length > 0) ? 26.0f : 8.0f;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
-    [self _rebuildGroupsIfNeeded];
     if (section == 0) {
         if ([self _hasAnyImageEntry]) {
             return NSLocalizedString(@"点「测试」验证连接；点「搜索」从 /v1/models 拉取可选用模型。", nil);
         }
         return NSLocalizedString(@"点「测试」验证连接；点「搜索」从 /v1/models 拉取可选用模型。生图：先在「添加」里选生图模型类型。", nil);
     }
-    NSInteger gIdx = [self _groupIndexForSection:section];
-    if (gIdx != NSNotFound) {
-        NSDictionary *g = [_providerGroups objectAtIndex:gIdx];
-        NSString *prov = [g objectForKey:@"provider"];
-        // Show the group's shared endpoint hint when the entries carry one.
-        NSDictionary *firstEntry = [[g objectForKey:@"entries"] count] > 0
-            ? [[g objectForKey:@"entries"] objectAtIndex:0] : nil;
-        NSString *b = [firstEntry objectForKey:@"baseURL"];
-        if ([b isKindOfClass:[NSString class]] && b.length > 0) {
-            return [NSString stringWithFormat:@"点模型设为默认；右滑删除。端点: %@", b];
+    NSInteger pIdx = [self _providerIndexForSection:section];
+    if (pIdx != NSNotFound) {
+        NSDictionary *p = [_providerEntries objectAtIndex:pIdx];
+        NSString *b = [p objectForKey:@"baseURL"];
+        if (b.length > 0) {
+            return [NSString stringWithFormat:
+                NSLocalizedString(@"点模型设为默认；左滑删除。端点: %@", nil), b];
         }
-        return NSLocalizedString(@"点模型设为默认；右滑删除。", nil);
+        return NSLocalizedString(@"点模型设为默认；左滑删除。", nil);
     }
     if (section == [self _sectionForAdd]) {
-        return NSLocalizedString(@"打开完整表单：选提供商、填 BaseURL / API Key / 模型名。", nil);
+        return NSLocalizedString(@"打开完整表单：选格式 + 模板 + 填 BaseURL / API Key / 模型。", nil);
     }
     if (section == [self _sectionForCaps]) {
         return NSLocalizedString(@"开关会附加到所有 AI 请求，决定是否携带图片/思考参数。", nil);
@@ -727,14 +1120,10 @@ static NSArray *kProviderOrder = nil;
                                        reuseIdentifier:kCellReuseID] autorelease];
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     }
-    // v261025-2: snapshot subviews — see CharacterManagementVC for the
-    // full root-cause writeup. Mutating subviews while iterating it is
-    // SIGSEGV on cctools-port armv7.
     NSArray *oldSubviews = [cell.contentView.subviews copy];
     for (UIView *v in oldSubviews) [v removeFromSuperview];
     [oldSubviews release];
     cell.backgroundColor = [iOS6Theme bubbleAssistantColor];
-    // v261025-7: explicit CLEAR label backgrounds (dark-mode white-plate fix).
     cell.textLabel.backgroundColor = [UIColor clearColor];
     cell.textLabel.opaque = NO;
     cell.textLabel.text = @"";
@@ -744,19 +1133,14 @@ static NSArray *kProviderOrder = nil;
     cell.accessoryType = UITableViewCellAccessoryNone;
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
 
-    [self _rebuildGroupsIfNeeded];
-    NSInteger gIdx = [self _groupIndexForSection:indexPath.section];
-
     if (indexPath.section == 0) {
-        // v261025-8: two rows — 0 = active CHAT model (+ 测试/搜索),
-        // 1 = active IMAGE-GEN model. Fully self-drawn (textLabel stays
-        // empty) so the two-line layout is exact on iOS 6.
+        // Section 0 — current default chat model + image-gen model + 测试/搜索.
         BOOL isImageRow = (indexPath.row == 1);
         NSDictionary *conn = isImageRow
             ? [ModelManagementViewController resolvedConnectionForImageGen]
             : [ModelManagementViewController resolvedConnectionForChat];
         NSString *model = [conn objectForKey:@"model"];
-        NSString *prov  = [conn objectForKey:@"provider"];
+        NSString *tpl  = [conn objectForKey:@"template"];
         BOOL hasModel = [model isKindOfClass:[NSString class]] && model.length > 0;
         NSString *display = hasModel ? model : NSLocalizedString(@"(未添加)", nil);
 
@@ -764,11 +1148,11 @@ static NSArray *kProviderOrder = nil;
             initWithFrame:CGRectMake(12, 5, cell.contentView.bounds.size.width - 170, 20)] autorelease];
         main.text = isImageRow
             ? [NSString stringWithFormat:@"生图模型 · %@",
-               ([prov isKindOfClass:[NSString class]] && prov.length > 0)
-                   ? [self _displayNameForProvider:prov] : @"?"]
+               ([tpl isKindOfClass:[NSString class]] && tpl.length > 0)
+                   ? [SettingsViewController displayNameForTemplate:tpl] : @"?"]
             : [NSString stringWithFormat:@"对话模型 · %@",
-               ([prov isKindOfClass:[NSString class]] && prov.length > 0)
-                   ? [self _displayNameForProvider:prov] : @"?"];
+               ([tpl isKindOfClass:[NSString class]] && tpl.length > 0)
+                   ? [SettingsViewController displayNameForTemplate:tpl] : @"?"];
         main.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
         main.textColor = isImageRow ? [iOS6Theme tintColor] : [iOS6Theme textColor];
         main.backgroundColor = [UIColor clearColor];
@@ -794,60 +1178,78 @@ static NSArray *kProviderOrder = nil;
         if (isImageRow) return cell;
 
         UIButton *testBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-            [testBtn setTitle:NSLocalizedString(@"测试", nil) forState:UIControlStateNormal];
-            [testBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-            testBtn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
-            testBtn.backgroundColor = [iOS6Theme secondaryTextColor];
-            testBtn.layer.cornerRadius = 6.0f;
-            testBtn.layer.masksToBounds = YES;
-            testBtn.tag = 8888;  // for cleanup on cell reuse
-            CGRect f = cell.contentView.bounds;
-            testBtn.frame = CGRectMake(f.size.width - 76 - 12 - 64 - 4, (44 - 28) / 2, 60, 28);
-            testBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-            [testBtn addTarget:self action:@selector(_testConnection)
-              forControlEvents:UIControlEventTouchUpInside];
-            [cell.contentView addSubview:testBtn];
+        [testBtn setTitle:NSLocalizedString(@"测试", nil) forState:UIControlStateNormal];
+        [testBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        testBtn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
+        testBtn.backgroundColor = [iOS6Theme secondaryTextColor];
+        testBtn.layer.cornerRadius = 6.0f;
+        testBtn.layer.masksToBounds = YES;
+        testBtn.tag = 8888;
+        CGRect f = cell.contentView.bounds;
+        testBtn.frame = CGRectMake(f.size.width - 76 - 12 - 64 - 4, (44 - 28) / 2, 60, 28);
+        testBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        [testBtn addTarget:self action:@selector(_testConnection)
+          forControlEvents:UIControlEventTouchUpInside];
+        [cell.contentView addSubview:testBtn];
 
-            UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
-            [btn setTitle:NSLocalizedString(@"搜索", nil) forState:UIControlStateNormal];
-            [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-            btn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
-            btn.backgroundColor = [iOS6Theme tintColor];
-            btn.layer.cornerRadius = 6.0f;
-            btn.layer.masksToBounds = YES;
-            btn.tag = 8889;  // for cleanup on cell reuse
-            CGRect f2 = cell.contentView.bounds;
-            btn.frame = CGRectMake(f2.size.width - 76 - 12, (44 - 28) / 2, 76, 28);
-            btn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-            [btn addTarget:self action:@selector(_searchAvailableModels)
-              forControlEvents:UIControlEventTouchUpInside];
-            [cell.contentView addSubview:btn];
-            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+        [btn setTitle:NSLocalizedString(@"搜索", nil) forState:UIControlStateNormal];
+        [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        btn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
+        btn.backgroundColor = [iOS6Theme tintColor];
+        btn.layer.cornerRadius = 6.0f;
+        btn.layer.masksToBounds = YES;
+        btn.tag = 8889;
+        CGRect f2 = cell.contentView.bounds;
+        btn.frame = CGRectMake(f2.size.width - 76 - 12, (44 - 28) / 2, 76, 28);
+        btn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        [btn addTarget:self action:@selector(_searchAvailableModels)
+          forControlEvents:UIControlEventTouchUpInside];
+        [cell.contentView addSubview:btn];
+        return cell;
     }
-    else if (gIdx != NSNotFound) {
-        // v261025-7: provider-group row — one saved model entry.
-        NSDictionary *g = [_providerGroups objectAtIndex:gIdx];
-        NSArray *entries = [g objectForKey:@"entries"];
-        if (indexPath.row >= (NSInteger)[entries count]) return cell;
-        NSDictionary *e = [entries objectAtIndex:indexPath.row];
-        NSString *mid = [e objectForKey:@"id"];
+    NSInteger pIdx = [self _providerIndexForSection:indexPath.section];
+    if (pIdx != NSNotFound) {
+        NSDictionary *p = [_providerEntries objectAtIndex:pIdx];
+        NSArray *models = [p objectForKey:@"models"];
+        if (indexPath.row >= (NSInteger)[models count]) return cell;
+        NSDictionary *m = [models objectAtIndex:indexPath.row];
+        NSString *mid = [m objectForKey:@"id"];
         if (![mid isKindOfClass:[NSString class]]) return cell;
-        // Display: displayName if set, else the raw model id.
-        NSString *dn = [e objectForKey:@"displayName"];
+        NSString *dn = [m objectForKey:@"displayName"];
         cell.textLabel.text = [dn isKindOfClass:[NSString class]] && dn.length > 0 ? dn : mid;
-        // "自定义" badge when the entry carries its own endpoint/key —
-        // i.e. it's a full provider profile, not a bare model name.
-        BOOL hasOverrides = ([[e objectForKey:@"baseURL"] length] > 0) ||
-                            ([[e objectForKey:@"apiKey"] length] > 0);
-        NSString *src = [e objectForKey:@"source"];
-        BOOL isTransit = [src isKindOfClass:[NSString class]] && [src isEqualToString:@"transit"];
-        BOOL isImage = [ModelManagementViewController entryIsImageKind:e];
-        // v261025-8: 生图 badge is laid out LEFT of the 自定义/中转 badge
-        // (or in its place when there is none).
-        CGFloat badgeRight = cell.contentView.bounds.size.width - 12;
+
+        BOOL isImage = [ModelManagementViewController modelIsImageKind:m];
+        BOOL starred = [[m objectForKey:@"starred"] boolValue];
+
+        // Layout (right → left):
+        //   checkmark/accessory (system)
+        //   kind badge (生图)
+        //   star toggle button
+        CGFloat cw = cell.contentView.bounds.size.width;
+        CGFloat x = cw - 12;
+        // Star button (★/☆ toggle).
+        UIButton *starBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        [starBtn setTitle:starred ? @"\u2605" : @"\u2606"
+                 forState:UIControlStateNormal];
+        // v261025-9: Helvetica DOES have U+2605/U+2606 glyphs (unlike the
+        // U+2713 checkmark we previously had to avoid). Tint them so the
+        // "starred" state is visually distinct (gold vs grey).
+        [starBtn setTitleColor:starred ? [UIColor colorWithRed:0.95f green:0.7f blue:0.1f alpha:1.0f]
+                                            : [iOS6Theme secondaryTextColor]
+                     forState:UIControlStateNormal];
+        starBtn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:20]];
+        starBtn.frame = CGRectMake(x - 36, (44 - 30) / 2, 36, 30);
+        starBtn.tag = 5000 + indexPath.row;
+        starBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        [starBtn addTarget:self action:@selector(_starTapped:)
+          forControlEvents:UIControlEventTouchUpInside];
+        [cell.contentView addSubview:starBtn];
+        x -= (36 + 6);
+
         if (isImage) {
             UILabel *imgBadge = [[[UILabel alloc]
-                initWithFrame:CGRectMake(badgeRight - 40, (44 - 18) / 2, 40, 18)] autorelease];
+                initWithFrame:CGRectMake(x - 40, (44 - 18) / 2, 40, 18)] autorelease];
             imgBadge.text = NSLocalizedString(@"生图", nil);
             imgBadge.textColor = [UIColor whiteColor];
             imgBadge.backgroundColor = [iOS6Theme tintColor];
@@ -858,27 +1260,10 @@ static NSArray *kProviderOrder = nil;
             imgBadge.tag = 9001;
             imgBadge.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
             [cell.contentView addSubview:imgBadge];
-            badgeRight -= (40 + 6);
+            x -= (40 + 6);
         }
-        if (hasOverrides || isTransit) {
-            UILabel *badge = [[[UILabel alloc]
-                initWithFrame:CGRectMake(badgeRight - 50, (44 - 18) / 2, 50, 18)] autorelease];
-            badge.text = isTransit ? NSLocalizedString(@"中转", nil)
-                                   : NSLocalizedString(@"自定义", nil);
-            badge.textColor = [UIColor whiteColor];
-            badge.backgroundColor = isTransit ? [iOS6Theme tintColor]
-                                              : [iOS6Theme secondaryTextColor];
-            badge.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:10]];
-            badge.textAlignment = NSTextAlignmentCenter;
-            badge.layer.cornerRadius = 4.0f;
-            badge.layer.masksToBounds = YES;
-            badge.tag = 9001;  // for cleanup on cell reuse
-            badge.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-            [cell.contentView addSubview:badge];
-        }
-        // Checkmark if this is the current default — v261025-8: image
-        // entries compare against SettingsKeyImageGenModel, chat entries
-        // against SettingsKeyModel.
+
+        // Checkmark if active.
         NSString *def = isImage
             ? [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyImageGenModel]
             : [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyModel];
@@ -886,43 +1271,44 @@ static NSArray *kProviderOrder = nil;
             cell.accessoryType = UITableViewCellAccessoryCheckmark;
         }
         cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+        return cell;
     }
-    else if (indexPath.section == [self _sectionForAdd]) {
-        cell.textLabel.text = NSLocalizedString(@"+ 添加模型", nil);
+    if (indexPath.section == [self _sectionForAdd]) {
+        cell.textLabel.text = NSLocalizedString(@"+ 添加模型供应商", nil);
         cell.textLabel.textColor = [iOS6Theme tintColor];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+        return cell;
     }
-    else if (indexPath.section == [self _sectionForCaps]) {
-            // Build toggle cells (one per capability).
-            NSString *label;
-            NSString *key;
-            if (indexPath.row == 0) {
-                label = NSLocalizedString(@"支持图片识别", nil);
-                key = SettingsKeyModelSupportsImages;
-            } else {
-                label = NSLocalizedString(@"支持思考", nil);
-                key = SettingsKeyModelSupportsThinking;
-            }
-            UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(12, 0, 160, 44)];
-            l.text = label;
-            l.backgroundColor = [UIColor clearColor];
-            l.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];
-            l.textColor = [iOS6Theme textColor];
-            l.autoresizingMask = UIViewAutoresizingFlexibleRightMargin;
-            [cell.contentView addSubview:l];
-            [l release];
+    if (indexPath.section == [self _sectionForCaps]) {
+        NSString *label;
+        NSString *key;
+        if (indexPath.row == 0) {
+            label = NSLocalizedString(@"支持图片识别", nil);
+            key = SettingsKeyModelSupportsImages;
+        } else {
+            label = NSLocalizedString(@"支持思考", nil);
+            key = SettingsKeyModelSupportsThinking;
+        }
+        UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(12, 0, 160, 44)];
+        l.text = label;
+        l.backgroundColor = [UIColor clearColor];
+        l.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];
+        l.textColor = [iOS6Theme textColor];
+        l.autoresizingMask = UIViewAutoresizingFlexibleRightMargin;
+        [cell.contentView addSubview:l];
+        [l release];
 
-            UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-            BOOL on = [[NSUserDefaults standardUserDefaults] boolForKey:key];
-            [sw setOn:on animated:NO];
-            sw.tag = indexPath.row == 0 ? 100 : 101;
-            [sw addTarget:self action:@selector(_capToggleChanged:)
-              forControlEvents:UIControlEventValueChanged];
-            sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-            CGRect f = cell.contentView.bounds;
-            sw.frame = CGRectMake(f.size.width - 79 - 12, (44 - 27) / 2, 79, 27);
-            [cell.contentView addSubview:sw];
+        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+        BOOL on = [[NSUserDefaults standardUserDefaults] boolForKey:key];
+        [sw setOn:on animated:NO];
+        sw.tag = indexPath.row == 0 ? 100 : 101;
+        [sw addTarget:self action:@selector(_capToggleChanged:)
+          forControlEvents:UIControlEventValueChanged];
+        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f = cell.contentView.bounds;
+        sw.frame = CGRectMake(f.size.width - 79 - 12, (44 - 27) / 2, 79, 27);
+        [cell.contentView addSubview:sw];
     }
     return cell;
 }
@@ -934,19 +1320,71 @@ static NSArray *kProviderOrder = nil;
     [[NSUserDefaults standardUserDefaults] synchronize];
     [[Logger sharedLogger] info:[NSString stringWithFormat:@"capability %@ = %@", key, sw.on ? @"ON" : @"OFF"]];
     if (sw.tag == 100) {
-        // Image support affects ComposerView — broadcast theme change.
         [[NSNotificationCenter defaultCenter]
             postNotificationName:@"iOS6ThemeDidChangeNotification" object:nil];
     }
 }
 
+#pragma mark - Section-header interactions (collapse + edit)
+
+- (void)_headerTapped:(UITapGestureRecognizer *)tr
+{
+    UIView *hv = tr.view;
+    NSInteger pIdx = hv.tag - 2000;
+    if (pIdx < 0 || pIdx >= (NSInteger)[_providerEntries count]) return;
+    NSDictionary *p = [_providerEntries objectAtIndex:pIdx];
+    NSString *pid = [p objectForKey:@"id"];
+    [ModelManagementViewController toggleCollapsedForProviderID:pid];
+    [self _rebuildProviderCache];
+    // Reload just the affected section so the disclosure/collapse animation
+    // is smooth (UITableView reloadSections is iOS 6 supported).
+    NSIndexSet *idx = [NSIndexSet indexSetWithIndex:1 + pIdx];
+    [_tableView reloadSections:idx withRowAnimation:UITableViewRowAnimationAutomatic];
+}
+
+- (void)_editProviderTapped:(UIButton *)btn
+{
+    NSInteger pIdx = btn.tag - 1000;
+    if (pIdx < 0 || pIdx >= (NSInteger)[_providerEntries count]) return;
+    NSDictionary *p = [_providerEntries objectAtIndex:pIdx];
+    ProviderEditViewController *vc = [[[ProviderEditViewController alloc]
+        initWithProviderEntry:p] autorelease];
+    [self.navigationController pushViewController:vc animated:YES];
+}
+
+- (void)_starTapped:(UIButton *)btn
+{
+    // Walk up from the button to its section / row. The button is a direct
+    // subview of the cell's contentView; we use its tag (5000+row) only to
+    // identify the row inside the cell, but to find which section we need
+    // the cell itself. We can't reliably get the section from the cell
+    // without iterating the table, so we hit-test the button's frame.
+    // Easier approach: re-discover via the button's window → table.
+    UIView *v = btn;
+    while (v && ![v isKindOfClass:[UITableViewCell class]]) v = v.superview;
+    if (!v) return;
+    NSIndexPath *ip = [_tableView indexPathForCell:(UITableViewCell *)v];
+    if (!ip) return;
+    NSInteger pIdx = [self _providerIndexForSection:ip.section];
+    if (pIdx == NSNotFound) return;
+    NSDictionary *p = [_providerEntries objectAtIndex:pIdx];
+    NSString *pid = [p objectForKey:@"id"];
+    NSArray *models = [p objectForKey:@"models"];
+    if (ip.row >= (NSInteger)[models count]) return;
+    NSDictionary *m = [models objectAtIndex:ip.row];
+    NSString *mid = [m objectForKey:@"id"];
+    [ModelManagementViewController toggleStarredForModel:mid inProviderID:pid];
+    [self _rebuildProviderCache];
+    [_tableView reloadRowsAtIndexPaths:[NSArray arrayWithObject:ip]
+                          withRowAnimation:UITableViewRowAnimationNone];
+}
+
 #pragma mark - Table delegate
 
-// v261025-7: group rows are editable (swipe-to-delete); everything else isn't.
 - (BOOL)tableView:(UITableView *)tableView
 canEditRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    return [self _groupIndexForSection:indexPath.section] != NSNotFound;
+    return [self _providerIndexForSection:indexPath.section] != NSNotFound;
 }
 
 - (void)tableView:(UITableView *)tableView
@@ -954,15 +1392,14 @@ commitEditingStyle:(UITableViewCellEditingStyle)editingStyle
 forRowAtIndexPath:(NSIndexPath *)indexPath
 {
     if (editingStyle != UITableViewCellEditingStyleDelete) return;
-    NSInteger gIdx = [self _groupIndexForSection:indexPath.section];
-    if (gIdx == NSNotFound) return;
-    NSDictionary *g = [_providerGroups objectAtIndex:gIdx];
-    NSArray *entries = [g objectForKey:@"entries"];
-    if (indexPath.row >= (NSInteger)[entries count]) return;
-    NSDictionary *e = [entries objectAtIndex:indexPath.row];
-    NSString *toDel = [e objectForKey:@"id"];
-    if (![toDel isKindOfClass:[NSString class]] || toDel.length == 0) return;
-    // Confirm before deletion (tag 700 alert).
+    NSInteger pIdx = [self _providerIndexForSection:indexPath.section];
+    if (pIdx == NSNotFound) return;
+    NSDictionary *p = [_providerEntries objectAtIndex:pIdx];
+    NSArray *models = [p objectForKey:@"models"];
+    if (indexPath.row >= (NSInteger)[models count]) return;
+    NSDictionary *m = [models objectAtIndex:indexPath.row];
+    NSString *toDel = [m objectForKey:@"id"];
+    if (!toDel.length) return;
     UIAlertView *av = [[[UIAlertView alloc]
         initWithTitle:NSLocalizedString(@"删除模型?", nil)
               message:[NSString stringWithFormat:@"%@ \"%@\"", NSLocalizedString(@"确定从列表删除", nil), toDel]
@@ -971,37 +1408,30 @@ forRowAtIndexPath:(NSIndexPath *)indexPath
     otherButtonTitles:NSLocalizedString(@"删除", nil), nil] autorelease];
     [av setTag:700];
     self.pendingDeleteModel = toDel;
+    self.pendingDeleteProviderID = [p objectForKey:@"id"];
     [av show];
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    NSInteger gIdx = [self _groupIndexForSection:indexPath.section];
-    if (gIdx != NSNotFound) {
-        // v261025-7: tap a group row → make it the ACTIVE entry. The chat
-        // path resolves provider/baseURL/apiKey from it via
-        // +resolvedConnectionForChat.
-        // v261025-8: image entries activate the IMAGE-GEN path instead
-        // (SettingsKeyImageGenModel) — the chat default is untouched.
-        NSDictionary *g = [_providerGroups objectAtIndex:gIdx];
-        NSArray *entries = [g objectForKey:@"entries"];
-        if (indexPath.row >= (NSInteger)[entries count]) return;
-        NSDictionary *e = [entries objectAtIndex:indexPath.row];
-        NSString *m = [e objectForKey:@"id"];
-        if (![m isKindOfClass:[NSString class]] || m.length == 0) return;
-        BOOL isImage = [ModelManagementViewController entryIsImageKind:e];
-        NSString *key = isImage ? SettingsKeyImageGenModel : SettingsKeyModel;
-        [[NSUserDefaults standardUserDefaults] setObject:m forKey:key];
-        [[NSUserDefaults standardUserDefaults] synchronize];
-        [[Logger sharedLogger] info:[NSString stringWithFormat:@"Default %@ model set to %@ (provider %@)",
-                                      isImage ? @"IMAGE" : @"chat", m,
-                                      [e objectForKey:@"provider"] ?: @"(global)"]];
+    NSInteger pIdx = [self _providerIndexForSection:indexPath.section];
+    if (pIdx != NSNotFound) {
+        NSDictionary *p = [_providerEntries objectAtIndex:pIdx];
+        NSArray *models = [p objectForKey:@"models"];
+        if (indexPath.row >= (NSInteger)[models count]) return;
+        NSDictionary *m = [models objectAtIndex:indexPath.row];
+        NSString *mid = [m objectForKey:@"id"];
+        if (![mid isKindOfClass:[NSString class]] || mid.length == 0) return;
+        [ModelManagementViewController setActiveModel:mid];
+        [[Logger sharedLogger] info:[NSString stringWithFormat:
+            @"Default %@ model set to %@ (provider %@)",
+            [[m objectForKey:@"kind"] isEqualToString:@"image"] ? @"IMAGE" : @"chat",
+            mid, [p objectForKey:@"template"] ?: @"(custom)"]];
         [_tableView reloadData];
         return;
     }
     if (indexPath.section == [self _sectionForAdd]) {
-        // v261025-7: full form page instead of the old single-field alert.
         ModelAddViewController *add = [[[ModelAddViewController alloc] init] autorelease];
         [self.navigationController pushViewController:add animated:YES];
     }
@@ -1012,75 +1442,47 @@ forRowAtIndexPath:(NSIndexPath *)indexPath
 - (void)alertView:(UIAlertView *)alertView
 clickedButtonAtIndex:(NSInteger)buttonIndex
 {
-    // v261025-3: tag 500 = transit bundled-model search loading alert.
-    // The alert has only a 取消 button (buttonIndex 0). Tapping it sets
-    // the cancel flag — the in-flight HTTP request can't be aborted, but
-    // its result will be discarded when the dispatch_async returns.
     if (alertView.tag == 500) {
         _transitSearchCancelled = YES;
         return;
     }
-    // v261025-7: tag 300 (legacy bare-model add alert) is retired — adding
-    // now goes through ModelAddViewController. The branch is removed.
     if (alertView.tag == 700 && buttonIndex == 1) {
-        // v261025-1: lean logging — entry + outcome only (v19's 10-line
-        // firehose drowned the log; the Logger is crash-safe now).
         NSString *m = _pendingDeleteModel;
-        if (!m || ![m isKindOfClass:[NSString class]] || m.length == 0) {
+        NSString *pid = _pendingDeleteProviderID;
+        if (!m.length || !pid.length) {
             self.pendingDeleteModel = nil;
+            self.pendingDeleteProviderID = nil;
             return;
         }
-        [[Logger sharedLogger] info:[NSString stringWithFormat:@"ModelMgmt delete '%@' — start", m]];
-        [ModelManagementViewController removeModel:m];
-        // v261025-8: if the deleted entry was the active IMAGE model,
-        // clear (or re-resolve) the image-gen pointer.
-        NSString *curImg = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyImageGenModel];
+        [[Logger sharedLogger] info:[NSString stringWithFormat:@"ModelMgmt delete '%@' - start", m]];
+        [ModelManagementViewController removeModel:m fromProviderID:pid];
+        // Self-heal: if the active model was the deleted one, fall back to
+        // the first remaining model (any kind) so the chat path still has
+        // a default. resolvedConnectionForChat self-heals on next read.
+        NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+        NSString *curChat = [d stringForKey:SettingsKeyModel];
+        if (curChat && [curChat isEqualToString:m]) {
+            NSArray *all = [ModelManagementViewController savedModelList];
+            if (all.count > 0) {
+                [d setObject:[all objectAtIndex:0] forKey:SettingsKeyModel];
+            } else {
+                [d removeObjectForKey:SettingsKeyModel];
+            }
+        }
+        NSString *curImg = [d stringForKey:SettingsKeyImageGenModel];
         if (curImg && [curImg isEqualToString:m]) {
-            [[NSUserDefaults standardUserDefaults] removeObjectForKey:SettingsKeyImageGenModel];
-            [[NSUserDefaults standardUserDefaults] synchronize];
-            // resolvedConnectionForImageGen self-heals to the first
-            // remaining image entry (if any) on next read.
+            [d removeObjectForKey:SettingsKeyImageGenModel];
         }
-        // If deleted was the current default, fall back to first item.
-        NSString *cur = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyModel];
-        if (cur && [cur isEqualToString:m]) {
-            NSArray *list = [ModelManagementViewController savedModelList];
-            NSString *fallback = nil;
-            if ([list count] > 0 && [(id)[list objectAtIndex:0] isKindOfClass:[NSString class]]) {
-                fallback = [list objectAtIndex:0];
-            } else {
-                NSString *prov = [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyProvider];
-                if (!prov) prov = ProviderIDOpenAI;
-                fallback = [SettingsViewController defaultModelForProvider:prov];
-            }
-            if ([fallback isKindOfClass:[NSString class]] && fallback.length > 0) {
-                [[NSUserDefaults standardUserDefaults] setObject:fallback
-                                                          forKey:SettingsKeyModel];
-                [[Logger sharedLogger] info:[NSString stringWithFormat:@"ModelMgmt default fell back to '%@'", fallback]];
-            } else {
-                // List now empty and no provider default — clear the key so
-                // we never point at a deleted model.
-                [[NSUserDefaults standardUserDefaults] removeObjectForKey:SettingsKeyModel];
-                [[Logger sharedLogger] warn:@"ModelMgmt default cleared — model list empty"];
-            }
-            [[NSUserDefaults standardUserDefaults] synchronize];
-        }
-        [[Logger sharedLogger] info:[NSString stringWithFormat:@"ModelMgmt delete '%@' — done", m]];
-        [self _rebuildGroups];
+        [d synchronize];
+        [[Logger sharedLogger] info:[NSString stringWithFormat:@"ModelMgmt delete '%@' - done", m]];
+        [self _rebuildProviderCache];
         if (_tableView) [_tableView reloadData];
         self.pendingDeleteModel = nil;
+        self.pendingDeleteProviderID = nil;
     }
 }
 
 #pragma mark - Pending property setters (manual retain/release)
-
-- (void)setPendingAddModel:(NSString *)m
-{
-    if (_pendingAddModel != m) {
-        [_pendingAddModel release];
-        _pendingAddModel = [m retain];
-    }
-}
 
 - (void)setPendingDeleteModel:(NSString *)m
 {
@@ -1090,23 +1492,28 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     }
 }
 
+- (void)setPendingDeleteProviderID:(NSString *)m
+{
+    if (_pendingDeleteProviderID != m) {
+        [_pendingDeleteProviderID release];
+        _pendingDeleteProviderID = [m retain];
+    }
+}
+
 #pragma mark - /v1/models search
 
 - (void)_searchAvailableModels
 {
-    // v261025-7: use the ACTIVE entry's resolved connection (provider /
-    // baseURL / apiKey) instead of the raw global settings — so the
-    // search hits whatever provider profile the user has selected.
     NSDictionary *conn = [ModelManagementViewController resolvedConnectionForChat];
     NSDictionary *settings = [SettingsViewController loadSettings];
     BOOL useTransit = [[settings objectForKey:SettingsKeyUseTransit] boolValue];
     NSString *transitURL = [settings objectForKey:SettingsKeyTransitURL];
     NSString *baseURL = [conn objectForKey:@"baseURL"];
-    NSString *provider = [conn objectForKey:@"provider"];
+    NSString *provider = [conn objectForKey:@"template"];
     NSString *apiKey = [conn objectForKey:@"apiKey"];
 
     [[Logger sharedLogger] info:[NSString stringWithFormat:
-        @"ModelMgmt search models — transit=%d provider=%@", (int)useTransit, provider ?: @"?"]];
+        @"ModelMgmt search models - transit=%d template=%@", (int)useTransit, provider ?: @"?"]];
 
     UIAlertView *loading = [[[UIAlertView alloc]
         initWithTitle:NSLocalizedString(@"搜索中…", nil)
@@ -1117,8 +1524,6 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     [loading show];
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // v261025-1: @autoreleasepool — GCD worker threads have NO pool;
-        // the autoreleased NetworkService below leaked per search.
         @autoreleasepool {
             NetworkService *svc = [[[NetworkService alloc] init] autorelease];
             NSError *err = nil;
@@ -1131,23 +1536,11 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
             NSArray *resultsCopy = [models retain];
             NSError *errCopy = [err retain];
             dispatch_async(dispatch_get_main_queue(), ^{
-                // v261025-2: BUG FIX — the previous code did
-                //   [resultsCopy release];
-                // as the FIRST line of this block, then proceeded to
-                // read `resultsCopy` (count check, objectAtIndex:) below.
-                // Under MRC the block retains resultsCopy (+1) so the
-                // release left it at +1 from the original [models retain]
-                // — i.e. one dangling +1 that survived only by accident
-                // of block-retain ordering. Move the release to the END
-                // of the success path (and the existing early-return
-                // releases) to match SettingsVC's correct pattern.
                 [loading dismissWithClickedButtonIndex:-1 animated:NO];
                 if (errCopy || !resultsCopy || [resultsCopy count] == 0) {
-                    // Capture the description BEFORE releasing errCopy.
                     NSString *errDesc = [errCopy localizedDescription];
                     [[Logger sharedLogger] error:[NSString stringWithFormat:
-                        @"ModelMgmt search failed — %@",
-                        errDesc ?: @"no models / empty response"]];
+                        @"ModelMgmt search failed - %@", errDesc ?: @"no models / empty response"]];
                     UIAlertView *fail = [[[UIAlertView alloc]
                         initWithTitle:NSLocalizedString(@"未拉到模型", nil)
                               message:errDesc ?: NSLocalizedString(@"服务器无返回,请检查 BaseURL / API Key", nil)
@@ -1160,12 +1553,6 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                     return;
                 }
                 [errCopy release];
-                // v261025-1: NEVER show a new alert/sheet in the same tick
-                // that a previous one is dismissing — on iOS 6 the
-                // dismiss-then-show-same-tick pattern corrupts the alert
-                ///sheet window stack (the "tap cancel → crash" report).
-                // Dismiss above is animated:NO and the sheet is deferred
-                // to the next runloop turn.
                 NSInteger limit = MIN([resultsCopy count], (NSUInteger)8);
                 NSMutableArray *picked = [NSMutableArray array];
                 for (NSInteger i = 0; i < limit; i++) {
@@ -1174,7 +1561,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                 }
                 self.availableModels = [NSMutableArray arrayWithArray:picked];
                 [[Logger sharedLogger] info:[NSString stringWithFormat:
-                    @"ModelMgmt search OK — %lu models", (unsigned long)[picked count]]];
+                    @"ModelMgmt search OK - %lu models", (unsigned long)[picked count]]];
                 [resultsCopy release];
                 [self performSelector:@selector(_presentModelSheet)
                            withObject:nil
@@ -1186,7 +1573,6 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 
 - (void)_presentModelSheet
 {
-    // Runs on main, one runloop turn AFTER the loading alert was dismissed.
     if ([_availableModels count] == 0) return;
     UIActionSheet *sheet = [[[UIActionSheet alloc]
         initWithTitle:NSLocalizedString(@"选模型 → 加入列表", nil)
@@ -1207,26 +1593,20 @@ destructiveButtonTitle:nil
     [sheet showInView:self.view];
 }
 
-#pragma mark - v261025-6 Test connection
+#pragma mark - Test connection
 
-// Same /v1/models call as _searchAvailableModels, but the result is shown
-// as an alert (not a model-picker sheet). Useful when the user just wants
-// to verify their BaseURL / API Key / Transit URL / provider config
-// without committing to adding a model.
 - (void)_testConnection
 {
-    // v261025-7: use the ACTIVE entry's resolved connection — testing what
-    // the chat will actually use.
     NSDictionary *conn = [ModelManagementViewController resolvedConnectionForChat];
     NSDictionary *settings = [SettingsViewController loadSettings];
     BOOL useTransit = [[settings objectForKey:SettingsKeyUseTransit] boolValue];
     NSString *transitURL = [settings objectForKey:SettingsKeyTransitURL];
     NSString *baseURL = [conn objectForKey:@"baseURL"];
-    NSString *provider = [conn objectForKey:@"provider"];
+    NSString *provider = [conn objectForKey:@"template"];
     NSString *apiKey = [conn objectForKey:@"apiKey"];
 
     [[Logger sharedLogger] info:[NSString stringWithFormat:
-        @"ModelMgmt test connection — transit=%d provider=%@", (int)useTransit, provider ?: @"?"]];
+        @"ModelMgmt test connection - transit=%d template=%@", (int)useTransit, provider ?: @"?"]];
 
     UIAlertView *loading = [[[UIAlertView alloc]
         initWithTitle:NSLocalizedString(@"测试中…", nil)
@@ -1253,7 +1633,7 @@ destructiveButtonTitle:nil
                 if (errCopy || !resultsCopy || [resultsCopy count] == 0) {
                     NSString *errDesc = [errCopy localizedDescription];
                     [[Logger sharedLogger] error:[NSString stringWithFormat:
-                        @"ModelMgmt test connection FAIL — %@", errDesc ?: @"(no response)"]];
+                        @"ModelMgmt test connection FAIL - %@", errDesc ?: @"(no response)"]];
                     UIAlertView *fail = [[[UIAlertView alloc]
                         initWithTitle:NSLocalizedString(@"连接失败", nil)
                               message:errDesc ?: NSLocalizedString(@"无返回,请检查 BaseURL / API Key / 中转 URL", nil)
@@ -1263,7 +1643,7 @@ destructiveButtonTitle:nil
                     [fail show];
                 } else {
                     [[Logger sharedLogger] info:[NSString stringWithFormat:
-                        @"ModelMgmt test connection OK — %lu models", (unsigned long)[resultsCopy count]]];
+                        @"ModelMgmt test connection OK - %lu models", (unsigned long)[resultsCopy count]]];
                     UIAlertView *ok = [[[UIAlertView alloc]
                         initWithTitle:NSLocalizedString(@"连接成功", nil)
                               message:[NSString stringWithFormat:
@@ -1284,15 +1664,6 @@ destructiveButtonTitle:nil
 - (void)actionSheet:(UIActionSheet *)actionSheet
 clickedButtonAtIndex:(NSInteger)buttonIndex
 {
-    // v261025-2: iOS 6 UIActionSheet cancelButton occupies buttonIndex 0
-    // (or actionSheet.cancelButtonIndex). The previous code only checked
-    // `buttonIndex >= 0 && buttonIndex < count`, which let cancel (0) flow
-    // into the "add model" branch — every "取消" tap silently added the
-    // FIRST search result to the saved list and re-set the default model.
-    // Not a direct crash, but it corrupts user data and matches the
-    // "搜索模型后弹出列表点击取消按钮闪退" report when the resulting
-    // addModel + saveModelList path raced with the next reload. Real
-    // model buttons live at buttonIndex == 1..N (cancel occupies 0).
     if (actionSheet.tag != 400) return;
     if (buttonIndex == actionSheet.cancelButtonIndex) return;
     if (buttonIndex < 1) return;
@@ -1300,8 +1671,15 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     if (modelIndex >= (NSInteger)[_availableModels count]) return;
     NSString *m = [_availableModels objectAtIndex:modelIndex];
     if (![m isKindOfClass:[NSString class]] || m.length == 0) return;
-    [ModelManagementViewController addModel:m];
-    // Also set as default (user picked it explicitly).
+    // Add to the active chat provider entry, fall back to legacy bare-add.
+    NSDictionary *p = [ModelManagementViewController providerEntryContainingModel:
+                       [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyModel]];
+    if (p) {
+        [ModelManagementViewController addModel:m kind:@"chat"
+                                  toProviderID:[p objectForKey:@"id"]];
+    } else {
+        [ModelManagementViewController addModel:m];
+    }
     [[NSUserDefaults standardUserDefaults] setObject:m forKey:SettingsKeyModel];
     [[NSUserDefaults standardUserDefaults] synchronize];
     [[Logger sharedLogger] info:[NSString stringWithFormat:@"Search added+default %@", m]];
@@ -1310,27 +1688,9 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 
 #pragma mark - Transit bundled model search (v261025-3)
 
-// Search the transit server's own bundled model list via
-// GET {transitURL}/v1/transit/models. If the server's
-// TRANSIT_MODELS_ENABLED env var is 1, the returned models are
-// bulk-added to local storage with source="transit". If disabled,
-// prompt the user with "此中转服务器不含自带模型".
-//
-// Mid-search the user can tap 取消 on the loading alert. The underlying
-// sendSynchronousRequest can't be aborted, so the result is simply
-// discarded when the dispatch_async returns.
-//
-// NOTE: This method is called from TWO entry points:
-//   - SettingsViewController when the user toggles "transit default
-//     model" ON (we instantiate a fresh ModelMgmt VC, call this method,
-//     then release).
-//   - ModelMgmt's own "重新搜索" button row (under kMMSectionCurrent).
 - (void)searchTransitBundledModels
 {
-    if (_transitSearchInProgress) {
-        // Already searching — no-op (defensive; UI shouldn't allow this).
-        return;
-    }
+    if (_transitSearchInProgress) return;
     NSDictionary *settings = [SettingsViewController loadSettings];
     NSString *transitURL = [settings objectForKey:SettingsKeyTransitURL];
     if (!transitURL || transitURL.length == 0) {
@@ -1350,8 +1710,6 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 
     NSString *transitURLCopy = [transitURL copy];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // v261025-1: @autoreleasepool — GCD worker threads have NO pool;
-        // the autoreleased NetworkService below leaked per search.
         @autoreleasepool {
             NetworkService *svc = [[[NetworkService alloc] init] autorelease];
             NSError *err = nil;
@@ -1362,7 +1720,6 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
             dispatch_async(dispatch_get_main_queue(), ^{
                 _transitSearchInProgress = NO;
                 [loading dismissWithClickedButtonIndex:-1 animated:NO];
-                // If user cancelled, ignore the result entirely.
                 if (_transitSearchCancelled) {
                     _transitSearchCancelled = NO;
                     [errCopy release];
@@ -1373,8 +1730,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                 if (errCopy || !resultCopy) {
                     NSString *errDesc = [errCopy localizedDescription];
                     [[Logger sharedLogger] error:[NSString stringWithFormat:
-                        @"Transit bundled model search failed — %@",
-                        errDesc ?: @"no response"]];
+                        @"Transit bundled model search failed - %@", errDesc ?: @"no response"]];
                     UIAlertView *fail = [[[UIAlertView alloc]
                         initWithTitle:NSLocalizedString(@"搜索失败", nil)
                               message:errDesc ?: NSLocalizedString(@"无法连接中转服务器", nil)
@@ -1391,7 +1747,6 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                 BOOL enabled = [[resultCopy objectForKey:@"enabled"] boolValue];
                 NSArray *models = [resultCopy objectForKey:@"models"];
                 if (!enabled) {
-                    // Server-side toggle is OFF.
                     UIAlertView *disabled = [[[UIAlertView alloc]
                         initWithTitle:NSLocalizedString(@"此中转服务器不含自带模型", nil)
                               message:NSLocalizedString(@"请在中转服务器配置 TRANSIT_MODELS_ENABLED=1 后重试", nil)
@@ -1419,15 +1774,13 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                     [transitURLCopy release];
                     return;
                 }
-                // Success — bulk-add to local storage with source="transit".
                 [ModelManagementViewController addTransitModels:models];
-                // Record last-search timestamp (used by Settings page footer).
                 [[NSUserDefaults standardUserDefaults] setObject:[NSDate date]
                                                           forKey:SettingsKeyTransitModelsLastSearch];
                 [[NSUserDefaults standardUserDefaults] synchronize];
                 if (_tableView) [_tableView reloadData];
                 [[Logger sharedLogger] info:[NSString stringWithFormat:
-                    @"Transit bundled models added — %lu", (unsigned long)[models count]]];
+                    @"Transit bundled models added - %lu", (unsigned long)[models count]]];
                 UIAlertView *ok = [[[UIAlertView alloc]
                     initWithTitle:NSLocalizedString(@"搜索到的模型已存储至模型管理", nil)
                           message:[NSString stringWithFormat:

@@ -1,6 +1,6 @@
 Package: awa.qwq672.iosonlineai
 Name: iOS6AIChat
-Version: 261025-8
+Version: 261025-9
 Architecture: iphoneos-arm
 Description: iOS 6 skeuomorphic-styled AI chat client
   Multi-provider (Zhipu GLM / OpenAI / Ollama) with optional
