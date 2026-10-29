@@ -512,7 +512,9 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         // 重复, 全局 provider 只剩 fallback 用途) 和「中转默认模型」
         // (每个模型条目都有明确 id, 让服务器选默认已无意义; NetworkService
         // 读不到该 key 默认 NO, 行为不变)。
-        case kSectionTransit:    return 4;  // 使用中转 / Transit URL / 中转搜索 / 中转自带模型
+        // v261025-13: 4→3 — removed 中转自带模型 (server /v1/transit/models
+        // returns 404, feature never worked; user supplies own models).
+        case kSectionTransit:    return 3;  // 使用中转 / Transit URL / 中转搜索
         case kSectionDirect:     return 2;
         // v261025-8: 模型管理入口（模型/生图模型/能力开关全部集中在
         // ModelManagementViewController —— 设置页不再重复一份模型表单，
@@ -520,7 +522,8 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         // v261025-11: +1 行「生成图片」全局功能开关 (#7)。
         case kSectionModel:      return 2;
         // v261025-11: +2 行「支持自主联网搜索」/「支持自主读取URL」(#9)。
-        case kSectionWebSearch:  return 5;
+        // v261025-13: +2 rows 显示工具调用 / 显示搜索结果 (agent-style).
+        case kSectionWebSearch:  return 7;
         case kSectionPrompt:     return 1;
         case kSectionAdvanced:   return 1;  // 流式输出
         case kSectionAbout:      return 5;  // author / email / version / github / license
@@ -897,28 +900,10 @@ titleForFooterInSection:(NSInteger)section
         [cell.contentView addSubview:sw];
         return cell;
     }
-    // v261025-11 去重: row 3 is now 中转自带模型 (中转默认模型 row removed —
-    // every model entry carries an explicit id in the two-tier structure;
-    // NetworkService's useServerModel read defaults to NO, unchanged).
-    // v261025-3 row 5: 中转自带模型 toggle (default OFF) + 上次搜索时间。
-    // ON  → fetch GET /v1/transit/models; if enabled, bulk-add models to
-    //         local storage with source="transit". If disabled, prompt
-    //         "此中转服务器不含自带模型".
-    // OFF → bulk-remove all source="transit" models.
-    // The toggle handler (_useTransitModelsToggle:) creates a throwaway
-    // ModelManagementViewController to call its searchTransitBundledModels
-    // method (the search logic + UI live there).
-    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"中转自带模型", nil)]];
-    UISwitch *sw3 = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-    BOOL useTransitModels = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyUseTransitModels];
-    [sw3 setOn:useTransitModels animated:NO];
-    [sw3 addTarget:self action:@selector(_useTransitModelsToggle:)
-     forControlEvents:UIControlEventValueChanged];
-    sw3.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    CGRect f5 = cell.contentView.bounds;
-    sw3.frame = CGRectMake(f5.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
-    [cell.contentView addSubview:sw3];
-    return cell;
+    // v261025-13: removed 中转自带模型 row (server endpoint 404 —
+    // feature never worked; user supplies own models via 模型管理).
+    // kSectionTransit is now 3 rows (使用中转 / Transit URL / 中转搜索).
+    return cell;  // safety — should never reach here (only rows 0-2 requested)
 }
 
 - (UITableViewCell *)_directCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
@@ -1029,6 +1014,39 @@ titleForFooterInSection:(NSInteger)section
         BOOL on = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelAutonomousURLReading];
         [sw setOn:on animated:NO];
         [sw addTarget:self action:@selector(_autoURLReadToggle:)
+         forControlEvents:UIControlEventValueChanged];
+        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f = cell.contentView.bounds;
+        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+        [cell.contentView addSubview:sw];
+        return cell;
+    }
+    // v261025-13 rows 5-6: agent-style tool call display toggles.
+    if (row == 5) {
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"显示工具调用", nil)]];
+        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+        BOOL on = YES;  // default ON
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"showToolCalls"]) {
+            on = [[NSUserDefaults standardUserDefaults] boolForKey:@"showToolCalls"];
+        }
+        [sw setOn:on animated:NO];
+        [sw addTarget:self action:@selector(_showToolCallsToggle:)
+         forControlEvents:UIControlEventValueChanged];
+        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f = cell.contentView.bounds;
+        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+        [cell.contentView addSubview:sw];
+        return cell;
+    }
+    if (row == 6) {
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"显示搜索结果", nil)]];
+        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+        BOOL on = NO;  // default OFF
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"showSearchResults"]) {
+            on = [[NSUserDefaults standardUserDefaults] boolForKey:@"showSearchResults"];
+        }
+        [sw setOn:on animated:NO];
+        [sw addTarget:self action:@selector(_showSearchResultsToggle:)
          forControlEvents:UIControlEventValueChanged];
         sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
         CGRect f = cell.contentView.bounds;
@@ -1247,6 +1265,17 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 - (IBAction)_autoURLReadToggle:(UISwitch *)sw
 {
     [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyModelAutonomousURLReading];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+// v261025-13: agent-style tool call display toggles.
+- (IBAction)_showToolCallsToggle:(UISwitch *)sw
+{
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"showToolCalls"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+- (IBAction)_showSearchResultsToggle:(UISwitch *)sw
+{
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"showSearchResults"];
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 

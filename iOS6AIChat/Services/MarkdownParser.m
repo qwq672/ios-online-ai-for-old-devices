@@ -257,6 +257,8 @@ static void AppendAttrString(NSMutableAttributedString *out,
                                    to:out
                              baseFont:baseFont
                               prefix:@"│ "];
+            [out appendAttributedString:[[[NSAttributedString alloc]
+                                            initWithString:@"\n"] autorelease]];
             i++;
             continue;
         }
@@ -270,6 +272,11 @@ static void AppendAttrString(NSMutableAttributedString *out,
                                    to:out
                              baseFont:baseFont
                               prefix:@"•  "];
+            // v261025-13: list items need explicit trailing newline —
+            // _appendInlineMarkup doesn't append one (only the paragraph
+            // case does). Without this, list items run together.
+            [out appendAttributedString:[[[NSAttributedString alloc]
+                                            initWithString:@"\n"] autorelease]];
             i++;
             continue;
         }
@@ -282,6 +289,8 @@ static void AppendAttrString(NSMutableAttributedString *out,
                                    to:out
                              baseFont:baseFont
                               prefix:@"   ◦  "];
+            [out appendAttributedString:[[[NSAttributedString alloc]
+                                            initWithString:@"\n"] autorelease]];
             i++;
             continue;
         }
@@ -301,6 +310,8 @@ static void AppendAttrString(NSMutableAttributedString *out,
                                    to:out
                              baseFont:baseFont
                               prefix:prefix];
+            [out appendAttributedString:[[[NSAttributedString alloc]
+                                            initWithString:@"\n"] autorelease]];
             i++;
             continue;
         }
@@ -571,14 +582,16 @@ static void AppendAttrString(NSMutableAttributedString *out,
     UIColor *border = [iOS6Theme codeBorderColor];
     UIColor *codeFG = [iOS6Theme textColor];
 
-    // Decorative top border.
-    AppendAttrString(out, @"┌───────────\n", mono, border, nil, 0, 0);
+    // v261025-13: clean code block — no ASCII art borders, no │ prefix.
+    // The old │ per-line prefix polluted the code (copy-paste included
+    // the │ character). Now just background-colored mono lines with
+    // blank-line separators. Code text is copy-clean.
+    AppendAttrString(out, @"\n", mono, codeFG, nil, 0, 0);
     for (NSString *line in lines) {
-        AppendAttrString(out, @"│ ", mono, border, nil, 0, 0);
-        AppendAttrString(out, line, mono, codeFG, codeBG, 0, 0);
+        AppendAttrString(out, line.length > 0 ? line : @" ", mono, codeFG, codeBG, 0, 0);
         AppendAttrString(out, @"\n", mono, codeFG, codeBG, 0, 0);
     }
-    AppendAttrString(out, @"└───────────\n", mono, border, nil, 0, 0);
+    AppendAttrString(out, @"\n", mono, codeFG, nil, 0, 0);
 }
 
 + (void)_appendMathBlock:(NSArray *)lines
@@ -589,13 +602,13 @@ static void AppendAttrString(NSMutableAttributedString *out,
     UIColor *fg = [iOS6Theme secondaryTextColor];
     UIColor *bg = [iOS6Theme codeBackgroundColor];
 
-    AppendAttrString(out, @"┌─── math ───\n", mono, fg, nil, 0, 0);
+    // v261025-13: same clean style as code blocks — no │ prefix, no borders.
+    AppendAttrString(out, @"\n", mono, fg, nil, 0, 0);
     for (NSString *line in lines) {
-        AppendAttrString(out, @"│ ", mono, fg, nil, 0, 0);
-        AppendAttrString(out, line, mono, fg, bg, 0, 0);
+        AppendAttrString(out, line.length > 0 ? line : @" ", mono, fg, bg, 0, 0);
         AppendAttrString(out, @"\n", mono, fg, bg, 0, 0);
     }
-    AppendAttrString(out, @"└───────────\n", mono, fg, nil, 0, 0);
+    AppendAttrString(out, @"\n", mono, fg, nil, 0, 0);
 }
 
 + (void)_appendHorizontalRuleTo:(NSMutableAttributedString *)out

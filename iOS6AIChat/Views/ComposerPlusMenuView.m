@@ -130,8 +130,10 @@ enum {
     // 0.4 black was nearly invisible over the dark-mode charcoal chat
     // backdrop anyway). Fix: set alpha = 1.0 OUTSIDE the animation block
     // (guaranteed visible), and use a deeper 0.55 tint in dark mode.
+    // v261025-13: deeper dim (0.4→0.5 light / 0.55→0.65 dark) so the
+    // overlay actually reads as a mask, not just a slight dim.
     _dimLayer.backgroundColor = [UIColor colorWithRed:0.0f green:0.0f blue:0.0f
-                                                 alpha:([iOS6Theme isDarkMode] ? 0.55f : 0.4f)];
+                                                 alpha:([iOS6Theme isDarkMode] ? 0.65f : 0.5f)];
     _dimLayer.frame = parentView.bounds;
     _dimLayer.alpha = 1.0f;
     [parentView addSubview:_dimLayer];
@@ -143,6 +145,15 @@ enum {
     self.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
                               UIViewAutoresizingFlexibleTopMargin |
                               UIViewAutoresizingFlexibleHeight);
+    // v261025-13: floating-panel styling — rounded top corners + drop
+    // shadow. Without masksToBounds the shadow renders around the
+    // panel; cornerRadius rounds the background so it doesn't look
+    // like a raw rectangle slammed onto the chat.
+    self.layer.cornerRadius = 10.0f;
+    self.layer.shadowColor = [UIColor blackColor].CGColor;
+    self.layer.shadowOffset = CGSizeMake(0, -3);
+    self.layer.shadowOpacity = 0.35f;
+    self.layer.shadowRadius = 8.0f;
     [parentView addSubview:self];
     // Animate slide-up.
     [UIView beginAnimations:@"plusMenuUp" context:nil];

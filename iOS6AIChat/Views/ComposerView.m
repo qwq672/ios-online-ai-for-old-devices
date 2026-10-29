@@ -415,6 +415,10 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     if (!image || image.size.width <= 0 || image.size.height <= 0) return;
 
     NSInteger maxDim = [[NSUserDefaults standardUserDefaults] integerForKey:@"imageMaxDim"];
+    // v261025-13: fallback default — if the user never opened Settings →
+    // image compression page, the key is 0 → resize skipped → 3GS camera
+    // photo (2048×1536) sent raw → 960KB body → server resets TLS → -1200.
+    if (maxDim <= 0) maxDim = 1024;
     if (maxDim > 0) {
         CGFloat w = image.size.width, h = image.size.height;
         if (w > maxDim || h > maxDim) {

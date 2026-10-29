@@ -119,6 +119,10 @@
 // v261025-3: set once the current stream already attempted the https→http
 // transit fallback (guards against a fallback relaunch loop).
 @property (nonatomic, assign) BOOL httpFallbackTried;
+// v261025-13: segmented thinking — when YES, _launchStreamWithMessages
+// preserves _accumulated (pre-tool-call text + markers) instead of
+// clearing it. Set by _runPendingToolCalls before the re-launch.
+@property (nonatomic, assign) BOOL toolCallRelaunch;
 // v261025-3: https→http URL rewrite for the iOS 6 TLS transit fallback
 // (see the implementation comment for the full rationale).
 + (NSString *)_httpFallbackForURLString:(NSString *)s;
@@ -144,7 +148,8 @@
             baseMessages=_baseMessages, enableWebSearchTools=_enableWebSearchTools,
             tavilyKey=_tavilyKey, tavilyMaxResults=_tavilyMaxResults,
             toolCallTurn=_toolCallTurn, maxToolTurns=_maxToolTurns,
-            streamStartTs=_streamStartTs, httpFallbackTried=_httpFallbackTried;
+            streamStartTs=_streamStartTs, httpFallbackTried=_httpFallbackTried,
+            toolCallRelaunch=_toolCallRelaunch;
 @dynamic accumulatedThinking;
 
 - (id)init
@@ -369,9 +374,16 @@
     [req setHTTPBody:bodyData];
 
     // Reset accumulators for this turn.
-    [_accumulated setString:@""];
+    // v261025-13: segmented thinking — when re-launching after a tool
+    // call (toolCallRelaunch=YES), DON'T clear _accumulated (it holds
+    // the pre-tool-call text + tool markers that should stay visible).
+    // Only clear tool call accumulators (new turn may emit new calls).
+    if (!self.toolCallRelaunch) {
+        [_accumulated setString:@""];
+    }
     [_toolCallAccumulators removeAllObjects];
     self.toolCallPending = NO;
+    self.toolCallRelaunch = NO;
 
     // Cancel any in-flight connection before starting a new one — otherwise
     // both connections will dispatch into the same accumulators / delegate,
@@ -927,6 +939,43 @@
      didReceiveToolCallStartedForConversationID:_conversationID];
     }
 
+    // v261025-13: agent-style segmented thinking — insert tool call
+    // markers into _accumulated so the user sees what's happening inline.
+    // This runs on the MAIN thread (we're in connectionDidFinishLoading).
+    BOOL showToolCalls = YES;  // default ON
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"showToolCalls"]) {
+        showToolCalls = [[NSUserDefaults standardUserDefaults] boolForKey:@"showToolCalls"];
+    }
+    if (showToolCalls) {
+        for (NSDictionary *tc in toolCallAcc) {
+            NSString *fnName = [tc objectForKey:@"name"] ?: @"";
+            NSString *args = [tc objectForKey:@"arguments"] ?: @"{}";
+            NSData *argsData = [args dataUsingEncoding:NSUTF8StringEncoding];
+            NSDictionary *argsDict = [NSJSONSerialization JSONObjectWithData:argsData options:0 error:NULL] ?: @{};
+            NSString *marker = nil;
+            if ([fnName isEqualToString:@"tavily_search"]) {
+                id q = [argsDict objectForKey:@"query"];
+                NSString *qs = [q isKindOfClass:[NSString class]] ? q : @"?";
+                marker = [NSString stringWithFormat:@"\n\n🔧 搜索: \"%@\"…\n\n", qs];
+            } else if ([fnName isEqualToString:@"get_current_time"]) {
+                marker = @"\n\n🔧 获取时间…\n\n";
+            } else if ([fnName isEqualToString:@"get_device_info"]) {
+                marker = @"\n\n🔧 获取设备信息…\n\n";
+            } else if ([fnName isEqualToString:@"generate_image"]) {
+                id p = [argsDict objectForKey:@"prompt"];
+                NSString *ps = [p isKindOfClass:[NSString class]] ? p : @"?";
+                marker = [NSString stringWithFormat:@"\n\n🎨 生成图片: \"%@\"…\n\n", ps];
+            } else {
+                marker = [NSString stringWithFormat:@"\n\n🔧 调用工具: %@…\n\n", fnName];
+            }
+            if (marker) [_accumulated appendString:marker];
+        }
+        if ([_delegate respondsToSelector:@selector(networkService:didReceiveChunkForConversationID:fullText:)]) {
+            [_delegate networkService:self
+                didReceiveChunkForConversationID:_conversationID fullText:_accumulated];
+        }
+    }
+
     // Run Tavily searches on a background queue (avoid blocking main).
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         // GCD worker threads have NO autorelease pool — wrap everything
@@ -1193,14 +1242,40 @@
         }
         self.baseMessages = newMessages;
 
-        // Reset accumulators and re-launch stream on main.
-        // v261024-19: NO @try — defensive nil-guards (the only ops that
-        // could fail are setObject:forKey: on nil-key, but _accumulated
-        // and _toolCallAccumulators are non-nil by init).
+        // v261025-13: capture search result summaries for inline display.
+        NSMutableArray *resultSummaries = [NSMutableArray array];
+        BOOL showSearchResults = NO;  // default OFF
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"showSearchResults"]) {
+            showSearchResults = [[NSUserDefaults standardUserDefaults] boolForKey:@"showSearchResults"];
+        }
+        if (showSearchResults) {
+            for (NSDictionary *tr in toolResults) {
+                NSString *content = [tr objectForKey:@"content"];
+                if ([content isKindOfClass:[NSString class]] && content.length > 0) {
+                    NSString *summary = content.length > 300 ?
+                        [NSString stringWithFormat:@"%@…", [content substringToIndex:300]] : content;
+                    [resultSummaries addObject:summary];
+                }
+            }
+        }
+        // Re-launch stream on main — segmented thinking: preserve
+        // _accumulated so pre-tool-call text + markers stay visible.
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (self->_accumulated) [self->_accumulated setString:@""];
+            if (showSearchResults && [resultSummaries count] > 0) {
+                for (NSString *summary in resultSummaries) {
+                    [self->_accumulated appendFormat:@"📋 %@\n\n", summary];
+                }
+                if ([self->_delegate respondsToSelector:@selector(networkService:didReceiveChunkForConversationID:fullText:)]) {
+                    [self->_delegate networkService:self
+                        didReceiveChunkForConversationID:self->_conversationID
+                                             fullText:self->_accumulated];
+                }
+            }
+            // v261025-13: DON'T clear _accumulated — toolCallRelaunch flag
+            // tells _launchStreamWithMessages to preserve it.
             if (self->_toolCallAccumulators) [self->_toolCallAccumulators removeAllObjects];
             self.toolCallPending = NO;
+            self.toolCallRelaunch = YES;
             [self _launchStreamWithMessages:self.baseMessages];
         });
         } // @autoreleasepool
