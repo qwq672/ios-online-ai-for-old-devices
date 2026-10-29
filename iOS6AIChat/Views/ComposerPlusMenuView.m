@@ -146,14 +146,22 @@ enum {
                               UIViewAutoresizingFlexibleTopMargin |
                               UIViewAutoresizingFlexibleHeight);
     // v261025-13: floating-panel styling — rounded top corners + drop
-    // shadow. Without masksToBounds the shadow renders around the
-    // panel; cornerRadius rounds the background so it doesn't look
-    // like a raw rectangle slammed onto the chat.
+    // shadow. The init sets masksToBounds=YES (which clips the shadow);
+    // override to NO here so the shadow renders. Set an OPAQUE background
+    // so the rounded corners are actually visible (init uses clearColor).
+    // The table's own cornerRadius clips cell content to the rounded shape.
+    self.backgroundColor = [iOS6Theme isDarkMode]
+        ? [UIColor colorWithRed:0.13f green:0.13f blue:0.13f alpha:1.0f]
+        : [UIColor whiteColor];
     self.layer.cornerRadius = 10.0f;
+    self.layer.masksToBounds = NO;  // allow shadow to extend beyond bounds
     self.layer.shadowColor = [UIColor blackColor].CGColor;
     self.layer.shadowOffset = CGSizeMake(0, -3);
     self.layer.shadowOpacity = 0.35f;
     self.layer.shadowRadius = 8.0f;
+    // Clip the table's cells to the rounded top corners.
+    _table.layer.cornerRadius = 10.0f;
+    _table.layer.masksToBounds = YES;
     [parentView addSubview:self];
     // Animate slide-up.
     [UIView beginAnimations:@"plusMenuUp" context:nil];

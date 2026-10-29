@@ -233,6 +233,12 @@
     // v261025-3: each NEW user message gets a fresh TLS-fallback attempt
     // (the flag only guards against a loop WITHIN one stream).
     self.httpFallbackTried = NO;
+    // v261025-13 bugfix: toolCallRelaunch must also be reset here —
+    // if a previous tool-call relaunch failed early (e.g. invalid URL
+    // returned NO before reaching the reset at line 386), the flag
+    // would stay YES and the next user message would skip the
+    // _accumulated clear → stale text from previous turn carried over.
+    self.toolCallRelaunch = NO;
     [_accumulated setString:@""];
     [_thinkingAccumulated setString:@""];
     [_toolCallAccumulators removeAllObjects];

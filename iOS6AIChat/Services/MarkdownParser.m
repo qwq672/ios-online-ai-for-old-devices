@@ -579,7 +579,6 @@ static void AppendAttrString(NSMutableAttributedString *out,
 {
     UIFont *mono = [UIFont fontWithName:@"Courier" size:baseFont.pointSize - 1] ?: baseFont;
     UIColor *codeBG = [iOS6Theme codeBackgroundColor];
-    UIColor *border = [iOS6Theme codeBorderColor];
     UIColor *codeFG = [iOS6Theme textColor];
 
     // v261025-13: clean code block — no ASCII art borders, no │ prefix.
