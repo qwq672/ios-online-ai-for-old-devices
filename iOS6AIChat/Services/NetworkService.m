@@ -35,6 +35,51 @@
 #import <UIKit/UIKit.h>
 #import <sys/sysctl.h>
 
+// v261025-12: SyncHTTPDelegate — async NSURLConnection transport wrapped
+// with a semaphore so callers keep synchronous semantics while the TLS
+// handshake + delegate callbacks run on the MAIN runloop (the SAME
+// transport the streaming chat path uses, proven to work where
+// +sendSynchronousRequest: fails with -1012 on iOS 6 from GCD threads).
+@interface SyncHTTPDelegate : NSObject <NSURLConnectionDataDelegate>
+@property (nonatomic, retain) NSMutableData *data;
+@property (nonatomic, retain) NSURLResponse *response;
+@property (nonatomic, retain) NSError *error;
+@property (nonatomic, assign) BOOL done;
+@property (nonatomic, assign) dispatch_semaphore_t sem;
+- (id)initWithSemaphore:(dispatch_semaphore_t)sem;
+@end
+
+@implementation SyncHTTPDelegate
+@synthesize data=_data, response=_response, error=_error, done=_done, sem=_sem;
+- (id)initWithSemaphore:(dispatch_semaphore_t)sem {
+    if (self = [super init]) {
+        self.sem = sem;
+        _data = [[NSMutableData alloc] init];
+    }
+    return self;
+}
+- (void)connection:(NSURLConnection *)c didReceiveResponse:(NSURLResponse *)r {
+    self.response = r;
+    [_data setData:nil];
+}
+- (void)connection:(NSURLConnection *)c didReceiveData:(NSData *)d {
+    if (d) [_data appendData:d];
+}
+- (void)connectionDidFinishLoading:(NSURLConnection *)c {
+    self.done = YES;
+    if (self.sem) dispatch_semaphore_signal(self.sem);
+}
+- (void)connection:(NSURLConnection *)c didFailWithError:(NSError *)e {
+    self.error = e;
+    self.done = YES;
+    if (self.sem) dispatch_semaphore_signal(self.sem);
+}
+- (void)dealloc {
+    self.data = nil; self.response = nil; self.error = nil;
+    [super dealloc];
+}
+@end
+
 @interface NetworkService ()
 @property (nonatomic, retain) NSURLConnection *connection;
 @property (nonatomic, retain) NSMutableData   *rawBuffer;
@@ -202,7 +247,20 @@
     // OpenAI /v1/chat/completions format below.
     BOOL anthropic = [SettingsViewController providerUsesAnthropicFormat:self.provider];
 
-    NSString *base = self.useTransit ? self.transitURL : self.baseURL;
+    // v261025-12: don't read a mutated self.transitURL — if a prior -1012
+    // fallback set httpFallbackTried=YES, compute the http URL from the
+    // ORIGINAL transitURL (which is never mutated now). This prevents
+    // service-instance state poisoning across sends / tool-call turns.
+    NSString *base;
+    if (self.useTransit) {
+        if (self.httpFallbackTried && [self.transitURL hasPrefix:@"https://"]) {
+            base = [NetworkService _httpFallbackForURLString:self.transitURL];
+        } else {
+            base = self.transitURL;
+        }
+    } else {
+        base = self.baseURL;
+    }
     if (!base || base.length == 0) {
         base = self.useTransit ? @"https://ai-transit.awa.lat"
                                : (anthropic ? @"https://api.anthropic.com" : @"https://api.openai.com");
@@ -779,16 +837,17 @@
     // (non-transit) requests are NEVER downgraded.
     if (self.useTransit && !self.httpFallbackTried && error.code == -1012 &&
         [self.transitURL isKindOfClass:[NSString class]] &&
-        [self.transitURL hasPrefix:@"https:"]) {
+        [self.transitURL hasPrefix:@"https://"]) {
+        // v261025-12: do NOT mutate self.transitURL. Set the flag only —
+        // _launchStreamWithMessages reads httpFallbackTried and computes
+        // the http URL from the ORIGINAL (unmutated) transitURL. This
+        // prevents state poisoning across sends / tool-call turns.
+        self.httpFallbackTried = YES;
         NSString *httpBase = [NetworkService _httpFallbackForURLString:self.transitURL];
-        if (httpBase) {
-            self.httpFallbackTried = YES;
-            self.transitURL = httpBase;
-            [[Logger sharedLogger] warn:[NSString stringWithFormat:
-                @"NET ⚠ https 中转 TLS -1012 (iOS6 无法与 Cloudflare 完成握手) — 整条流改用 http 重发: %@", httpBase]];
-            [self _launchStreamWithMessages:self.baseMessages];
-            return;
-        }
+        [[Logger sharedLogger] warn:[NSString stringWithFormat:
+            @"NET ⚠ https 中转 TLS -1012 (iOS6 无法与 Cloudflare 完成握手) — 整条流改用 http 重发: %@", httpBase ?: @"(fallback failed)"]];
+        [self _launchStreamWithMessages:self.baseMessages];
+        return;
     }
     NSTimeInterval dur = [NSDate timeIntervalSinceReferenceDate] - self.streamStartTs;
     // v261025-1: FAIL log with duration + OS-level error.
@@ -1618,8 +1677,13 @@
 // direct third-party endpoints (their keys must stay on TLS).
 + (NSString *)_httpFallbackForURLString:(NSString *)s
 {
-    if ([s isKindOfClass:[NSString class]] && [s hasPrefix:@"https:"]) {
-        return [@"http:" stringByAppendingString:[s substringFromIndex:5]];
+    // v261025-12: fix off-by-one. Original used substringFromIndex:5
+    // which kept the ':' (index 5 of "https:" IS the colon), producing
+    // "http:://host" (malformed, double colon) → NSURL parsed an empty
+    // host → -1004. The http fallback NEVER worked until now.
+    if ([s isKindOfClass:[NSString class]] && [s hasPrefix:@"https://"]) {
+        return [s stringByReplacingOccurrencesOfString:@"https://"
+                                             withString:@"http://"];
     }
     return nil;
 }
@@ -1702,9 +1766,7 @@
         [req setHTTPBody:bodyData];
         resp = nil;
         netErr = nil;
-        data = [NSURLConnection sendSynchronousRequest:req
-                                      returningResponse:&resp
-                                                  error:&netErr];
+        data = [NetworkService _syncSendRequest:req response:&resp error:&netErr];
         if (!netErr) break;
         if (attempt == 0 && transitWebSearch && netErr.code == -1012) {
             NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
@@ -1819,9 +1881,7 @@
         }
         resp = nil;
         netErr = nil;
-        data = [NSURLConnection sendSynchronousRequest:req
-                                      returningResponse:&resp
-                                                  error:&netErr];
+        data = [NetworkService _syncSendRequest:req response:&resp error:&netErr];
         if (!netErr) break;
         if (attempt == 0 && useTransit && netErr.code == -1012) {
             NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
@@ -1916,9 +1976,7 @@
         [req setValue:@"application/json" forHTTPHeaderField:@"Accept"];
         resp = nil;
         netErr = nil;
-        data = [NSURLConnection sendSynchronousRequest:req
-                                      returningResponse:&resp
-                                                  error:&netErr];
+        data = [NetworkService _syncSendRequest:req response:&resp error:&netErr];
         if (!netErr) break;
         if (attempt == 0 && netErr.code == -1012) {
             NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
@@ -2104,9 +2162,7 @@
         [req setHTTPBody:bodyData];
         resp = nil;
         netErr = nil;
-        data = [NSURLConnection sendSynchronousRequest:req
-                                      returningResponse:&resp
-                                                  error:&netErr];
+        data = [NetworkService _syncSendRequest:req response:&resp error:&netErr];
         if (!netErr) break;
         if (attempt == 0 && netErr.code == -1012) {
             NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
@@ -2193,9 +2249,7 @@
         [req setHTTPMethod:@"GET"];
         resp = nil;
         netErr = nil;
-        data = [NSURLConnection sendSynchronousRequest:req
-                                      returningResponse:&resp
-                                                  error:&netErr];
+        data = [NetworkService _syncSendRequest:req response:&resp error:&netErr];
         if (!netErr) break;
         if (attempt == 0 && netErr.code == -1012) {
             NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
@@ -2231,6 +2285,53 @@
         }
     }
     return [NSString stringWithFormat:@"data:%@;base64,%@", mimeType, b64];
+}
+
+// v261025-12: Synchronous request via ASYNC transport (delegate +
+// semaphore). Replaces +[NSURLConnection sendSynchronousRequest:]
+// which fails with -1012 on iOS 6 from GCD background threads (TLS
+// handshake / cert-chain evaluation needs a running runloop; bare GCD
+// threads don't pump one, so CFNetwork cancels → -1012). This helper
+// schedules the connection on the MAIN runloop (same one the streaming
+// chat path uses, proven to work), then either pumps the main runloop
+// (if called ON main) or blocks on a semaphore (if called from a
+// background queue). Callers keep their existing synchronous call-site
+// semantics. The -1012 → http fallback loop in each caller is preserved
+// unchanged — only the inner transport call is replaced.
++ (NSData *)_syncSendRequest:(NSURLRequest *)req
+                    response:(NSURLResponse **)outResp
+                       error:(NSError **)outErr {
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    SyncHTTPDelegate *del = [[SyncHTTPDelegate alloc] initWithSemaphore:sem];
+    NSURLConnection *conn = [[NSURLConnection alloc] initWithRequest:req
+                                                             delegate:del
+                                                        startImmediately:NO];
+    [conn scheduleInRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
+    [conn start];
+
+    if ([NSThread isMainThread]) {
+        // Pump the main runloop so delegate callbacks fire inline.
+        // Without this the semaphore would deadlock (no one signals).
+        while (!del.done) {
+            [[NSRunLoop mainRunLoop] runMode:NSDefaultRunLoopMode
+                                  beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+        }
+    } else {
+        // Background thread: block until the main runloop delivers the
+        // callbacks and signals the semaphore. The main runloop is
+        // running (app is in foreground); NSURLConnection's own
+        // timeoutInterval ensures we don't hang forever.
+        dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    }
+
+    NSData *result = [[del.data retain] autorelease];
+    if (outResp) *outResp = [[del.response retain] autorelease];
+    if (outErr) *outErr = del.error ? [[del.error retain] autorelease] : nil;
+
+    [conn release];
+    [del release];
+    dispatch_release(sem);
+    return result;
 }
 
 @end
