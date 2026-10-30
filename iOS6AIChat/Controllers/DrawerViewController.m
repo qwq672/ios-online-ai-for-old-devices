@@ -230,21 +230,16 @@ static NSInteger const kMaxRecent = 6;
     _sheetView.hidden = YES;
     [self.view addSubview:_sheetView];
 
-    // v261025-30: status bar filler — fills the 20pt gap between the
-    // top of _sheetView and the navbar. Without this, the pinstripe
-    // background shows through behind the status bar, creating a
-    // visual mismatch with the navbar's blue/black gradient.
-    UIView *statusBarBg = [[[UIView alloc] initWithFrame:CGRectMake(0, 0, W, 20)] autorelease];
-    statusBarBg.tag = 777;
-    statusBarBg.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [_sheetView addSubview:statusBarBg];
-
     // --- v261025-11 (#12): NATIVE iOS 6 UINavigationBar --------------------
     // Replaces the hand-rolled leather UIImageView + custom glass buttons
     // + embossed title (4 hand-maintained views → 1 system bar). The system
     // draws the gradient/bevel correctly in BOTH themes; bar buttons get
     // native Done / Bordered styling for free.
-    _navBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 20.0f, W, 44.0f)];
+    // v261025-30: navbar at y=0 with height 64 (20pt status bar + 44pt
+    // nav content). The bar's own gradient fills the status bar area —
+    // no gap, no filler view, perfect color match. Content (title,
+    // buttons) is centered at y=32, below the 20pt status bar.
+    _navBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 0, W, 64.0f)];
     _navBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     // Dark mode → black translucent style; light → default (blue-gradient).
     if ([iOS6Theme isDarkMode]) {
@@ -328,13 +323,6 @@ static NSInteger const kMaxRecent = 6;
         _navBar.barStyle = UIBarStyleBlack;
     } else {
         _navBar.barStyle = UIBarStyleDefault;
-    }
-    // v261025-30: status bar filler matches navbar style.
-    UIView *sbBg = [_sheetView viewWithTag:777];
-    if (sbBg) {
-        sbBg.backgroundColor = [iOS6Theme isDarkMode]
-            ? [UIColor blackColor]
-            : [UIColor colorWithRed:0.69f green:0.79f blue:0.88f alpha:1.0f];
     }
     _searchSlot.image = [iOS6Theme stretchableRecessedSlotImage];
     // v261025-5: _stripSlot removed (chips strip gone).
