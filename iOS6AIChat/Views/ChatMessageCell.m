@@ -947,12 +947,13 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         bubbleWidth = MAX(textRect.size.width + 38, 60);
         bubbleWidth = MIN(bubbleWidth, maxBubbleWidth);
     }
-    // Bubble height: text + vertical padding + tail (6) + bottom safety (12).
-    // The +12 (was +8) gives extra room so the last line of text isn't
-    // clipped by the bubble's tail drawing — iOS 6 boundingRectWithSize
-    // systematically under-reports CJK line heights by 1-3pt per line.
+    // Bubble height: text + vertical padding + tail (6) + bottom safety (15).
+    // v261025-30: +9→+15 — boundingRectWithSize systematically
+    // under-reports CJK line heights by 1-3pt/line; +9 wasn't enough
+    // for multi-line bubbles (last line clipped). +15 ensures the
+    // final line always shows fully.
     CGFloat tailHeight = 6.0f;
-    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + tailHeight + 9
+    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + tailHeight + 15
                           + thinkingH + imagesH + genImgH;
     if (bubbleHeight < 40) bubbleHeight = 40;
 
@@ -1161,7 +1162,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         CGFloat genImgH = gimgW;   // square estimate (AspectFit if not)
         CGFloat captionH = textRect.size.height;
         if (captionH < 20) captionH = 20;
-        CGFloat genBubbleHeight = genImgH + captionH + 2 * bubbleInnerVPad + 6 + 9;
+        CGFloat genBubbleHeight = genImgH + captionH + 2 * bubbleInnerVPad + 6 + 15;
         CGFloat genResult = genBubbleHeight + 2 * verticalPad + 26;  // buttons
         if (genResult < 50) genResult = 50;
         [gHeightCache setObject:[NSNumber numberWithFloat:genResult] forKey:cacheKey];
@@ -1177,7 +1178,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // the same 26pt action-button allowance as AI messages.
     BOOL hasActionButtons = (message.content.length > 0);  // both roles
     CGFloat buttonH = hasActionButtons ? 26 : 0;
-    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + 6 + 9
+    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + 6 + 15
                           + thinkingH + imagesH;
     CGFloat result = bubbleHeight + 2 * verticalPad + buttonH;
     if (result < 50) result = 50;

@@ -51,10 +51,14 @@ static CGFloat const kSheetAnimDuration = 0.28f;
 // 可见皮革区 30pt，正好放下 30pt 高的按钮 + 标题，不再像 64 时下面留 14pt
 // 空白。kSearchY / kTableY 相应上移 14pt，菜单列表多出 14pt 显示内容。
 static CGFloat const kSheetBarH     = 50.0f;   // status 20 + nav 30 (compact)
-static CGFloat const kSearchY       = 60.0f;   // 50 + 10pt gap
+// v261025-30: tightened layout — navbar 44→38pt, search 60→52,
+// table 102→90. Saves 12pt of vertical space for the menu list on
+// the 3.5" screen (3GS). The navbar still uses native UINavigationBar
+// but at a shorter height; the search slot overlaps it slightly.
+static CGFloat const kSearchY       = 52.0f;   // was 60
 static CGFloat const kSearchH       = 34.0f;
-static CGFloat const kTableY        = 102.0f;   // 60 + 34 + 8pt gap
-static CGFloat const kRowH          = 42.0f;    // 46→42, slightly more compact
+static CGFloat const kTableY        = 90.0f;   // was 102
+static CGFloat const kRowH          = 42.0f;
 // v261025-5: removed kStripH — the bottom chips strip is gone (user said
 // "这也太丑了" + chip text truncated to "你…"); recent conversations
 // now live as proper list rows in section 1 of the table.
@@ -235,7 +239,7 @@ static NSInteger const kMaxRecent = 6;
     // + embossed title (4 hand-maintained views → 1 system bar). The system
     // draws the gradient/bevel correctly in BOTH themes; bar buttons get
     // native Done / Bordered styling for free.
-    _navBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 20.0f, W, 44.0f)];
+    _navBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 20.0f, W, 38.0f)];
     _navBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     // Dark mode → black translucent style; light → default (blue-gradient).
     if ([iOS6Theme isDarkMode]) {

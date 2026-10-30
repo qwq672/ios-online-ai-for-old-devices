@@ -85,6 +85,10 @@ static void AppendAttrString(NSMutableAttributedString *out,
     if (!markdown || markdown.length == 0) {
         return [[[NSAttributedString alloc] initWithString:@""] autorelease];
     }
+    // v261025-30: safety net — if ANY exception occurs during parsing
+    // (surrogate pair edge case, NSRange overflow, nil font, etc.),
+    // fall back to raw text instead of crashing the app.
+    @try {
     NSMutableAttributedString *out = [NSMutableAttributedString new];
     NSMutableArray *lines = [[markdown componentsSeparatedByString:@"\n"] mutableCopy];
 
@@ -341,6 +345,12 @@ static void AppendAttrString(NSMutableAttributedString *out,
 
     [lines release];
     return [out autorelease];
+    } @catch (NSException *e) {
+        NSLog(@"Markdown parse CRASH: %@ — falling back to raw text", e.description);
+        return [[[NSAttributedString alloc] initWithString:markdown
+                                                attributes:@{NSFontAttributeName: baseFont,
+                                                             NSForegroundColorAttributeName: [iOS6Theme textColor]}] autorelease];
+    }
 }
 
 #pragma mark - Inline markup
@@ -413,6 +423,25 @@ static void AppendAttrString(NSMutableAttributedString *out,
                     [buf setString:@""];
                 }
                 AppendAttrString(out, content, bold, [iOS6Theme textColor], nil, 0, 0);
+                i = close.location + 2;
+                continue;
+            }
+        }
+
+        // === Highlight ==text== =========================================
+        if (i + 1 < len && c == '=' && [line characterAtIndex:i + 1] == '=') {
+            NSRange search = NSMakeRange(i + 2, len - (i + 2));
+            NSRange close = [line rangeOfString:@"==" options:0 range:search];
+            if (close.location != NSNotFound && close.location > i + 2) {
+                NSString *content = [line substringWithRange:
+                                     NSMakeRange(i + 2, close.location - (i + 2))];
+                if (buf.length > 0) {
+                    AppendAttrString(out, buf, baseFont, [iOS6Theme textColor], nil, 0, 0);
+                    [buf setString:@""];
+                }
+                AppendAttrString(out, content, baseFont, [iOS6Theme textColor],
+                                 [UIColor colorWithRed:1.0f green:0.92f blue:0.55f alpha:0.45f],
+                                 0, 0);
                 i = close.location + 2;
                 continue;
             }
@@ -542,8 +571,17 @@ static void AppendAttrString(NSMutableAttributedString *out,
         }
 
         // === Default: append char =======================================
-        [buf appendString:[NSString stringWithCharacters:&c length:1]];
-        i++;
+        // v261025-30: handle UTF-16 surrogate pairs (emoji, rare CJK).
+        // [stringWithCharacters:length:1] on a high surrogate creates an
+        // invalid string → NSAttributedString rendering crash.
+        if (c >= 0xD800 && c <= 0xDBFF && i + 1 < len) {
+            unichar pair[2] = { c, [line characterAtIndex:i + 1] };
+            [buf appendString:[NSString stringWithCharacters:pair length:2]];
+            i += 2;
+        } else {
+            [buf appendString:[NSString stringWithCharacters:&c length:1]];
+            i++;
+        }
     }
 
     if (buf.length > 0) {
