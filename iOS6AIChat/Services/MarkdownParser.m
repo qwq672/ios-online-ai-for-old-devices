@@ -85,18 +85,25 @@ static void AppendAttrString(NSMutableAttributedString *out,
     if (!markdown || markdown.length == 0) {
         return [[[NSAttributedString alloc] initWithString:@""] autorelease];
     }
-    // v261025-30: strip variation selectors (U+FE0F/FE0E) and zero-width
-    // joiners (U+200D) — iOS 6 renders these as □ (tofu). They're
-    // invisible modifiers in modern Unicode; stripping them is safe.
-    if ([markdown rangeOfString:@"\uFE0F"].location != NSNotFound) {
-        markdown = [markdown stringByReplacingOccurrencesOfString:@"\uFE0F" withString:@""];
-    }
-    if ([markdown rangeOfString:@"\uFE0E"].location != NSNotFound) {
-        markdown = [markdown stringByReplacingOccurrencesOfString:@"\uFE0E" withString:@""];
-    }
-    if ([markdown rangeOfString:@"\u200D"].location != NSNotFound) {
-        markdown = [markdown stringByReplacingOccurrencesOfString:@"\u200D" withString:@""];
-    }
+    // v261025-30: strip all invisible/format Unicode characters that iOS 6
+    // renders as □ (tofu). These are modern Unicode modifiers that AI models
+    // emit alongside emoji and special symbols. Using NSCharacterSet with
+    // explicit unichar values (not \u escapes) for compiler reliability.
+    const unichar tofuChars[] = {
+        0x00AD,  // SOFT HYPHEN
+        0x200B,  // ZERO WIDTH SPACE
+        0x200C,  // ZERO WIDTH NON-JOINER
+        0x200D,  // ZERO WIDTH JOINER (compound emoji)
+        0x2060,  // WORD JOINER
+        0xFE0E,  // VARIATION SELECTOR-15 (text presentation)
+        0xFE0F,  // VARIATION SELECTOR-16 (emoji presentation) — MOST COMMON
+        0xFEFF,  // BOM / ZERO WIDTH NO-BREAK SPACE
+    };
+    NSString *tofuStr = [NSString stringWithCharacters:tofuChars
+                                                length:sizeof(tofuChars)/sizeof(tofuChars[0])];
+    NSCharacterSet *tofuSet = [NSCharacterSet characterSetWithCharactersInString:tofuStr];
+    markdown = [[markdown componentsSeparatedByCharactersInSet:tofuSet]
+                 componentsJoinedByString:@""];
     // v261025-30: surrogate pair handling in the default case (below)
     // prevents the main crash cause. Defensive coding: nil-guards, range
     // bounds checks, and surrogate pair detection.
