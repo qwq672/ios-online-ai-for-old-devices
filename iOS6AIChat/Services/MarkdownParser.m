@@ -85,11 +85,21 @@ static void AppendAttrString(NSMutableAttributedString *out,
     if (!markdown || markdown.length == 0) {
         return [[[NSAttributedString alloc] initWithString:@""] autorelease];
     }
+    // v261025-30: strip variation selectors (U+FE0F/FE0E) and zero-width
+    // joiners (U+200D) — iOS 6 renders these as □ (tofu). They're
+    // invisible modifiers in modern Unicode; stripping them is safe.
+    if ([markdown rangeOfString:@"\uFE0F"].location != NSNotFound) {
+        markdown = [markdown stringByReplacingOccurrencesOfString:@"\uFE0F" withString:@""];
+    }
+    if ([markdown rangeOfString:@"\uFE0E"].location != NSNotFound) {
+        markdown = [markdown stringByReplacingOccurrencesOfString:@"\uFE0E" withString:@""];
+    }
+    if ([markdown rangeOfString:@"\u200D"].location != NSNotFound) {
+        markdown = [markdown stringByReplacingOccurrencesOfString:@"\u200D" withString:@""];
+    }
     // v261025-30: surrogate pair handling in the default case (below)
-    // prevents the main crash cause. @try/@catch would be a safety net
-    // but theos disables Obj-C exceptions (-fobjc-no-exceptions), so we
-    // rely on defensive coding instead: nil-guards, range bounds checks,
-    // and surrogate pair detection.
+    // prevents the main crash cause. Defensive coding: nil-guards, range
+    // bounds checks, and surrogate pair detection.
     NSMutableAttributedString *out = [NSMutableAttributedString new];
     NSMutableArray *lines = [[markdown componentsSeparatedByString:@"\n"] mutableCopy];
 
@@ -345,6 +355,11 @@ static void AppendAttrString(NSMutableAttributedString *out,
     }
 
     [lines release];
+    // v261025-30: apply AppleColorEmoji font to emoji character ranges.
+    // iOS 6 doesn't auto-fallback to the emoji font for emoji in
+    // NSAttributedString — the base font (Helvetica) has no emoji glyphs
+    // → renders as □ (tofu). Explicit font override fixes this.
+    [self _applyEmojiFont:out baseFont:baseFont];
     return [out autorelease];
 }
 
@@ -730,6 +745,53 @@ static void AppendAttrString(NSMutableAttributedString *out,
             [sep appendString:@"─┤"];
             AppendAttrString(out, sep, mono, border, nil, 0, 0);
             AppendAttrString(out, @"\n", mono, border, nil, 0, 0);
+        }
+    }
+}
+
+// v261025-30: apply AppleColorEmoji font to emoji character ranges.
+// iOS 6's NSAttributedString doesn't auto-fallback to the emoji font
+// when the base font (Helvetica/Courier) lacks a glyph — the character
+// renders as □ (tofu). This post-processing pass scans the final
+// attributed string for emoji codepoints and overrides their font to
+// AppleColorEmoji, which has color bitmap glyphs for Unicode 6.0 emoji.
+// (Unicode 10+ emoji like 🧐🥳 still show □ — the iOS 6 emoji font
+// simply doesn't have those glyphs; nothing we can do.)
++ (void)_applyEmojiFont:(NSMutableAttributedString *)out
+              baseFont:(UIFont *)baseFont
+{
+    if (!out || out.length == 0) return;
+    UIFont *emojiFont = [UIFont fontWithName:@"AppleColorEmoji"
+                                        size:baseFont.pointSize];
+    if (!emojiFont) return;  // font not available on this device
+
+    NSString *str = out.string;
+    NSUInteger len = str.length;
+    NSUInteger i = 0;
+    while (i < len) {
+        unichar c = [str characterAtIndex:i];
+        if (c >= 0xD800 && c <= 0xDBFF && i + 1 < len) {
+            // Surrogate pair → compute full codepoint.
+            unichar low = [str characterAtIndex:i + 1];
+            uint32_t cp = ((uint32_t)(c - 0xD800) << 10) + (low - 0xDC00) + 0x10000;
+            // Emoji ranges in the supplementary plane:
+            //   U+1F300–1F5FF  Misc Symbols & Pictographs (🎨🔧📋)
+            //   U+1F600–1F64F  Emoticons (😀😂)
+            //   U+1F680–1F6FF  Transport & Map (🚀✈)
+            //   U+1F900–1F9FF  Supplemental (🧐🥳 — may not be in iOS 6 font)
+            if ((cp >= 0x1F300 && cp <= 0x1F9FF)) {
+                [out addAttribute:NSFontAttributeName value:emojiFont
+                           range:NSMakeRange(i, 2)];
+            }
+            i += 2;
+        } else {
+            // BMP emoji ranges:
+            //   U+2600–27BF  Misc Symbols & Dingbats (☀☕✂✈)
+            if (c >= 0x2600 && c <= 0x27BF) {
+                [out addAttribute:NSFontAttributeName value:emojiFont
+                           range:NSMakeRange(i, 1)];
+            }
+            i++;
         }
     }
 }
