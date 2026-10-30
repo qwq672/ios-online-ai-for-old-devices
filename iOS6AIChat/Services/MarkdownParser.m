@@ -85,10 +85,11 @@ static void AppendAttrString(NSMutableAttributedString *out,
     if (!markdown || markdown.length == 0) {
         return [[[NSAttributedString alloc] initWithString:@""] autorelease];
     }
-    // v261025-30: safety net — if ANY exception occurs during parsing
-    // (surrogate pair edge case, NSRange overflow, nil font, etc.),
-    // fall back to raw text instead of crashing the app.
-    @try {
+    // v261025-30: surrogate pair handling in the default case (below)
+    // prevents the main crash cause. @try/@catch would be a safety net
+    // but theos disables Obj-C exceptions (-fobjc-no-exceptions), so we
+    // rely on defensive coding instead: nil-guards, range bounds checks,
+    // and surrogate pair detection.
     NSMutableAttributedString *out = [NSMutableAttributedString new];
     NSMutableArray *lines = [[markdown componentsSeparatedByString:@"\n"] mutableCopy];
 
@@ -345,12 +346,6 @@ static void AppendAttrString(NSMutableAttributedString *out,
 
     [lines release];
     return [out autorelease];
-    } @catch (NSException *e) {
-        NSLog(@"Markdown parse CRASH: %@ — falling back to raw text", e.description);
-        return [[[NSAttributedString alloc] initWithString:markdown
-                                                attributes:@{NSFontAttributeName: baseFont,
-                                                             NSForegroundColorAttributeName: [iOS6Theme textColor]}] autorelease];
-    }
 }
 
 #pragma mark - Inline markup
