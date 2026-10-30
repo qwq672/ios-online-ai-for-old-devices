@@ -235,11 +235,10 @@ static NSInteger const kMaxRecent = 6;
     // + embossed title (4 hand-maintained views → 1 system bar). The system
     // draws the gradient/bevel correctly in BOTH themes; bar buttons get
     // native Done / Bordered styling for free.
-    // v261025-30: navbar at y=0 with height 64 (20pt status bar + 44pt
-    // nav content). The bar's own gradient fills the status bar area —
-    // no gap, no filler view, perfect color match. Content (title,
-    // buttons) is centered at y=32, below the 20pt status bar.
-    _navBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 0, W, 64.0f)];
+    // v261025-30: navbar at standard (0, 20, 44). The sheet's background
+    // is now navbar-matching (not pinstripe) — the pinstripe moved to the
+    // table itself. No gap, no filler, no non-standard height.
+    _navBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 20.0f, W, 44.0f)];
     _navBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     // Dark mode → black translucent style; light → default (blue-gradient).
     if ([iOS6Theme isDarkMode]) {
@@ -292,7 +291,7 @@ static NSInteger const kMaxRecent = 6;
                                              style:UITableViewStyleGrouped];
     _menuTable.dataSource = self;
     _menuTable.delegate = self;
-    _menuTable.backgroundColor = [UIColor clearColor];
+    _menuTable.backgroundColor = [iOS6Theme pinstripeBackground];
     _menuTable.backgroundView = nil;
     _menuTable.opaque = NO;
     _menuTable.rowHeight = kRowH;
@@ -317,13 +316,19 @@ static NSInteger const kMaxRecent = 6;
         NSLog(@"[MenuSheet] _styleSheet: missing subview — skip");
         return;
     }
-    _sheetView.backgroundColor = [iOS6Theme pinstripeBackground];
-    // v261025-11 (#12): native navbar re-styles on theme flip.
+    // v261025-30: sheet background matches navbar style (not pinstripe).
+    // The pinstripe moved to the table itself (_menuTable.backgroundColor).
+    // This eliminates the status-bar-area gap at the root: the area behind
+    // the status bar is now the same color family as the navbar, not
+    // pinstripe. No filler view needed.
     if ([iOS6Theme isDarkMode]) {
+        _sheetView.backgroundColor = [UIColor colorWithRed:0.12f green:0.12f blue:0.12f alpha:1.0f];
         _navBar.barStyle = UIBarStyleBlack;
     } else {
+        _sheetView.backgroundColor = [UIColor colorWithRed:0.62f green:0.74f blue:0.86f alpha:1.0f];
         _navBar.barStyle = UIBarStyleDefault;
     }
+    _menuTable.backgroundColor = [iOS6Theme pinstripeBackground];
     _searchSlot.image = [iOS6Theme stretchableRecessedSlotImage];
     // v261025-5: _stripSlot removed (chips strip gone).
 
