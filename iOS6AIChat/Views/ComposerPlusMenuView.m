@@ -7,6 +7,7 @@
 
 #import "ComposerPlusMenuView.h"
 #import "iOS6Theme.h"
+#import "IconDrawing.h"
 #import "ModelManagementViewController.h"
 #import "CharacterManagementViewController.h"
 #import "ComposerView.h"   // for toggle class accessors
@@ -362,7 +363,8 @@ enum {
 
     if (indexPath.section == kPMSectionActions) {
         if (indexPath.row == kPMActionImageUpload) {
-            cell.textLabel.text = NSLocalizedString(@"📷 上传/识别图片", nil);
+            cell.textLabel.text = NSLocalizedString(@"上传/识别图片", nil);
+            cell.imageView.image = [IconDrawing imageForType:IconTypeCamera];
         }
         return cell;
     }

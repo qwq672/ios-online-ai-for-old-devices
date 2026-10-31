@@ -434,17 +434,26 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
                        systemIcon:(UITabBarSystemItem)systemIcon
 {
     if (!nav) return;
-    // Rich grey bar background — 1px top highlight + 3-stop gradient +
-    // 1px bottom shadow (App Store / Music style, NO blue system tint).
-    UIImage *navBg = [self barBackgroundImageWithHeight:44];
-    if (navBg) {
-        [nav.navigationBar setBackgroundImage:navBg forBarMetrics:UIBarMetricsDefault];
+    // v261025-31: iOS 7+ — skip custom bar background, let system render flat.
+    if (!IsIOS7OrLater()) {
+        UIImage *navBg = [self barBackgroundImageWithHeight:44];
+        if (navBg) {
+            [nav.navigationBar setBackgroundImage:navBg forBarMetrics:UIBarMetricsDefault];
+        }
+        nav.navigationBar.barStyle = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
+        nav.navigationBar.tintColor = [self barItemTintColor];
+    } else {
+        // iOS 7+: just barStyle + tintColor (both iOS 2.0+ APIs, in SDK).
+        // System renders flat/translucent automatically. No barTintColor
+        // or edgesForExtendedLayout needed (those are iOS 7+ SDK only —
+        // CI builds with iOS 6 SDK). Defaults are correct on iOS 7.
+        nav.navigationBar.barStyle = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
+        nav.navigationBar.tintColor = [self tintColor];
     }
-    nav.navigationBar.barStyle = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-    nav.navigationBar.tintColor = [self barItemTintColor];
     nav.tabBarItem = [[[UITabBarItem alloc] initWithTabBarSystemItem:systemIcon tag:0] autorelease];
     nav.tabBarItem.title = title;
-    nav.navigationBar.translucent = NO;
+    if (!IsIOS7OrLater()) nav.navigationBar.translucent = NO;
+    // iOS 7: translucent defaults to YES — no need to set.
     nav.topViewController.title = title;
 }
 
@@ -537,6 +546,8 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
 // so the 1px lines stay crisp at any device scale.
 + (UIImage *)barBackgroundImageWithHeight:(CGFloat)height
 {
+    if (IsIOS7OrLater()) return nil; // iOS 7: system default flat bar
+    
     // v261024-19: NO @try — nil-guards + early returns. The whole point
     // of this function is to NEVER crash the launch path even if a CG
     // primitive fails. Each CG call is followed by an `if (x) ...` check
@@ -659,6 +670,8 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
 // Drawn once at the button's exact size — no stretching needed.
 + (UIImage *)glassButtonImageOfSize:(CGSize)size accent:(BOOL)accent
 {
+    if (IsIOS7OrLater()) return nil; // iOS 7: system default buttons
+    
     if (size.width < 2 || size.height < 2) return nil;
     CGFloat scale = [UIScreen mainScreen].scale;
     if (scale < 1) scale = 1;
@@ -1034,6 +1047,8 @@ static const uint8_t kNoiseCells[24] = {
 // Caps 20/20 → corners fixed, middle stretches.
 + (UIImage *)stretchableCardBackgroundImage
 {
+    if (IsIOS7OrLater()) return nil; // iOS 7: plain rows, no cards
+    
     NSString *key = [self isDarkMode] ? @"card_dark" : @"card_light";
     NSMutableDictionary *cache = [self _themeImageCache];
     UIImage *cached = [cache objectForKey:key];
@@ -1102,6 +1117,8 @@ static const uint8_t kNoiseCells[24] = {
 // BOTTOM light line → reads as a slot carved into the surface.
 + (UIImage *)stretchableRecessedSlotImage
 {
+    if (IsIOS7OrLater()) return nil; // iOS 7: system default UITextField
+    
     NSString *key = [self isDarkMode] ? @"slot_dark" : @"slot_light";
     NSMutableDictionary *cache = [self _themeImageCache];
     UIImage *cached = [cache objectForKey:key];
@@ -1164,6 +1181,8 @@ static const uint8_t kNoiseCells[24] = {
 // 56x34 template, radius 9, glass gradient + gloss + hairline. Caps 24/16.
 + (UIImage *)stretchableGlassChipImage
 {
+    if (IsIOS7OrLater()) return nil; // iOS 7: no chips
+    
     NSString *key = [self isDarkMode] ? @"chip_dark" : @"chip_light";
     NSMutableDictionary *cache = [self _themeImageCache];
     UIImage *cached = [cache objectForKey:key];
@@ -1229,6 +1248,8 @@ static const uint8_t kNoiseCells[24] = {
 // stretch) so the grain doesn't smear.
 + (UIImage *)menuLeatherBarImage
 {
+    if (IsIOS7OrLater()) return nil; // iOS 7: no leather
+    
     CGFloat W = [UIScreen mainScreen].bounds.size.width;
     if (W < 100) W = 320.0f;
     NSString *key = [NSString stringWithFormat:@"leatherbar_%.0f_%@",
@@ -1310,6 +1331,8 @@ static const uint8_t kNoiseCells[24] = {
 // --- Messages-green glossy send button ------------------------------------
 + (UIImage *)greenGlassButtonImageOfSize:(CGSize)size
 {
+    if (IsIOS7OrLater()) return nil; // iOS 7: system default send button
+    
     if (size.width < 2 || size.height < 2) return nil;
     CGFloat scale = [UIScreen mainScreen].scale;
     if (scale < 1) scale = 1;

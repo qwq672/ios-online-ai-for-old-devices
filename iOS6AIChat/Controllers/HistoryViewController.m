@@ -123,7 +123,7 @@ static NSString *const kCellReuseID = @"HistoryCell";
     btn.backgroundColor = [iOS6Theme bubbleAssistantColor];
     btn.layer.cornerRadius = 8.0f;
     btn.layer.masksToBounds = YES;
-    [btn setTitle:NSLocalizedString(@"⚙️ 管理", nil)
+    [btn setTitle:NSLocalizedString(@"管理", nil)
          forState:UIControlStateNormal];
     [btn setTitleColor:[iOS6Theme textColor] forState:UIControlStateNormal];
     btn.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];

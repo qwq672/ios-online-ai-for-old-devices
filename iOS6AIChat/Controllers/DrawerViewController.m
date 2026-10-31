@@ -182,6 +182,9 @@ static NSInteger const kMaxRecent = 6;
 - (void)viewDidLoad
 {
     [super viewDidLoad];
+    // v261025-31: iOS 7 layout defaults handle navbar extension + insets.
+    // No explicit edgesForExtendedLayout needed (iOS 7+ SDK API not in
+    // our iOS 6 SDK, but system defaults are correct).
 
     // v261024-19: STRIPPED @try — no exception tables on cctools-port
     // armv7. _buildViewHierarchy does its own nil-checks. If anything

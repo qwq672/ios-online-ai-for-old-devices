@@ -15,6 +15,13 @@
 
 #import <UIKit/UIKit.h>
 
+// v261025-31: runtime OS version check for dual-theme support.
+// iOS 6 → skeuomorphic (gradients, textures, gloss).
+// iOS 7+ → flat (solid colors, system defaults, no custom textures).
+// Uses hardcoded 1047.25 (NSFoundationVersionNumber for iOS 7.0) because
+// the iOS 6 SDK doesn't define NSFoundationVersionNumber_iOS_7_0.
+#define IsIOS7OrLater() (NSFoundationVersionNumber >= 1047.25)
+
 typedef enum {
     iOS6ThemeFontSizeSmall  = 0,  // 0.85x
     iOS6ThemeFontSizeMedium = 1,  // 1.0x

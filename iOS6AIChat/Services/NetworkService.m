@@ -962,17 +962,17 @@
             if ([fnName isEqualToString:@"tavily_search"]) {
                 id q = [argsDict objectForKey:@"query"];
                 NSString *qs = [q isKindOfClass:[NSString class]] ? q : @"?";
-                marker = [NSString stringWithFormat:@"\n\n🔧 搜索: \"%@\"…\n\n", qs];
+                marker = [NSString stringWithFormat:@"\n\n[搜索] \"%@\"…\n\n", qs];
             } else if ([fnName isEqualToString:@"get_current_time"]) {
-                marker = @"\n\n🔧 获取时间…\n\n";
+                marker = @"\n\n[时间] 获取当前时间…\n\n";
             } else if ([fnName isEqualToString:@"get_device_info"]) {
-                marker = @"\n\n🔧 获取设备信息…\n\n";
+                marker = @"\n\n[设备] 获取设备信息…\n\n";
             } else if ([fnName isEqualToString:@"generate_image"]) {
                 id p = [argsDict objectForKey:@"prompt"];
                 NSString *ps = [p isKindOfClass:[NSString class]] ? p : @"?";
-                marker = [NSString stringWithFormat:@"\n\n🎨 生成图片: \"%@\"…\n\n", ps];
+                marker = [NSString stringWithFormat:@"\n\n[生图] \"%@\"…\n\n", ps];
             } else {
-                marker = [NSString stringWithFormat:@"\n\n🔧 调用工具: %@…\n\n", fnName];
+                marker = [NSString stringWithFormat:@"\n\n[工具] %@…\n\n", fnName];
             }
             if (marker) [_accumulated appendString:marker];
         }
@@ -1269,7 +1269,7 @@
         dispatch_async(dispatch_get_main_queue(), ^{
             if (showSearchResults && [resultSummaries count] > 0) {
                 for (NSString *summary in resultSummaries) {
-                    [self->_accumulated appendFormat:@"📋 %@\n\n", summary];
+                    [self->_accumulated appendFormat:@"[结果] %@\n\n", summary];
                 }
                 if ([self->_delegate respondsToSelector:@selector(networkService:didReceiveChunkForConversationID:fullText:)]) {
                     [self->_delegate networkService:self

@@ -211,6 +211,10 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 - (void)viewDidLoad
 {
     [super viewDidLoad];
+    // v261025-31: iOS 7 layout defaults are correct (edgesForExtendedLayout
+    // = All, automaticallyAdjustsScrollViewInsets = YES). These are iOS 7+
+    // SDK APIs not in our iOS 6 SDK, but the system defaults are what we
+    // want — no need to set them explicitly.
     // v261025-4: Messages-style paper backdrop (dove-blue pinstriped
     // paper in light mode, charcoal grain in dark) — replaces the flat
     // pinstripe so the chat reads as a skeuomorphic "page".
@@ -704,7 +708,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     Message *userMsg = [Message messageWithRole:MessageRoleUser content:prompt];
     [_conversation appendMessage:userMsg];
     Message *assistantMsg = [Message messageWithRole:MessageRoleAssistant
-                                              content:NSLocalizedString(@"🎨 正在生成图片…", nil)];
+                                              content:NSLocalizedString(@"正在生成图片…", nil)];
     [_conversation appendMessage:assistantMsg];
     [[ConversationStore sharedStore] saveConversation:_conversation];
     [_tableView reloadData];
@@ -1039,7 +1043,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
     if (webSearch && tavilyKey.length == 0) {
         // No Tavily key — show warning in status, proceed without search.
-        [self _showSearchStatus:@"⚠️ 未配置 Tavily API Key，搜索不可用"];
+        [self _showSearchStatus:@"未配置 Tavily API Key，搜索不可用"];
         [self _launchAIStreamWithMessages:nil
                               systemPrompt:systemPrompt
                                 useTransit:useTransit
@@ -1061,7 +1065,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
     if (webSearch && tavilyKey.length > 0) {
         // Pre-search the user's last message.
-        [self _showSearchStatus:[NSString stringWithFormat:@"🔍 搜索: \"%@\"…", text]];
+        [self _showSearchStatus:[NSString stringWithFormat:@"搜索: \"%@\"…", text]];
         // v261025-2: capture EVERYTHING the GCD block needs as plain
         // values. The old code captured `systemPrompt` / `provider` /
         // `baseURL` / `apiKey` / `model` / `temperature` / `assistantMsg`
@@ -1149,7 +1153,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                                        preSearchResults:ctx];
                 } else {
                     // Pre-search failed — proceed without search context.
-                    [self _showSearchStatus:[NSString stringWithFormat:@"⚠️ 搜索失败: %@", [errCopy localizedDescription] ?: @"无结果"]];
+                    [self _showSearchStatus:[NSString stringWithFormat:@"搜索失败: %@", [errCopy localizedDescription] ?: @"无结果"]];
                     // Hide the warning after 2 seconds.
                     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                         [self _hideSearchStatus];
@@ -1268,7 +1272,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     // Either OFF → don't send `thinking` parameter.
     _networkService.thinkingEnabled = deepThinking;
     if (webSearch) {
-        [self _showSearchStatus:@"🔍 AI 可调用搜索工具"];
+        [self _showSearchStatus:@"AI 可调用搜索工具"];
         // New tool_calls entry point.
         [_networkService streamChatWithUseTransit:useTransit
                                         transitURL:transitURL
@@ -1331,7 +1335,7 @@ didReceiveToolCallForConversationID:(NSString *)conversationID
 {
     if (![conversationID isEqualToString:_conversation.conversationID]) return;
     // Show status banner indicating the AI is calling a search tool.
-    NSString *status = [NSString stringWithFormat:@"🔧 AI 调用工具: %@", toolName ?: @"unknown"];
+    NSString *status = [NSString stringWithFormat:@"调用工具: %@", toolName ?: @"unknown"];
     [self _showSearchStatus:status];
 }
 
@@ -1339,7 +1343,7 @@ didReceiveToolCallForConversationID:(NSString *)conversationID
 didReceiveToolCallStartedForConversationID:(NSString *)conversationID
 {
     if (![conversationID isEqualToString:_conversation.conversationID]) return;
-    [self _showSearchStatus:@"🔧 正在执行搜索…"];
+    [self _showSearchStatus:@"正在执行搜索…"];
 }
 
 - (void)networkService:(NetworkService *)svc

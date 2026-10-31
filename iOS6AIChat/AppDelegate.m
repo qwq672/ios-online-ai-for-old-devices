@@ -102,15 +102,22 @@
     for (NSUInteger i = 0; i < [navs count]; i++) {
         UINavigationController *nav = [navs objectAtIndex:i];
         if (![nav isKindOfClass:[UINavigationController class]]) continue;
-        UIImage *navBg = [iOS6Theme barBackgroundImageWithHeight:44];
-        if (navBg) {
-            [nav.navigationBar setBackgroundImage:navBg forBarMetrics:UIBarMetricsDefault];
+        // v261025-31: iOS 7+ — skip custom bar background, let system render flat.
+        if (!IsIOS7OrLater()) {
+            UIImage *navBg = [iOS6Theme barBackgroundImageWithHeight:44];
+            if (navBg) {
+                [nav.navigationBar setBackgroundImage:navBg forBarMetrics:UIBarMetricsDefault];
+            }
+            nav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
+            // Bar item tint: steel blue (light) / light grey (dark) — NOT the
+            // bright blue tintColor (user said blue navbar buttons look jarring).
+            nav.navigationBar.tintColor = [iOS6Theme barItemTintColor];
+            nav.navigationBar.translucent = NO;
+        } else {
+            // iOS 7+: barStyle + tintColor only (iOS 2.0+ APIs in SDK).
+            nav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
+            nav.navigationBar.tintColor = [iOS6Theme tintColor];
         }
-        nav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-        // Bar item tint: steel blue (light) / light grey (dark) — NOT the
-        // bright blue tintColor (user said blue navbar buttons look jarring).
-        nav.navigationBar.tintColor = [iOS6Theme barItemTintColor];
-        nav.navigationBar.translucent = NO;
     }
 }
 
