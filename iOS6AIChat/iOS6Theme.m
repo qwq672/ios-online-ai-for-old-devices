@@ -434,7 +434,8 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
                        systemIcon:(UITabBarSystemItem)systemIcon
 {
     if (!nav) return;
-    // v261025-31: iOS 7+ — skip custom bar background, let system render flat.
+    // v261025-31: iOS 7+ — don't touch the navbar at all. Let the system
+    // render its native flat translucent bar. Only style on iOS 6.
     if (!IsIOS7OrLater()) {
         UIImage *navBg = [self barBackgroundImageWithHeight:44];
         if (navBg) {
@@ -442,18 +443,12 @@ static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
         }
         nav.navigationBar.barStyle = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
         nav.navigationBar.tintColor = [self barItemTintColor];
-    } else {
-        // iOS 7+: just barStyle + tintColor (both iOS 2.0+ APIs, in SDK).
-        // System renders flat/translucent automatically. No barTintColor
-        // or edgesForExtendedLayout needed (those are iOS 7+ SDK only —
-        // CI builds with iOS 6 SDK). Defaults are correct on iOS 7.
-        nav.navigationBar.barStyle = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-        nav.navigationBar.tintColor = [self tintColor];
+        nav.navigationBar.translucent = NO;
     }
     nav.tabBarItem = [[[UITabBarItem alloc] initWithTabBarSystemItem:systemIcon tag:0] autorelease];
     nav.tabBarItem.title = title;
     if (!IsIOS7OrLater()) nav.navigationBar.translucent = NO;
-    // iOS 7: translucent defaults to YES — no need to set.
+    // iOS 7: don't set anything — system defaults handle translucent + flat.
     nav.topViewController.title = title;
 }
 
