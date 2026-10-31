@@ -87,7 +87,7 @@ jobs:
           # mode → system controls render flat on iOS 7.
           # iOS 6 (jailbroken): app installs (jailbreak bypasses version
           # check). IsIOS7OrLater() guards prevent iOS 7+ API calls on iOS 6.
-          BUILD_TARGET="iphone:clang:7.0:7.1"
+          BUILD_TARGET="iphone:clang:7.1:7.0"
           echo "Building with TARGET=$BUILD_TARGET"
           make package TARGET="$BUILD_TARGET" 2>&1 | tail -80 || true
           make package TARGET="$BUILD_TARGET"

@@ -30,7 +30,7 @@
 
 # === Build target =========================================================
 # Theos syntax: iphone:<toolchain>:<deployment>:<sdk-version>
-TARGET := iphone:clang:7.0:7.1
+TARGET := iphone:clang:7.1:7.0
 # Fallback: if only newer SDK is installed locally, override at call time:
 #   make TARGET=iphone:clang:6.0:9.0  → still deploys to iOS 6, but uses
 #   iPhoneOS9.0.sdk at build time (binary may use iOS 9+ APIs if any leak in).
