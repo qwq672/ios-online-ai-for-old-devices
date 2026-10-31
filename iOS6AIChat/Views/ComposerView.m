@@ -190,7 +190,17 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
         [_sendButton setImage:stopIcon forState:UIControlStateNormal];
         UIImage *stopBg = [iOS6Theme glassButtonImageOfSize:CGSizeMake(40, 30)
                                                     accent:NO];
-        [_sendButton setBackgroundImage:stopBg forState:UIControlStateNormal];
+        if (stopBg) {
+            [_sendButton setBackgroundImage:stopBg forState:UIControlStateNormal];
+        } else {
+            // iOS 7 flat: gray solid background for stop button.
+            UIGraphicsBeginImageContextWithOptions(CGSizeMake(1, 1), NO, 1);
+            [[UIColor grayColor] setFill];
+            UIRectFill(CGRectMake(0, 0, 1, 1));
+            UIImage *flatStop = UIGraphicsGetImageFromCurrentImageContext();
+            UIGraphicsEndImageContext();
+            [_sendButton setBackgroundImage:flatStop forState:UIControlStateNormal];
+        }
         [_sendButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     } else {
         UIImage *arrow = [IconDrawing imageForType:IconTypeSendArrow
@@ -201,9 +211,20 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
         if (greenS) {
             [_sendButton setBackgroundImage:greenS forState:UIControlStateNormal];
         } else {
+            // iOS 7: flat solid tint background.
             UIImage *accentS = [iOS6Theme glassButtonImageOfSize:CGSizeMake(40, 30)
                                                             accent:YES];
-            [_sendButton setBackgroundImage:accentS forState:UIControlStateNormal];
+            if (accentS) {
+                [_sendButton setBackgroundImage:accentS forState:UIControlStateNormal];
+            } else {
+                // iOS 7 flat: solid color stretchable image.
+                UIGraphicsBeginImageContextWithOptions(CGSizeMake(1, 1), NO, 1);
+                [[iOS6Theme tintColor] setFill];
+                UIRectFill(CGRectMake(0, 0, 1, 1));
+                UIImage *flatBg = UIGraphicsGetImageFromCurrentImageContext();
+                UIGraphicsEndImageContext();
+                [_sendButton setBackgroundImage:flatBg forState:UIControlStateNormal];
+            }
         }
         [_sendButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     }
@@ -323,11 +344,16 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     } else {
         _plusBadge.hidden = YES;
     }
-    // Plus button background: glassy neutral. Icon: black "+" on light,
-    // white "+" on dark.
+    // Plus button background: glassy neutral (iOS 6) / borderless (iOS 7).
     CGSize plusSize = CGSizeMake(34, 30);
     UIImage *plusBg = [iOS6Theme glassButtonImageOfSize:plusSize accent:NO];
-    [_plusButton setBackgroundImage:plusBg forState:UIControlStateNormal];
+    if (plusBg) {
+        [_plusButton setBackgroundImage:plusBg forState:UIControlStateNormal];
+    } else {
+        // iOS 7: flat — no background image, light tint.
+        [_plusButton setBackgroundImage:nil forState:UIControlStateNormal];
+        _plusButton.backgroundColor = [UIColor clearColor];
+    }
     // Draw a "+" glyph directly (avoids Helvetica glyph gaps at small sizes).
     UIImage *plusIcon = [self _plusIconImage];
     [_plusButton setImage:plusIcon forState:UIControlStateNormal];

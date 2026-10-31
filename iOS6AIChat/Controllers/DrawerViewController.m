@@ -238,10 +238,14 @@ static NSInteger const kMaxRecent = 6;
     // + embossed title (4 hand-maintained views → 1 system bar). The system
     // draws the gradient/bevel correctly in BOTH themes; bar buttons get
     // native Done / Bordered styling for free.
-    // v261025-30: navbar at standard (0, 20, 44). The sheet's background
-    // is now navbar-matching (not pinstripe) — the pinstripe moved to the
-    // table itself. No gap, no filler, no non-standard height.
-    _navBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 20.0f, W, 44.0f)];
+    // v261025-31: iOS 7 — navbar extends to y=0 (height 64 = 20 status +
+    // 44 content). Translucent bar lets the sheet's white/dark background
+    // show through → flat appearance. iOS 6 stays at (0, 20, 44) opaque.
+    if (IsIOS7OrLater()) {
+        _navBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 0, W, 64.0f)];
+    } else {
+        _navBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 20.0f, W, 44.0f)];
+    }
     _navBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     // Dark mode → black translucent style; light → default (blue-gradient).
     if ([iOS6Theme isDarkMode]) {
@@ -324,11 +328,18 @@ static NSInteger const kMaxRecent = 6;
     // This eliminates the status-bar-area gap at the root: the area behind
     // the status bar is now the same color family as the navbar, not
     // pinstripe. No filler view needed.
+    // v261025-31: iOS 7 — sheet background is solid white/dark (not the
+    // iOS 6 blue-gray). The translucent navbar shows this through → clean
+    // flat appearance, no blue status bar.
     if ([iOS6Theme isDarkMode]) {
-        _sheetView.backgroundColor = [UIColor colorWithRed:0.12f green:0.12f blue:0.12f alpha:1.0f];
+        _sheetView.backgroundColor = IsIOS7OrLater()
+            ? [UIColor colorWithRed:0.11f green:0.11f blue:0.11f alpha:1.0f]
+            : [UIColor colorWithRed:0.12f green:0.12f blue:0.12f alpha:1.0f];
         _navBar.barStyle = UIBarStyleBlack;
     } else {
-        _sheetView.backgroundColor = [UIColor colorWithRed:0.62f green:0.74f blue:0.86f alpha:1.0f];
+        _sheetView.backgroundColor = IsIOS7OrLater()
+            ? [UIColor whiteColor]
+            : [UIColor colorWithRed:0.62f green:0.74f blue:0.86f alpha:1.0f];
         _navBar.barStyle = UIBarStyleDefault;
     }
     _menuTable.backgroundColor = [iOS6Theme pinstripeBackground];

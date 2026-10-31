@@ -797,6 +797,12 @@ static const uint8_t kNoiseCells[24] = {
 // (IMG_0446 reference), dark = charcoal grain.
 + (UIColor *)chatBackgroundPatternColor
 {
+    // v261025-31: iOS 7 — flat solid background (no pinstripe pattern).
+    if (IsIOS7OrLater()) {
+        return [self isDarkMode]
+            ? [UIColor colorWithRed:0.11f green:0.11f blue:0.11f alpha:1.0f]
+            : [UIColor whiteColor];
+    }
     NSString *key = [self isDarkMode] ? @"chatbg_pattern_dark"
                                       : @"chatbg_pattern_light";
     NSMutableDictionary *cache = [self _themeImageCache];
