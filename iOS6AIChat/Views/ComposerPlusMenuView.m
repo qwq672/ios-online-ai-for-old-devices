@@ -364,7 +364,9 @@ enum {
     if (indexPath.section == kPMSectionActions) {
         if (indexPath.row == kPMActionImageUpload) {
             cell.textLabel.text = NSLocalizedString(@"上传/识别图片", nil);
-            cell.imageView.image = [IconDrawing imageForType:IconTypeCamera];
+            cell.imageView.image = [IconDrawing imageForType:IconTypeCamera
+                                                         size:CGSizeMake(24, 24)
+                                                        color:[iOS6Theme textColor]];
         }
         return cell;
     }
