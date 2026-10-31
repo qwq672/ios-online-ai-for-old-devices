@@ -56,14 +56,40 @@ jobs:
           FOUND_SDK=$(find "$SCRATCH" -maxdepth 2 -type d -name "${SDKNAME}-*" | head -1)
           if [ -n "$FOUND_SDK" ]; then mv "$FOUND_SDK" "$DESTDIR/$SDKNAME"; fi
           rm -rf "$SCRATCH"
+      - name: Get iOS 7 SDK
+        run: |
+          # v261025-31: download iOS 7.1 SDK for flat UI rendering on iOS 7+.
+          # App built with iOS 6 SDK gets "compatibility mode" on iOS 7 →
+          # system controls render iOS 6-style. Building with iOS 7 SDK
+          # makes system controls render flat on iOS 7 automatically.
+          # Deployment target stays 6.0 → binary still runs on iOS 6.
+          DESTDIR="$THEOS/sdks"
+          echo "Downloading iOS 7.1 SDK..."
+          git clone --depth=1 https://github.com/guoch/iPhoneOS7.1.sdk.git /tmp/ios7sdk 2>/dev/null || true
+          rm -rf /tmp/ios7sdk/.git 2>/dev/null
+          FOUND=$(find /tmp/ios7sdk -name "SDKSettings.plist" -exec dirname {} \; | head -1)
+          if [ -n "$FOUND" ]; then
+            cp -R "$FOUND" "$DESTDIR/iPhoneOS7.1.sdk"
+            echo "iOS 7.1 SDK installed at $DESTDIR/iPhoneOS7.1.sdk"
+          else
+            echo "WARNING: iOS 7.1 SDK not found — will fallback to iOS 6.0 SDK"
+          fi
       - name: Build
         env:
           THEOS_VERBOSE: "1"
         run: |
           mkdir -p packages
           make clean || true
-          make package TARGET="iphone:clang:6.0:6.0" 2>&1 | tail -80 || true
-          make package TARGET="iphone:clang:6.0:6.0"
+          # v261025-31: use iOS 7.1 SDK if available (flat UI on iOS 7+),
+          # fallback to iOS 6.0 SDK. Deployment target stays 6.0.
+          if [ -d "$THEOS/sdks/iPhoneOS7.1.sdk" ]; then
+            BUILD_TARGET="iphone:clang:6.0:7.1"
+          else
+            BUILD_TARGET="iphone:clang:6.0:6.0"
+          fi
+          echo "Building with TARGET=$BUILD_TARGET"
+          make package TARGET="$BUILD_TARGET" 2>&1 | tail -80 || true
+          make package TARGET="$BUILD_TARGET"
       - name: Pack IPA
         run: |
           BUILT_APP=$(find .theos/_ -name "iOS6AIChat.app" -type d | head -1)
