@@ -80,13 +80,14 @@ jobs:
         run: |
           mkdir -p packages
           make clean || true
-          # v261025-31: use iOS 7.1 SDK if available (flat UI on iOS 7+),
-          # fallback to iOS 6.0 SDK. Deployment target stays 6.0.
-          if [ -d "$THEOS/sdks/iPhoneOS7.1.sdk" ]; then
-            BUILD_TARGET="iphone:clang:6.0:7.1"
-          else
-            BUILD_TARGET="iphone:clang:6.0:6.0"
-          fi
+          # v261025-31: deployment target 7.0 + SDK 7.1.
+          # iOS 7 compat mode is determined by LC_VERSION_MIN_IPHONEOS in
+          # the binary (set by deployment target), NOT MinimumOSVersion in
+          # Info.plist. Deployment target 7.0 → binary says 7.0 → no compat
+          # mode → system controls render flat on iOS 7.
+          # iOS 6 (jailbroken): app installs (jailbreak bypasses version
+          # check). IsIOS7OrLater() guards prevent iOS 7+ API calls on iOS 6.
+          BUILD_TARGET="iphone:clang:7.0:7.1"
           echo "Building with TARGET=$BUILD_TARGET"
           make package TARGET="$BUILD_TARGET" 2>&1 | tail -80 || true
           make package TARGET="$BUILD_TARGET"
