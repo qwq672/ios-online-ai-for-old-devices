@@ -18,9 +18,19 @@
 // v261025-31: runtime OS version check for dual-theme support.
 // iOS 6 → skeuomorphic (gradients, textures, gloss).
 // iOS 7+ → flat (solid colors, system defaults, no custom textures).
-// Uses hardcoded 1047.25 (NSFoundationVersionNumber for iOS 7.0) because
-// the iOS 6 SDK doesn't define NSFoundationVersionNumber_iOS_7_0.
-#define IsIOS7OrLater() (NSFoundationVersionNumber >= 1047.25)
+// Uses systemVersion (more reliable than NSFoundationVersionNumber which
+// varies across iOS 7.x minor versions and may not match 1047.25 exactly).
+static BOOL _iOS7OrLaterCache = NO;
+static BOOL _iOS7CacheInit = NO;
+static inline BOOL IsIOS7OrLater(void) {
+    if (!_iOS7CacheInit) {
+        _iOS7OrLaterCache = ([[[UIDevice currentDevice] systemVersion] floatValue] >= 7.0f);
+        _iOS7CacheInit = YES;
+        NSLog(@"[Theme] iOS version: %@, IsIOS7OrLater=%d",
+              [[UIDevice currentDevice] systemVersion], _iOS7OrLaterCache);
+    }
+    return _iOS7OrLaterCache;
+}
 
 typedef enum {
     iOS6ThemeFontSizeSmall  = 0,  // 0.85x
