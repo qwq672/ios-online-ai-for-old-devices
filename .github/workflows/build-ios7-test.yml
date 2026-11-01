@@ -52,15 +52,21 @@ jobs:
         run: |
           cd iOS7Test
           make clean || true
-          make TARGET="iphone:clang:7.1:7.0" 2>&1 | tail -40
+          make package TARGET="iphone:clang:7.1:7.0" 2>&1 | tail -40 || true
+          make package TARGET="iphone:clang:7.1:7.0"
       - name: Pack IPA
         run: |
           cd iOS7Test
-          # make (not make package) leaves the .app in .theos/obj/
-          BUILT_APP=$(find .theos/obj -name "iOS7Test.app" -type d | head -1)
+          # Extract .app from the built .deb package.
+          DEB=$(find packages -name "*.deb" | head -1)
+          if [ -z "$DEB" ]; then echo "No .deb found"; exit 1; fi
+          echo "Extracting from: $DEB"
+          rm -rf /tmp/ios7test_extracted
+          dpkg-deb -x "$DEB" /tmp/ios7test_extracted
+          BUILT_APP=$(find /tmp/ios7test_extracted -name "iOS7Test.app" -type d | head -1)
           if [ -z "$BUILT_APP" ]; then
-            echo "No .app found in .theos/obj. Contents:"
-            find .theos -type f 2>/dev/null | head -20
+            echo "No .app in .deb. Contents:"
+            find /tmp/ios7test_extracted -type f | head -20
             exit 1
           fi
           echo "Found app at: $BUILT_APP"
