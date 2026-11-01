@@ -1,0 +1,8 @@
+Package: com.test.ios7test
+Name: iOS7Test
+Version: 1.0
+Architecture: iphoneos-arm
+Description: Minimal iOS 7 UI rendering test — no custom styling, pure system controls.
+Maintainer: test
+Author: test
+Section: Applications

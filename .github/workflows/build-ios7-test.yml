@@ -1,0 +1,73 @@
+name: Build iOS 7 Test App
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'iOS7Test/**', '.github/workflows/build-ios7-test.yml' ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang make perl rsync fakeroot dpkg-dev libplist-dev libssl-dev libplist-utils zip unzip wget ca-certificates git
+      - name: Install Theos
+        run: |
+          git clone --recursive --depth=1 https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+      - name: Build ldid
+        run: |
+          git clone --depth=1 https://github.com/sbingner/ldid.git /tmp/ldid
+          cd /tmp/ldid
+          git tag v2.6.0 2>/dev/null || true
+          make -j$(nproc) LDID_VERSION="2.6.0" LDFLAGS="-lplist-2.0 -lcrypto"
+          sudo install -m 0755 ldid /usr/local/bin/ldid
+      - name: Install cctools
+        run: |
+          ARCH=$(uname -m)
+          mkdir -p "$THEOS/toolchain"
+          curl -fsSL "https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-$ARCH.tar.xz" | tar -xJvf - -C "$THEOS/toolchain/"
+      - name: Get iOS 7 SDK
+        run: |
+          DESTDIR="$THEOS/sdks"
+          mkdir -p "$DESTDIR"
+          git clone --depth=1 https://github.com/guoch/iPhoneOS7.1.sdk.git /tmp/ios7sdk 2>/dev/null || true
+          rm -rf /tmp/ios7sdk/.git 2>/dev/null
+          FOUND=$(find /tmp/ios7sdk -name "SDKSettings.plist" -exec dirname {} \; | head -1)
+          if [ -n "$FOUND" ]; then
+            cp -R "$FOUND" "$DESTDIR/iPhoneOS7.1.sdk"
+            echo "iOS 7.1 SDK installed"
+          else
+            echo "ERROR: iOS 7.1 SDK not found"
+            exit 1
+          fi
+      - name: Build
+        env:
+          THEOS_VERBOSE: "1"
+        run: |
+          cd iOS7Test
+          make clean || true
+          make package TARGET="iphone:clang:7.1:7.0" 2>&1 | tail -40 || true
+          make package TARGET="iphone:clang:7.1:7.0"
+      - name: Pack IPA
+        run: |
+          cd iOS7Test
+          BUILT_APP=$(find .theos/_ -name "iOS7Test.app" -type d | head -1)
+          if [ -z "$BUILT_APP" ]; then echo "No .app found"; exit 1; fi
+          rm -rf Payload iOS7Test-unsigned.ipa
+          mkdir Payload
+          cp -R "$BUILT_APP" Payload/
+          if [ ! -f "Payload/iOS7Test.app/Info.plist" ]; then
+            cp iOS7Test-Info.plist "Payload/iOS7Test.app/Info.plist"
+          fi
+          ldid -S "Payload/iOS7Test.app/iOS7Test" 2>/dev/null || true
+          zip -r -X iOS7Test-unsigned.ipa Payload >/dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS7Test-ipa
+          path: iOS7Test/iOS7Test-unsigned.ipa
+          if-no-files-found: error
