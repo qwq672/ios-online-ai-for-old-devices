@@ -51,9 +51,12 @@ jobs:
           THEOS_VERBOSE: "1"
         run: |
           cd iOS7Test
+          echo "=== Source files ==="
+          ls -la *.m *.h 2>/dev/null || echo "No source files in project root!"
+          echo "THEOS_PROJECT_DIR=$PWD"
           make clean || true
-          make package TARGET="iphone:clang:7.1:7.0" 2>&1 | tail -40 || true
-          make package TARGET="iphone:clang:7.1:7.0"
+          THEOS_PROJECT_DIR=$PWD make package TARGET="iphone:clang:7.1:7.0" 2>&1 | tail -60 || true
+          THEOS_PROJECT_DIR=$PWD make package TARGET="iphone:clang:7.1:7.0"
       - name: Pack IPA
         run: |
           cd iOS7Test
