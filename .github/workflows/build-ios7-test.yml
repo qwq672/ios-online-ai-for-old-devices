@@ -52,15 +52,14 @@ jobs:
         run: |
           cd iOS7Test
           make clean || true
-          make package TARGET="iphone:clang:7.1:7.0" 2>&1 | tail -40 || true
-          make package TARGET="iphone:clang:7.1:7.0"
+          make TARGET="iphone:clang:7.1:7.0" 2>&1 | tail -40
       - name: Pack IPA
         run: |
           cd iOS7Test
-          # Search all of .theos for the app bundle (not just _).
-          BUILT_APP=$(find .theos -name "iOS7Test.app" -type d | head -1)
+          # make (not make package) leaves the .app in .theos/obj/
+          BUILT_APP=$(find .theos/obj -name "iOS7Test.app" -type d | head -1)
           if [ -z "$BUILT_APP" ]; then
-            echo "No .app found. .theos contents:"
+            echo "No .app found in .theos/obj. Contents:"
             find .theos -type f 2>/dev/null | head -20
             exit 1
           fi
