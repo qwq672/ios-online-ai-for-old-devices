@@ -282,11 +282,13 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     }
     [self _reload];
 
-    // Tap on table view background to dismiss keyboard.
+    // v261025-32: tap ANYWHERE to dismiss keyboard (not just table view).
+    // Previous code only added the gesture to _tableView — tapping on
+    // the navbar or composer background didn't dismiss. Now on self.view.
     UITapGestureRecognizer *tap = [[[UITapGestureRecognizer alloc]
         initWithTarget:self action:@selector(_dismissKeyboard)] autorelease];
-    tap.cancelsTouchesInView = NO; // don't block cell taps
-    [_tableView addGestureRecognizer:tap];
+    tap.cancelsTouchesInView = NO; // don't block cell taps / button taps
+    [self.view addGestureRecognizer:tap];
 
 // Navigation items — hamburger (drawer) on the left, "+" new chat on the right.
     self.navigationItem.rightBarButtonItem = [[[UIBarButtonItem alloc]
