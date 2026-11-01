@@ -7,6 +7,7 @@ APP_NAME = iOS7Test
 iOS7Test_FILES = main.m AppDelegate.m ViewController.m
 iOS7Test_FRAMEWORKS = UIKit Foundation CoreGraphics
 iOS7Test_CFLAGS = -fno-objc-arc -fobjc-legacy-dispatch -fno-objc-exceptions
+iOS7Test_LDFLAGS = -ios_version_min 7.0
 
 export THEOS_PROJECT_DIR
 
