@@ -657,12 +657,6 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     self.message = message;
     [self _setCurrentMessageKey:message.messageID];
 
-    // v261025-32: detect error messages (start with ⚠️) → red error bubble.
-    BOOL isError = [displayedContent hasPrefix:@"⚠️"];
-    BubbleRole role = message.isUser ? BubbleRoleUser
-                      : (isError ? BubbleRoleError : BubbleRoleAssistant);
-    _bubble.role = role;
-
     // v261025-6: if this AI message has a currentVariantIndex pointing at
     // a saved snapshot (i.e. user navigated to an OLD variant), display
     // the snapshot's content + thinking instead of the live values. The
@@ -672,6 +666,12 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // thinking directly.
     NSString *displayedContent = [Message displayedContentForMessage:message];
     NSString *displayedThinking = [Message displayedThinkingForMessage:message];
+
+    // v261025-32: detect error messages (start with ⚠️) → red error bubble.
+    BOOL isError = !message.isUser && [displayedContent hasPrefix:@"⚠️"];
+    BubbleRole role = message.isUser ? BubbleRoleUser
+                      : (isError ? BubbleRoleError : BubbleRoleAssistant);
+    _bubble.role = role;
 
     // v261025-4: base text color follows the bubble — white on the
     // green user glass, theme color on the silver/charcoal AI glass.
