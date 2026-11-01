@@ -99,7 +99,7 @@ iOS6AIChat_CFLAGS  = -fno-objc-arc -fobjc-legacy-dispatch -fno-objc-exceptions \
 	-std=gnu99 \
 	-IiOS6AIChat -IiOS6AIChat/Models -IiOS6AIChat/Services \
 	-IiOS6AIChat/Views -IiOS6AIChat/Controllers -IiOS6AIChat/Resources
-iOS6AIChat_LDFLAGS = -framework UIKit -framework Foundation -framework CoreGraphics -Wl,-ios_version_min,7.0
+iOS6AIChat_LDFLAGS = -framework UIKit -framework Foundation -framework CoreGraphics
 
 # === Packaging ===========================================================
 # Theos package scheme — modern Theos master supports 'rootless' for
