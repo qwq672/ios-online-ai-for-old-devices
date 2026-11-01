@@ -690,22 +690,20 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 
     // v261025-32: detect error messages (start with ⚠️) → red error bubble.
     BOOL isError = !message.isUser && [displayedContent hasPrefix:@"⚠️"];
-    BOOL isAI = !message.isUser;
     BubbleRole role = message.isUser ? BubbleRoleUser
                       : (isError ? BubbleRoleError : BubbleRoleAssistant);
     _bubble.role = role;
-    // v261025-32: Option ② — AI messages have no bubble background,
-    // just a left accent line. User messages keep the bubble.
-    _bubble.drawBackground = message.isUser;
-    _accentLine.hidden = message.isUser;
+    // v261025-33: AI normal = no bubble (drawBackground=NO).
+    // AI error = bubble with no tail + red colors (drawBackground=YES).
+    // User = normal bubble (drawBackground=YES).
+    _bubble.drawBackground = message.isUser || isError;
+    if (isError) {
+        // Error bubble: no tail, just a rounded rect.
+        _bubble.tailSize = CGSizeMake(0, 0);
+    } else {
+        _bubble.tailSize = CGSizeMake(12, 6);
+    }
     if (!message.isUser) {
-        // Set accent line color: red for errors, subtle gray for normal AI.
-        UIColor *accentCol = isError
-            ? [UIColor colorWithRed:0.85f green:0.30f blue:0.30f alpha:0.6f]
-            : [[iOS6Theme secondaryTextColor] colorWithAlphaComponent:0.3f];
-        [_accentLineColor release];
-        _accentLineColor = [accentCol retain];
-        _accentLine.backgroundColor = _accentLineColor;
         // Tighter text container inset for AI (no bubble padding).
         if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
             [_textView performSelector:@selector(setTextContainerInset:)
@@ -896,17 +894,19 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 - (void)_layoutInternal
 {
     BOOL isAI = !_message.isUser;  // v261025-32: Option ②
-    CGFloat pad = isAI ? 0 : 8.0f;               // AI: no outer pad
+    BOOL isErrorBubble = isAI && [displayedContent hasPrefix:@"⚠️"];
+    BOOL useBubble = _message.isUser || isErrorBubble;  // v261025-33
+    CGFloat pad = useBubble ? 8.0f : 0;               // bubble msgs have pad
     CGFloat bubbleInnerHPad = 10.0f;
-    CGFloat bubbleInnerVPad = isAI ? 4.0f : 5.0f; // AI: tighter
+    CGFloat bubbleInnerVPad = useBubble ? 5.0f : 4.0f;
     CGFloat verticalPad = 3.0f;
-    CGFloat maxBubbleWidth = isAI ? self.bounds.size.width
-                                  : (self.bounds.size.width - 2 * pad);
-    if (!isAI) maxBubbleWidth = MIN(maxBubbleWidth, 280.0f);
+    CGFloat maxBubbleWidth = useBubble ? (self.bounds.size.width - 2 * pad)
+                                       : self.bounds.size.width;
+    if (useBubble) maxBubbleWidth = MIN(maxBubbleWidth, 280.0f);
 
-    CGFloat availTextWidth = isAI
-        ? [ChatMessageCell aiTextWidthForOuterWidth:self.bounds.size.width]
-        : [ChatMessageCell unifiedTextWidthForOuterWidth:self.bounds.size.width];
+    CGFloat availTextWidth = useBubble
+        ? [ChatMessageCell unifiedTextWidthForOuterWidth:self.bounds.size.width]
+        : [ChatMessageCell aiTextWidthForOuterWidth:self.bounds.size.width];
     if (availTextWidth < 60) availTextWidth = 60;
 
     // === Thinking block sizing ===
@@ -974,11 +974,11 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     }
 
     BOOL thinkingLive = [ChatMessageCell _isThinkingLive:_message];
-    CGFloat tailHeight = isAI ? 0 : 6.0f;  // v261025-32: AI no tail
-    CGFloat safety = isAI ? 8 : 20;       // AI: less safety (no tail to clip)
+    CGFloat tailHeight = useBubble ? 6.0f : 0;  // v261025-33: no tail for non-bubble AI
+    CGFloat safety = useBubble ? 20 : 8;
     CGFloat bubbleWidth;
-    if (isAI) {
-        bubbleWidth = self.bounds.size.width;
+    if (!useBubble) {
+        bubbleWidth = self.bounds.size.width;  // AI: full width
     } else if (isGenImage) {
         bubbleWidth = maxBubbleWidth;
     } else if (thinkingLive) {
@@ -992,26 +992,21 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     if (bubbleHeight < 40) bubbleHeight = 40;
 
     CGFloat bubbleX;
-    if (isAI) {
-        bubbleX = 0;  // v261025-32: AI full width
+    if (!useBubble) {
+        bubbleX = 0;  // v261025-33: AI full width
     } else if (_message.isUser) {
         bubbleX = self.bounds.size.width - bubbleWidth - pad;
     } else {
-        bubbleX = pad;
+        bubbleX = pad;  // error bubble: left-aligned like AI
     }
     CGFloat bubbleY = verticalPad;
     CGRect bubbleRect = CGRectMake(bubbleX, bubbleY, bubbleWidth, bubbleHeight);
     _bubble.frame = bubbleRect;
 
-    // v261025-32: accent line for AI messages.
-    if (isAI) {
-        _accentLine.frame = CGRectMake(0, bubbleY, 2, bubbleHeight);
-    }
-
-    // v261025-32: content offset — AI starts at x=8 (accent+gap),
-    // user starts at x=4 (bubble inner). Content width differs too.
-    CGFloat contentX = isAI ? 8 : 4;
-    CGFloat contentW = isAI ? (bubbleWidth - 12) : (bubbleWidth - 8);
+    // v261025-33: content offset — bubble msgs start at x=4,
+    // non-bubble AI starts at x=8 (left margin).
+    CGFloat contentX = useBubble ? 4 : 8;
+    CGFloat contentW = useBubble ? (bubbleWidth - 8) : (bubbleWidth - 12);
 
     // Place thinking block at top of bubble.
     CGFloat yOffset = 4;
@@ -1130,9 +1125,9 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     CGFloat verticalPad = 3.0f;       // v261025-11: 6->3
     // v261024-16: unified width — MUST match _applyMessageInternal and
     // _layoutInternal so the row height reflects the rendered wrap.
-    CGFloat availTextWidth = message.isUser
+    CGFloat availTextWidth = (message.isUser || [message.content hasPrefix:@"⚠️"])
         ? [ChatMessageCell unifiedTextWidthForOuterWidth:width]
-        : [ChatMessageCell aiTextWidthForOuterWidth:width];  // v261025-32
+        : [ChatMessageCell aiTextWidthForOuterWidth:width];  // v261025-33
     if (availTextWidth < 60) availTextWidth = 60;
 
     // v261025-6: if we're showing an OLD variant, use a temp Message
@@ -1227,10 +1222,10 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // the same 26pt action-button allowance as AI messages.
     BOOL hasActionButtons = (message.content.length > 0);  // both roles
     CGFloat buttonH = hasActionButtons ? 26 : 0;
-    // v261025-32: AI messages have no tail, tighter padding, less safety.
-    CGFloat tailH = message.isUser ? 6 : 0;
-    CGFloat vPad = message.isUser ? 5 : 4;
-    CGFloat safety = message.isUser ? 20 : 8;
+    BOOL useBubble = message.isUser || [message.content hasPrefix:@"⚠️"];
+    CGFloat tailH = useBubble ? 6 : 0;
+    CGFloat vPad = useBubble ? 5 : 4;
+    CGFloat safety = useBubble ? 20 : 8;
     CGFloat bubbleHeight = textRect.size.height + 2 * vPad + tailH + safety
                           + thinkingH + imagesH;
     CGFloat result = bubbleHeight + 2 * verticalPad + buttonH;
