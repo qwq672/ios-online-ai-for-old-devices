@@ -57,8 +57,14 @@ jobs:
       - name: Pack IPA
         run: |
           cd iOS7Test
-          BUILT_APP=$(find .theos/_ -name "iOS7Test.app" -type d | head -1)
-          if [ -z "$BUILT_APP" ]; then echo "No .app found"; exit 1; fi
+          # Search all of .theos for the app bundle (not just _).
+          BUILT_APP=$(find .theos -name "iOS7Test.app" -type d | head -1)
+          if [ -z "$BUILT_APP" ]; then
+            echo "No .app found. .theos contents:"
+            find .theos -type f 2>/dev/null | head -20
+            exit 1
+          fi
+          echo "Found app at: $BUILT_APP"
           rm -rf Payload iOS7Test-unsigned.ipa
           mkdir Payload
           cp -R "$BUILT_APP" Payload/
