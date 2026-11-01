@@ -20,6 +20,9 @@ typedef enum {
 @interface ChatBubbleView : UIView
 
 @property (nonatomic, assign) BubbleRole role;
+// v261025-32: when NO, drawRect is skipped (no gradient/tail/border).
+// Used for AI messages in the new layout (Option ②: user-only bubbles).
+@property (nonatomic, assign) BOOL drawBackground;
 
 // Convex corner radius; default 14.
 @property (nonatomic, assign) CGFloat cornerRadius;

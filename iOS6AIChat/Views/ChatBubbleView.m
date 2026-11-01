@@ -14,7 +14,7 @@
 
 @implementation ChatBubbleView
 
-@synthesize role=_role, cornerRadius=_cornerRadius, tailSize=_tailSize;
+@synthesize role=_role, cornerRadius=_cornerRadius, tailSize=_tailSize, drawBackground=_drawBackground;
 @synthesize fillColor=_fillColor, borderColor=_borderColor, shadowColor=_shadowColor;
 
 - (id)initWithFrame:(CGRect)frame
@@ -24,6 +24,7 @@
         _cornerRadius = 14.0f;
         _tailSize = CGSizeMake(12.0f, 6.0f);
         _role = BubbleRoleUser;
+        _drawBackground = YES; // default: draw bubble background
         [self _applyRoleColors];
     }
     return self;
@@ -74,6 +75,9 @@
 
 - (void)drawRect:(CGRect)rect
 {
+    // v261025-32: skip drawing when drawBackground=NO (AI messages use
+    // accent line instead of bubble). Subviews remain visible.
+    if (!_drawBackground) return;
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     if (!ctx) return;
 
