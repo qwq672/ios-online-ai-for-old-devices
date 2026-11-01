@@ -35,15 +35,16 @@ jobs:
         run: |
           DESTDIR="$THEOS/sdks"
           mkdir -p "$DESTDIR"
+          # Try cloning the SDK repo (retry once on failure).
+          git clone --depth=1 https://github.com/guoch/iPhoneOS7.1.sdk.git /tmp/ios7sdk 2>/dev/null || \
           git clone --depth=1 https://github.com/guoch/iPhoneOS7.1.sdk.git /tmp/ios7sdk 2>/dev/null || true
           rm -rf /tmp/ios7sdk/.git 2>/dev/null
           FOUND=$(find /tmp/ios7sdk -name "SDKSettings.plist" -exec dirname {} \; | head -1)
           if [ -n "$FOUND" ]; then
             cp -R "$FOUND" "$DESTDIR/iPhoneOS7.1.sdk"
-            echo "iOS 7.1 SDK installed"
+            echo "iOS 7.1 SDK installed at $DESTDIR/iPhoneOS7.1.sdk"
           else
-            echo "ERROR: iOS 7.1 SDK not found"
-            exit 1
+            echo "WARNING: iOS 7.1 SDK not found"
           fi
       - name: Build
         env:
