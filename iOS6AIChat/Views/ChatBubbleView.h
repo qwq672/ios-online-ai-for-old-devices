@@ -13,7 +13,8 @@
 
 typedef enum {
     BubbleRoleUser      = 0,
-    BubbleRoleAssistant = 1
+    BubbleRoleAssistant = 1,
+    BubbleRoleError     = 2  // v261025-32: red-tinted error bubble
 } BubbleRole;
 
 @interface ChatBubbleView : UIView

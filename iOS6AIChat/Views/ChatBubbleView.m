@@ -57,6 +57,10 @@
     if (_role == BubbleRoleUser) {
         _fillColor = [[iOS6Theme bubbleUserColor] retain];
         _borderColor = [[iOS6Theme bubbleUserBorderColor] retain];
+    } else if (_role == BubbleRoleError) {
+        // v261025-32: red-tinted error bubble — distinct from normal AI.
+        _fillColor = [[UIColor colorWithRed:0.96f green:0.92f blue:0.92f alpha:1.0f] retain];
+        _borderColor = [[UIColor colorWithRed:0.85f green:0.30f blue:0.30f alpha:0.6f] retain];
     } else {
         _fillColor = [[iOS6Theme bubbleAssistantColor] retain];
         _borderColor = [[iOS6Theme bubbleAssistantBorderColor] retain];
@@ -81,7 +85,11 @@
     // the old code re-ran gradient + live shadow CoreGraphics on EVERY
     // frame of every bubble, which was the biggest scrolling cost on
     // iPhone 3GS.
-    UIImage *tmpl = [iOS6Theme stretchableBubbleImageForUser:(self.role == BubbleRoleUser)];
+    UIImage *tmpl = [iOS6Theme stretchableBubbleImageForUser:
+                        (self.role == BubbleRoleUser)];
+    // v261025-32: error role skips template — uses vector fallback with
+    // red fill/border colors set in _applyRoleColors.
+    if (self.role == BubbleRoleError) tmpl = nil;
     if (tmpl) {
         // The template's geometry mirrors the legacy drawRect: 2pt
         // transparent margins + body + 6pt tail zone — i.e. it maps

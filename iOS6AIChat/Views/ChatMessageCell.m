@@ -657,7 +657,10 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     self.message = message;
     [self _setCurrentMessageKey:message.messageID];
 
-    BubbleRole role = message.isUser ? BubbleRoleUser : BubbleRoleAssistant;
+    // v261025-32: detect error messages (start with ⚠️) → red error bubble.
+    BOOL isError = [displayedContent hasPrefix:@"⚠️"];
+    BubbleRole role = message.isUser ? BubbleRoleUser
+                      : (isError ? BubbleRoleError : BubbleRoleAssistant);
     _bubble.role = role;
 
     // v261025-6: if this AI message has a currentVariantIndex pointing at
@@ -947,13 +950,12 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         bubbleWidth = MAX(textRect.size.width + 38, 60);
         bubbleWidth = MIN(bubbleWidth, maxBubbleWidth);
     }
-    // Bubble height: text + vertical padding + tail (6) + bottom safety (15).
-    // v261025-30: +9→+15 — boundingRectWithSize systematically
-    // under-reports CJK line heights by 1-3pt/line; +9 wasn't enough
-    // for multi-line bubbles (last line clipped). +15 ensures the
-    // final line always shows fully.
+    // Bubble height: text + vertical padding + tail (6) + bottom safety (20).
+    // v261025-32: +15→+20 — the last line was STILL getting clipped on
+    // some messages. boundingRectWithSize under-reports CJK by 2-4pt/line;
+    // +20 guarantees the final line is fully visible below the tail.
     CGFloat tailHeight = 6.0f;
-    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + tailHeight + 15
+    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + tailHeight + 20
                           + thinkingH + imagesH + genImgH;
     if (bubbleHeight < 40) bubbleHeight = 40;
 
@@ -1162,7 +1164,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         CGFloat genImgH = gimgW;   // square estimate (AspectFit if not)
         CGFloat captionH = textRect.size.height;
         if (captionH < 20) captionH = 20;
-        CGFloat genBubbleHeight = genImgH + captionH + 2 * bubbleInnerVPad + 6 + 15;
+        CGFloat genBubbleHeight = genImgH + captionH + 2 * bubbleInnerVPad + 6 + 20;
         CGFloat genResult = genBubbleHeight + 2 * verticalPad + 26;  // buttons
         if (genResult < 50) genResult = 50;
         [gHeightCache setObject:[NSNumber numberWithFloat:genResult] forKey:cacheKey];
@@ -1178,7 +1180,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // the same 26pt action-button allowance as AI messages.
     BOOL hasActionButtons = (message.content.length > 0);  // both roles
     CGFloat buttonH = hasActionButtons ? 26 : 0;
-    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + 6 + 15
+    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + 6 + 20
                           + thinkingH + imagesH;
     CGFloat result = bubbleHeight + 2 * verticalPad + buttonH;
     if (result < 50) result = 50;

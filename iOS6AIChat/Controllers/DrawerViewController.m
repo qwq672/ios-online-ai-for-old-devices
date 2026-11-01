@@ -244,18 +244,12 @@ static NSInteger const kMaxRecent = 6;
     if (IsIOS7OrLater()) {
         _navBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 0, W, 64.0f)];
     } else {
-        _navBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 20.0f, W, 44.0f)];
+        // v261025-32: navbar at y=0 (not y=20) — the navbar's own
+        // gradient fills the status bar area. No gap, no filler.
+        _navBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 0, W, 44.0f)];
     }
     _navBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    // v261025-31: iOS 7 — don't set barStyle/tintColor. Let system render
-    // native flat translucent bar. iOS 6 sets barStyle for gradient.
-    if (!IsIOS7OrLater()) {
-        if ([iOS6Theme isDarkMode]) {
-            _navBar.barStyle = UIBarStyleBlack;
-        } else {
-            _navBar.barStyle = UIBarStyleDefault;
-        }
-    }
+    // v261025-32: barStyle set in _styleSheet (handles dark/light for both iOS 6+7).
     [_sheetView addSubview:_navBar];
 
     UINavigationItem *item = [[[UINavigationItem alloc]
@@ -338,17 +332,16 @@ static NSInteger const kMaxRecent = 6;
     if ([iOS6Theme isDarkMode]) {
         _sheetView.backgroundColor = IsIOS7OrLater()
             ? [UIColor colorWithRed:0.11f green:0.11f blue:0.11f alpha:1.0f]
-            : [UIColor colorWithRed:0.12f green:0.12f blue:0.12f alpha:1.0f];
+            : [iOS6Theme navbarBottomColor];
     } else {
         _sheetView.backgroundColor = IsIOS7OrLater()
             ? [UIColor whiteColor]
-            : [UIColor colorWithRed:0.62f green:0.74f blue:0.86f alpha:1.0f];
+            : [iOS6Theme navbarBottomColor];
     }
-    // v261025-31: iOS 6 only — update barStyle on theme flip.
-    // iOS 7: don't touch, system renders flat.
-    if (!IsIOS7OrLater()) {
-        _navBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-    }
+    // v261025-32: barStyle on BOTH iOS versions — iOS 6 gets the
+    // skeuomorphic gradient; iOS 7 gets flat translucent (BarStyleBlack
+    // = dark translucent, BarStyleDefault = light translucent).
+    _navBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
     _menuTable.backgroundColor = [iOS6Theme pinstripeBackground];
     _searchSlot.image = [iOS6Theme stretchableRecessedSlotImage];
     // v261025-5: _stripSlot removed (chips strip gone).

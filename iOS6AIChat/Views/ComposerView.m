@@ -65,15 +65,12 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
         _textView.layer.borderColor = [_fieldBorderUIColor CGColor];
         if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
             [_textView performSelector:@selector(setTextContainerInset:)
-                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(6, 8, 6, 8)]];
+                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(4, 6, 4, 6)]];
         }
-        // Done button on keyboard.
-        UIToolbar *kbdToolbar = [[[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, 320, 44)] autorelease];
-        kbdToolbar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
-        UIBarButtonItem *flex = [[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil] autorelease];
-        UIBarButtonItem *done = [[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(_keyboardDone)] autorelease];
-        kbdToolbar.items = [NSArray arrayWithObjects:flex, done, nil];
-        _textView.inputAccessoryView = kbdToolbar;
+        // v261025-32: removed keyboard "Done" accessory button.
+        // ChatVC already has tap-to-dismiss on the table view background.
+        // The Done button wasted 44pt of vertical space above the keyboard.
+        // (Drawer's search field keeps its own Done — only chat removed.)
         // Dark-mode keyboard appearance.
         if ([iOS6Theme isDarkMode] && [_textView respondsToSelector:@selector(setKeyboardAppearance:)]) {
             [_textView setKeyboardAppearance:UIKeyboardAppearanceAlert];
@@ -269,7 +266,9 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     [super layoutSubviews];
     CGFloat w = self.bounds.size.width;
     CGFloat h = self.bounds.size.height;
-    CGFloat pad = 6.0f, gap = 4.0f;
+    // v261025-32: reduced padding from 6→4 — eliminates the empty strip
+    // below the input field that was visible on both iOS 6 and iOS 7.
+    CGFloat pad = 4.0f, gap = 4.0f;
     CGFloat btnW = 34.0f, sendW = 40.0f, btnH = 30.0f;
     CGFloat btnY = (h - btnH) / 2.0f;
     CGFloat x = pad;
@@ -293,6 +292,10 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     CGFloat tvH = h - 2 * pad;
     if (tvH < 30) tvH = 30;
     _textView.frame = CGRectMake(tvX, pad, tvW, tvH);
+    
+    // v261025-32: the composer background fills the entire view bounds —
+    // no gap below the text view. The background color is set in init
+    // and themeChanged.
 }
 
 #pragma mark - Toggles (class accessors — same keys as v261025-8)
