@@ -894,7 +894,8 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 - (void)_layoutInternal
 {
     BOOL isAI = !_message.isUser;  // v261025-32: Option ②
-    BOOL isErrorBubble = isAI && [displayedContent hasPrefix:@"⚠️"];
+    NSString *currentContent = [Message displayedContentForMessage:_message];
+    BOOL isErrorBubble = isAI && [currentContent hasPrefix:@"⚠️"];
     BOOL useBubble = _message.isUser || isErrorBubble;  // v261025-33
     CGFloat pad = useBubble ? 8.0f : 0;               // bubble msgs have pad
     CGFloat bubbleInnerHPad = 10.0f;
