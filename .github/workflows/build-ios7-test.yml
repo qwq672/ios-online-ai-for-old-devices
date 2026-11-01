@@ -52,11 +52,13 @@ jobs:
         run: |
           cd iOS7Test
           echo "=== Source files ==="
-          ls -la *.m *.h 2>/dev/null || echo "No source files in project root!"
-          echo "THEOS_PROJECT_DIR=$PWD"
+          ls -la *.m *.h 2>/dev/null || echo "No source files!"
           make clean || true
-          THEOS_PROJECT_DIR=$PWD make package TARGET="iphone:clang:7.1:7.0" 2>&1 | tail -60 || true
-          THEOS_PROJECT_DIR=$PWD make package TARGET="iphone:clang:7.1:7.0"
+          THEOS_PROJECT_DIR=$PWD make package TARGET="iphone:clang:7.1:7.0" 2>&1 || true
+          echo "=== .theos contents ==="
+          find .theos -type f 2>/dev/null | head -20
+          echo "=== packages ==="
+          ls -la packages/*.deb 2>/dev/null || echo "No .deb"
       - name: Pack IPA
         run: |
           cd iOS7Test
