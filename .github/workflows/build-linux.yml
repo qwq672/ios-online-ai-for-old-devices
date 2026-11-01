@@ -104,35 +104,8 @@ jobs:
             [ -f "iOS6AIChat/Resources/Icons/$icon" ] && cp "iOS6AIChat/Resources/Icons/$icon" "$APP/$icon"
           done
           ldid -S "$APP/iOS6AIChat" 2>/dev/null || true
-          # v261025-31: patch Mach-O LC_VERSION_MIN_MACOSX→LC_VERSION_MIN_IPHONEOS
-          # cctools linker emits MACOSX (0x25) instead of IPHONEOS (0x24).
-          # Patch the 4-byte cmd field in the load command.
-          python3 -c "
-import struct
-with open('$APP/iOS6AIChat', 'rb') as f:
-    data = bytearray(f.read())
-magic = struct.unpack('>I', data[:4])[0]
-patched = 0
-if magic == 0xCAFEBABE:
-    n = struct.unpack('>I', data[4:8])[0]
-    for i in range(n):
-        off = 8 + i * 20
-        _, _, archoff, archsize, _ = struct.unpack('>iiIII', data[off:off+20])
-        mh = struct.unpack('<I', data[archoff:archoff+4])[0]
-        if mh == 0xFEEDFACE:
-            ncmds = struct.unpack('<I', data[archoff+16:archoff+20])[0]
-            pos = archoff + 28
-            for j in range(ncmds):
-                cmd, cmdsize = struct.unpack('<II', data[pos:pos+8])
-                if cmd == 0x25:  # LC_VERSION_MIN_MACOSX → patch to IPHONEOS
-                    struct.pack_into('<I', data, pos, 0x24)
-                    patched += 1
-                pos += cmdsize
-                if pos >= archoff + archsize: break
-with open('$APP/iOS6AIChat', 'wb') as f:
-    f.write(data)
-print(f'Mach-O patched: {patched} LC_VERSION_MIN_MACOSX→IPHONEOS')
-" 2>/dev/null || echo "Mach-O patch skipped"
+          # v261025-31: patch Mach-O LC_VERSION_MIN_MACOSX→IPHONEOS
+          python3 scripts/patch_macho.py "$APP/iOS6AIChat" 2>/dev/null || echo "patch skipped"
           zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null
       - uses: actions/upload-artifact@v4
         with:
