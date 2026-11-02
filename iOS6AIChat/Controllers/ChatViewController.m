@@ -1344,7 +1344,12 @@ didFailForConversationID:(NSString *)conversationID
     }
     Message *m = [_conversation.messages objectAtIndex:indexPath.row];
     if (!m) return 80;
-    return [ChatMessageCell heightForMessage:m width:_tableView.bounds.size.width];
+    CGFloat h = [ChatMessageCell heightForMessage:m width:_tableView.bounds.size.width];
+    // v261025-33: guard against negative/zero/NaN — iOS 6 crashes with
+    // 'row height must not be negative' if boundingRectWithSize returns
+    // -0.0 or NaN for edge-case strings.
+    if (h <= 0 || h != h) h = 80;  // NaN check: h != h
+    return h;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView

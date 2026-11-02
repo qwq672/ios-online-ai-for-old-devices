@@ -293,7 +293,14 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     if (tvW < 60) tvW = 60;
     CGFloat tvH = h - 2 * pad;
     if (tvH < 30) tvH = 30;
-    _textView.frame = CGRectMake(tvX, pad, tvW, tvH);
+    // v261025-33: use sizeThatFits to get actual content height, then
+    // center vertically — eliminates the empty space below single-line text.
+    CGSize fitSize = [_textView sizeThatFits:CGSizeMake(tvW, CGFLOAT_MAX)];
+    if (fitSize.height > 0 && fitSize.height < tvH) {
+        tvH = fitSize.height;
+    }
+    CGFloat tvY = (h - tvH) / 2.0f;
+    _textView.frame = CGRectMake(tvX, tvY, tvW, tvH);
     
     // v261025-32: the composer background fills the entire view bounds —
     // no gap below the text view. The background color is set in init
