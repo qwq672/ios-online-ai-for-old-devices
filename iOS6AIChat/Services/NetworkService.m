@@ -123,15 +123,11 @@
 // preserves _accumulated (pre-tool-call text + markers) instead of
 // clearing it. Set by _runPendingToolCalls before the re-launch.
 @property (nonatomic, assign) BOOL toolCallRelaunch;
-// v261102-1: per-provider autonomous capability switches (set by
-// ChatViewController before launching the stream — sourced from
-// +resolvedConnectionForChat which reads the active provider entry).
-@property (nonatomic, assign) BOOL autonomousWebSearch;
-@property (nonatomic, assign) BOOL autonomousURLRead;
-@property (nonatomic, copy)   NSString *autonomousSearchURL;
-@property (nonatomic, copy)   NSString *autonomousSearchKey;
-@property (nonatomic, copy)   NSString *autonomousFetchURL;
-@property (nonatomic, copy)   NSString *autonomousFetchKey;
+// v261102-1: per-provider autonomous capability switches are declared in
+// the public header (NetworkService.h). Do NOT redeclare them in this
+// class extension — clang rejects redeclaration when the primary property
+// is already readwrite (only readonly → readwrite promotion is allowed).
+// The @synthesize lines below pull in the ivars directly.
 // v261025-3: https→http URL rewrite for the iOS 6 TLS transit fallback
 // (see the implementation comment for the full rationale).
 + (NSString *)_httpFallbackForURLString:(NSString *)s;
