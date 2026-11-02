@@ -988,7 +988,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
         bubbleWidth = MAX(textRect.size.width + 38, 60);
         bubbleWidth = MIN(bubbleWidth, maxBubbleWidth);
     }
-    CGFloat bubbleHeight = textRect.size.height + 2 * bubbleInnerVPad + tailHeight + safety
+    CGFloat bubbleHeight = textRect.size.height + insetV + 2 * bubbleInnerVPad + tailHeight + safety
                           + thinkingH + imagesH + genImgH;
     if (bubbleHeight < 40) bubbleHeight = 40;
 
@@ -1008,6 +1008,8 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // non-bubble AI starts at x=8 (left margin).
     CGFloat contentX = useBubble ? 4 : 8;
     CGFloat contentW = useBubble ? (bubbleWidth - 8) : (bubbleWidth - 12);
+    // v261025-33: textContainerInset vertical total (matches heightForMessage).
+    CGFloat insetV = useBubble ? 14 : 8;
 
     // Place thinking block at top of bubble.
     CGFloat yOffset = 4;
@@ -1027,7 +1029,12 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     } else {
         _generatedImageView.hidden = YES;
     }
-    CGFloat textH = bubbleHeight - yOffset - imagesH - (isAI ? 4 : (tailHeight + 4));
+    // v261025-33: text height = bubbleHeight - consumed - bottom reserve.
+    // insetV is already added to bubbleHeight (matches heightForMessage),
+    // so the text frame now includes room for the textContainerInset.
+    CGFloat bottomReserve = useBubble ? (tailHeight + 4) : 4;
+    CGFloat textH = bubbleHeight - yOffset - imagesH - bottomReserve;
+    if (textH < 20) textH = 20;
     _textView.frame = CGRectMake(contentX, yOffset, contentW, textH);
 
     // Images at bottom of bubble.
@@ -1224,10 +1231,16 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     BOOL hasActionButtons = (message.content.length > 0);  // both roles
     CGFloat buttonH = hasActionButtons ? 26 : 0;
     BOOL useBubble = message.isUser || [message.content hasPrefix:@"⚠️"];
+    // v261025-33: CRITICAL — the UITextView's textContainerInset adds
+    // vertical space INSIDE the text view that boundingRectWithSize does
+    // NOT measure. AI inset=(4,4,4,4) → +8pt; user inset=(7,10,7,10) → +14pt.
+    // The old formula omitted this → text frame 8-14pt shorter than needed
+    // → last line ALWAYS clipped. Now we add it to the height.
+    CGFloat insetV = useBubble ? 14 : 8;   // top+bottom textContainerInset
     CGFloat tailH = useBubble ? 6 : 0;
     CGFloat vPad = useBubble ? 5 : 4;
     CGFloat safety = useBubble ? 20 : 8;
-    CGFloat bubbleHeight = textRect.size.height + 2 * vPad + tailH + safety
+    CGFloat bubbleHeight = textRect.size.height + insetV + 2 * vPad + tailH + safety
                           + thinkingH + imagesH;
     CGFloat result = bubbleHeight + 2 * verticalPad + buttonH;
     if (result < 50) result = 50;
