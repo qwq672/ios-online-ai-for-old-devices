@@ -977,6 +977,7 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     BOOL thinkingLive = [ChatMessageCell _isThinkingLive:_message];
     CGFloat tailHeight = useBubble ? 6.0f : 0;  // v261025-33: no tail for non-bubble AI
     CGFloat safety = useBubble ? 20 : 8;
+    CGFloat insetV = useBubble ? 14 : 8;  // v261025-33: textContainerInset vertical total
     CGFloat bubbleWidth;
     if (!useBubble) {
         bubbleWidth = self.bounds.size.width;  // AI: full width
@@ -1008,8 +1009,6 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // non-bubble AI starts at x=8 (left margin).
     CGFloat contentX = useBubble ? 4 : 8;
     CGFloat contentW = useBubble ? (bubbleWidth - 8) : (bubbleWidth - 12);
-    // v261025-33: textContainerInset vertical total (matches heightForMessage).
-    CGFloat insetV = useBubble ? 14 : 8;
 
     // Place thinking block at top of bubble.
     CGFloat yOffset = 4;
