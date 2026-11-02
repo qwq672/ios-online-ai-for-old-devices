@@ -89,8 +89,20 @@ jobs:
           # check). IsIOS7OrLater() guards prevent iOS 7+ API calls on iOS 6.
           BUILD_TARGET="iphone:clang:7.1:6.0"
           echo "Building with TARGET=$BUILD_TARGET"
-          make package TARGET="$BUILD_TARGET" 2>&1 | tail -80 || true
-          make package TARGET="$BUILD_TARGET"
+          # v261102-1: capture full make output to a log file so we can
+          # extract compile errors and surface them via GitHub Actions
+          # annotations (the bare "Process completed with exit code 2"
+          # message is useless for diagnosing which .m / which line failed).
+          make package TARGET="$BUILD_TARGET" 2>&1 | tee /tmp/build.log || true
+          # Try a second run (matches previous behavior). If this also
+          # fails, extract the error lines and emit annotations.
+          if ! make package TARGET="$BUILD_TARGET" 2>&1 | tee /tmp/build2.log; then
+            echo "::error::Build failed. Extracting error lines:"
+            grep -E 'error:|Error:|undefined reference|cannot find|fatal' /tmp/build.log /tmp/build2.log 2>/dev/null | head -30 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          fi
       - name: Pack IPA
         run: |
           BUILT_APP=$(find .theos/_ -name "iOS6AIChat.app" -type d | head -1)
