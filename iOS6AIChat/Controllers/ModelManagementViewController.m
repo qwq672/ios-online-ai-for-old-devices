@@ -843,12 +843,33 @@ enum {
     if (![apiKey isKindOfClass:[NSString class]] || apiKey.length == 0) {
         apiKey = [settings objectForKey:SettingsKeyAPIKey];
     }
+    // v261102-1: per-provider autonomous capability flags (BOOL NSNumber).
+    // Default OFF when absent. Returned here so the chat send path + the
+    // tools-array builder in NetworkService can decide whether to declare
+    // web_search / fetch_url tools (provider's own native API) INSTEAD OF
+    // the Tavily tool_calls path.
+    BOOL autoWeb = [[provider objectForKey:@"autonomousWebSearch"] boolValue];
+    BOOL autoURL = [[provider objectForKey:@"autonomousURLRead"] boolValue];
+    NSString *autoSearchURL = [provider objectForKey:@"autonomousSearchURL"];
+    if (![autoSearchURL isKindOfClass:[NSString class]]) autoSearchURL = @"";
+    NSString *autoSearchKey = [provider objectForKey:@"autonomousSearchKey"];
+    if (![autoSearchKey isKindOfClass:[NSString class]]) autoSearchKey = @"";
+    NSString *autoFetchURL = [provider objectForKey:@"autonomousFetchURL"];
+    if (![autoFetchURL isKindOfClass:[NSString class]]) autoFetchURL = @"";
+    NSString *autoFetchKey = [provider objectForKey:@"autonomousFetchKey"];
+    if (![autoFetchKey isKindOfClass:[NSString class]]) autoFetchKey = @"";
     return [NSDictionary dictionaryWithObjectsAndKeys:
             format, @"format",
             template ?: ProviderIDOpenAI, @"template",
             baseURL   ?: @"https://api.openai.com", @"baseURL",
             apiKey    ?: @"", @"apiKey",
             model     ?: @"", @"model",
+            [NSNumber numberWithBool:autoWeb], @"autonomousWebSearch",
+            [NSNumber numberWithBool:autoURL], @"autonomousURLRead",
+            autoSearchURL, @"autonomousSearchURL",
+            autoSearchKey, @"autonomousSearchKey",
+            autoFetchURL,  @"autonomousFetchURL",
+            autoFetchKey,  @"autonomousFetchKey",
             nil];
 }
 

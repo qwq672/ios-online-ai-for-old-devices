@@ -123,6 +123,15 @@
 // preserves _accumulated (pre-tool-call text + markers) instead of
 // clearing it. Set by _runPendingToolCalls before the re-launch.
 @property (nonatomic, assign) BOOL toolCallRelaunch;
+// v261102-1: per-provider autonomous capability switches (set by
+// ChatViewController before launching the stream — sourced from
+// +resolvedConnectionForChat which reads the active provider entry).
+@property (nonatomic, assign) BOOL autonomousWebSearch;
+@property (nonatomic, assign) BOOL autonomousURLRead;
+@property (nonatomic, copy)   NSString *autonomousSearchURL;
+@property (nonatomic, copy)   NSString *autonomousSearchKey;
+@property (nonatomic, copy)   NSString *autonomousFetchURL;
+@property (nonatomic, copy)   NSString *autonomousFetchKey;
 // v261025-3: https→http URL rewrite for the iOS 6 TLS transit fallback
 // (see the implementation comment for the full rationale).
 + (NSString *)_httpFallbackForURLString:(NSString *)s;
@@ -149,7 +158,13 @@
             tavilyKey=_tavilyKey, tavilyMaxResults=_tavilyMaxResults,
             toolCallTurn=_toolCallTurn, maxToolTurns=_maxToolTurns,
             streamStartTs=_streamStartTs, httpFallbackTried=_httpFallbackTried,
-            toolCallRelaunch=_toolCallRelaunch;
+            toolCallRelaunch=_toolCallRelaunch,
+            autonomousWebSearch=_autonomousWebSearch,
+            autonomousURLRead=_autonomousURLRead,
+            autonomousSearchURL=_autonomousSearchURL,
+            autonomousSearchKey=_autonomousSearchKey,
+            autonomousFetchURL=_autonomousFetchURL,
+            autonomousFetchKey=_autonomousFetchKey;
 @dynamic accumulatedThinking;
 
 - (id)init
@@ -239,6 +254,11 @@
     // would stay YES and the next user message would skip the
     // _accumulated clear → stale text from previous turn carried over.
     self.toolCallRelaunch = NO;
+    // v261102-1: the autonomous flags + URLs are set externally by
+    // ChatViewController right before calling streamChat... — DO NOT
+    // reset them here (would clobber the per-provider config the caller
+    // just installed). They survive across the multi-turn tool-call loop
+    // within one user message, which is what we want.
     [_accumulated setString:@""];
     [_thinkingAccumulated setString:@""];
     [_toolCallAccumulators removeAllObjects];
@@ -480,74 +500,184 @@
         [body setObject:self.model ?: @"gpt-3.5-turbo" forKey:@"model"];
     }
     // useServerModel=YES → omit `model`; transit server will fill it in.
-    // v261025-8: the `thinking` request key is a ZHIPU-specific extension
-    // (glm-4-plus/air/flash accept {"type":"enabled"} to stream
-    // reasoning_content). Sending it to other providers risks a 400 on
-    // strict OpenAI-compat servers — gate it to zhipu only.
-    if (doThink && [self.provider isEqualToString:ProviderIDZhipu]) {
-        [body setObject:@{@"type": @"enabled"} forKey:@"thinking"];
+    // v261102-1: 思考挡位重写。用户报告"思考开关关闭仍被强制思考"。
+    // 根因：旧逻辑只在 doThink=YES 且 provider=zhipu 时挂 thinking 参数，
+    // 其他情况一律不发——但 DeepSeek-Reasoner / GPT-5 / GLM-5.x 等
+    // 默认开启思考的模型，没有显式 "disabled" 时仍会输出 reasoning_content。
+    // 修复：按各供应商规范显式开关思考。
+    //   - zhipu / deepseek (openai-compat): 顶层 "thinking":{"type":"enabled"|"disabled"}
+    //       (deepseek-flash 支持 thinking.type; deepseek-reasoner 不支持 disabled
+    //        但仍接受 enabled 字段)
+    //   - openai (gpt-5+ reasoning models): 顶层 "reasoning_effort":"low"|"medium"|"high"
+    //       (gpt-5 系列才接受此字段; gpt-3.5/gpt-4o 会忽略，无副作用)
+    //   - 其他 (kimi/ollama/custom): 不发 (无原生控制; 关闭时只能靠模型本身默认)
+    // 参考:
+    //   https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
+    //   https://docs.bigmodel.cn/cn/guide/capabilities/thinking
+    //   https://platform.openai.com/docs/guides/reasoning
+    if (doThink) {
+        if ([self.provider isEqualToString:ProviderIDZhipu] ||
+            [self.provider isEqualToString:ProviderIDDeepSeek]) {
+            [body setObject:@{@"type": @"enabled"} forKey:@"thinking"];
+        } else if ([self.provider isEqualToString:ProviderIDOpenAI]) {
+            // gpt-5+: "low" gives a quick reasoning pass; "high" deeper.
+            // Use "low" by default (cheap) — user can request deeper via
+            // the deep-thinking toggle which always lands here.
+            [body setObject:@"high" forKey:@"reasoning_effort"];
+        }
+        // kimi/ollama/anthropic-custom: nothing — Kimi K2/LinearAI has no
+        // native thinking-control field; toggle just leaves it to model default.
+    } else {
+        // v261102-1: 思考开关 OFF → 显式禁用思考 (而非"不发参数"，
+        // 因为模型默认可能是 ON，导致"强制思考" bug)。
+        if ([self.provider isEqualToString:ProviderIDZhipu] ||
+            [self.provider isEqualToString:ProviderIDDeepSeek]) {
+            [body setObject:@{@"type": @"disabled"} forKey:@"thinking"];
+        } else if ([self.provider isEqualToString:ProviderIDOpenAI]) {
+            // OpenAI gpt-5 系列: reasoning_effort "minimal" 几乎禁用思考。
+            // gpt-3.5/gpt-4o: 此字段被忽略，无副作用。
+            [body setObject:@"minimal" forKey:@"reasoning_effort"];
+        }
+        // 其他提供商：无原生 disabled 字段；不发任何参数，模型按其默认行为。
     }
 
     // Tools array. The two lightweight tools (get_current_time,
-    // get_device_info) are ALWAYS available — they don't need any user
-    // config and are useful for time/device queries. tavily_search is
-    // only added when web search is enabled.
+    // get_device_info) are gated by 总设置 toggles (default ON — keeps
+    // the previous "always available" behavior unless user turns them
+    // off explicitly). generate_image is gated by the global 生图功能
+    // switch (default ON). Search/fetch routing depends on the
+    // autonomous flags: when the provider has its own native search or
+    // fetch URL enabled, we declare `web_search` / `fetch_url` tools
+    // (provider's own API) INSTEAD OF `tavily_search` — and the AI's
+    // tool-call for those routes through _runPendingToolCalls' provider
+    // branch instead of the Tavily branch.
     NSMutableArray *toolsArray = [NSMutableArray array];
 
-    // Tool 1: get_current_time — always available.
-    [toolsArray addObject:@{
-        @"type": @"function",
-        @"function": @{
-            @"name": @"get_current_time",
-            @"description": @"Get the current date, time, timezone, and day of week on the user's device. Use this when the user asks about the current time, today's date, what day it is, or any time-sensitive query.",
-            @"parameters": @{
-                @"type": @"object",
-                @"properties": @{},
-                @"required": @[]
-            }
-        }
-    }];
+    // v261102-1: global toggles for the two lightweight tools.
+    BOOL timeToolOn = YES;  // default ON
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:SettingsKeyEnableTimeTool]) {
+        timeToolOn = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyEnableTimeTool];
+    }
+    BOOL deviceInfoToolOn = YES;  // default ON
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:SettingsKeyEnableDeviceInfoTool]) {
+        deviceInfoToolOn = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyEnableDeviceInfoTool];
+    }
+    BOOL imageGenFeatureOn = YES;
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:SettingsKeyImageGenFeatureEnabled]) {
+        imageGenFeatureOn = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyImageGenFeatureEnabled];
+    }
 
-    // Tool 2: get_device_info — always available.
-    [toolsArray addObject:@{
-        @"type": @"function",
-        @"function": @{
-            @"name": @"get_device_info",
-            @"description": @"Get information about the user's device: hardware model identifier (e.g. iPhone4,1), iOS version, battery level, screen size, language. Use this when the user asks about their device or for debugging.",
-            @"parameters": @{
-                @"type": @"object",
-                @"properties": @{},
-                @"required": @[]
+    // Tool 1: get_current_time — gated by global toggle.
+    if (timeToolOn) {
+        [toolsArray addObject:@{
+            @"type": @"function",
+            @"function": @{
+                @"name": @"get_current_time",
+                @"description": @"Get the current date, time, timezone, and day of week on the user's device. Use this when the user asks about the current time, today's date, what day it is, or any time-sensitive query.",
+                @"parameters": @{
+                    @"type": @"object",
+                    @"properties": @{},
+                    @"required": @[]
+                }
             }
-        }
-    }];
+        }];
+    }
 
-    // Tool 3: generate_image — always available.
-    [toolsArray addObject:@{
-        @"type": @"function",
-        @"function": @{
-            @"name": @"generate_image",
-            @"description": @"Generate an image based on a text description. Use this when the user asks to draw, paint, create, generate, or make an image/picture/illustration. The generated image will be displayed in the chat automatically.",
-            @"parameters": @{
-                @"type": @"object",
-                @"properties": @{
-                    @"prompt": @{
-                        @"type": @"string",
-                        @"description": @"The image description. Be specific and descriptive for best results. English prompts usually work better."
+    // Tool 2: get_device_info — gated by global toggle.
+    if (deviceInfoToolOn) {
+        [toolsArray addObject:@{
+            @"type": @"function",
+            @"function": @{
+                @"name": @"get_device_info",
+                @"description": @"Get information about the user's device: hardware model identifier (e.g. iPhone4,1), iOS version, battery level, screen size, language. Use this when the user asks about their device or for debugging.",
+                @"parameters": @{
+                    @"type": @"object",
+                    @"properties": @{},
+                    @"required": @[]
+                }
+            }
+        }];
+    }
+
+    // Tool 3: generate_image — gated by global 生图功能 toggle.
+    if (imageGenFeatureOn) {
+        [toolsArray addObject:@{
+            @"type": @"function",
+            @"function": @{
+                @"name": @"generate_image",
+                @"description": @"Generate an image based on a text description. Use this when the user asks to draw, paint, create, generate, or make an image/picture/illustration. The generated image will be displayed in the chat automatically.",
+                @"parameters": @{
+                    @"type": @"object",
+                    @"properties": @{
+                        @"prompt": @{
+                            @"type": @"string",
+                            @"description": @"The image description. Be specific and descriptive for best results. English prompts usually work better."
+                        },
+                        @"size": @{
+                            @"type": @"string",
+                            @"description": @"Image size. Options: '256x256', '512x512', '1024x1024' (default). Some providers also support '1792x1024' or '1024x1792'.",
+                            @"default": @"1024x1024"
+                        }
                     },
-                    @"size": @{
-                        @"type": @"string",
-                        @"description": @"Image size. Options: '256x256', '512x512', '1024x1024' (default). Some providers also support '1792x1024' or '1024x1792'.",
-                        @"default": @"1024x1024"
-                    }
-                },
-                @"required": @[@"prompt"]
+                    @"required": @[@"prompt"]
+                }
             }
-        }
-    }];
+        }];
+    }
 
-    // Tool 4: tavily_search — only when web search is enabled.
-    if (self.enableWebSearchTools && self.tavilyKey.length > 0) {
+    // Tool 4a: web_search (provider's OWN native search) — when the
+    // active provider has autonomous web search enabled. This tool is
+    // declared INSTEAD OF tavily_search (mutually exclusive — avoids
+    // the AI choosing Tavily when the user wants the provider's native
+    // search).
+    if (self.autonomousWebSearch) {
+        [toolsArray addObject:@{
+            @"type": @"function",
+            @"function": @{
+                @"name": @"web_search",
+                @"description": @"Search the web for current information using the model provider's built-in web search. Use this when the user asks about recent events, current prices, latest news, or anything you don't already know. Each call returns titles, URLs, and content snippets. Cite URLs in your answer.",
+                @"parameters": @{
+                    @"type": @"object",
+                    @"properties": @{
+                        @"query": @{
+                            @"type": @"string",
+                            @"description": @"The search query (in English or Chinese as appropriate). Keep concise."
+                        }
+                    },
+                    @"required": @[@"query"]
+                }
+            }
+        }];
+    }
+
+    // Tool 4b: fetch_url (provider's OWN native URL reader) — when the
+    // active provider has autonomous URL reading enabled.
+    if (self.autonomousURLRead) {
+        [toolsArray addObject:@{
+            @"type": @"function",
+            @"function": @{
+                @"name": @"fetch_url",
+                @"description": @"Fetch the content of a web page URL and return it as text. Use this when the user shares a link or asks about a specific web page — you'll get the page's title and main content.",
+                @"parameters": @{
+                    @"type": @"object",
+                    @"properties": @{
+                        @"url": @{
+                            @"type": @"string",
+                            @"description": @"The full URL to fetch (including https://)."
+                        }
+                    },
+                    @"required": @[@"url"]
+                }
+            }
+        }];
+    }
+
+    // Tool 4c: tavily_search — only when webSearch is enabled AND the
+    // provider does NOT have autonomous web search enabled (mutually
+    // exclusive — when autonomous is ON, we declared web_search above
+    // and the Tavily path is shut off).
+    if (self.enableWebSearchTools && !self.autonomousWebSearch
+        && self.tavilyKey.length > 0) {
         [toolsArray addObject:@{
             @"type": @"function",
             @"function": @{
@@ -853,7 +983,13 @@
     // to the same worker reaches it end-to-end (a 403 upstream body came
     // back through it), so the relay serves both schemes. Direct-mode
     // (non-transit) requests are NEVER downgraded.
-    if (self.useTransit && !self.httpFallbackTried && error.code == -1012 &&
+    // v261102-1: also fire on -1200 (NSURLErrorSecureConnectionFailed) —
+    // user-reported image-upload SSL error: iOS 6 SecureTransport aborts
+    // mid-handshake against some Cloudflare edge configs and surfaces as
+    // -1200 instead of -1012. Same remedy: retry the whole stream over
+    // plain HTTP through the transit worker (which serves both schemes).
+    if (self.useTransit && !self.httpFallbackTried &&
+        (error.code == -1012 || error.code == -1200) &&
         [self.transitURL isKindOfClass:[NSString class]] &&
         [self.transitURL hasPrefix:@"https://"]) {
         // v261025-12: do NOT mutate self.transitURL. Set the flag only —
@@ -958,21 +1094,43 @@
             NSString *args = [tc objectForKey:@"arguments"] ?: @"{}";
             NSData *argsData = [args dataUsingEncoding:NSUTF8StringEncoding];
             NSDictionary *argsDict = [NSJSONSerialization JSONObjectWithData:argsData options:0 error:NULL] ?: @{};
+            // v261102-1: NEW marker syntax — wrapped in :::tool fences so
+            // MarkdownParser renders them as a gray box. Per-tool status
+            // text follows the user's spec:
+            //   search    → 正在搜索"xxx"
+            //   fetch_url → 正在读取 https://xxx.com/xx...
+            //   get_current_time → 获取时间中...
+            //   get_device_info   → 获取设备简单信息中...
+            //   generate_image    → 正在生成图片...
+            //   (other)           → 正在调用工具 fnName...
+            // The matching "done" marker is appended after the tool
+            // finishes (in the bg-queue closure's main-thread dispatch).
             NSString *marker = nil;
-            if ([fnName isEqualToString:@"tavily_search"]) {
+            if ([fnName isEqualToString:@"tavily_search"] ||
+                [fnName isEqualToString:@"web_search"]) {
                 id q = [argsDict objectForKey:@"query"];
                 NSString *qs = [q isKindOfClass:[NSString class]] ? q : @"?";
-                marker = [NSString stringWithFormat:@"\n\n[搜索] \"%@\"…\n\n", qs];
+                marker = [NSString stringWithFormat:@"\n\n:::tool\n正在搜索“%@”…\n:::\n\n", qs];
+            } else if ([fnName isEqualToString:@"fetch_url"]) {
+                id u = [argsDict objectForKey:@"url"];
+                NSString *us = [u isKindOfClass:[NSString class]] ? u : @"?";
+                // Truncate long URLs in the marker (full URL still goes
+                // to the API). 60 chars + ellipsis matches the spec
+                // "正在读取 https://xxx.com/xx...".
+                NSString *displayURL = us.length > 60
+                    ? [NSString stringWithFormat:@"%@…", [us substringToIndex:60]]
+                    : us;
+                marker = [NSString stringWithFormat:@"\n\n:::tool\n正在读取 %@…\n:::\n\n", displayURL];
             } else if ([fnName isEqualToString:@"get_current_time"]) {
-                marker = @"\n\n[时间] 获取当前时间…\n\n";
+                marker = @"\n\n:::tool\n获取时间中…\n:::\n\n";
             } else if ([fnName isEqualToString:@"get_device_info"]) {
-                marker = @"\n\n[设备] 获取设备信息…\n\n";
+                marker = @"\n\n:::tool\n获取设备简单信息中…\n:::\n\n";
             } else if ([fnName isEqualToString:@"generate_image"]) {
                 id p = [argsDict objectForKey:@"prompt"];
                 NSString *ps = [p isKindOfClass:[NSString class]] ? p : @"?";
-                marker = [NSString stringWithFormat:@"\n\n[生图] \"%@\"…\n\n", ps];
+                marker = [NSString stringWithFormat:@"\n\n:::tool\n正在生成图片“%@”…\n:::\n\n", ps];
             } else {
-                marker = [NSString stringWithFormat:@"\n\n[工具] %@…\n\n", fnName];
+                marker = [NSString stringWithFormat:@"\n\n:::tool\n正在调用工具 %@…\n:::\n\n", fnName];
             }
             if (marker) [_accumulated appendString:marker];
         }
@@ -1176,6 +1334,101 @@
                 continue;
             }
 
+            // === web_search (provider's OWN native search API) ===========
+            // v261102-1: when the active provider has autonomousWebSearch
+            // enabled, the AI calls `web_search` instead of `tavily_search`.
+            // We POST to the provider's autonomousSearchURL (or a URL
+            // derived from the chat base URL when none is configured),
+            // using autonomousSearchKey or the chat's own apiKey.
+            if ([fnName isEqualToString:@"web_search"]) {
+                NSData *argsData = [args dataUsingEncoding:NSUTF8StringEncoding];
+                NSDictionary *argsDict = [NSJSONSerialization JSONObjectWithData:argsData
+                                                                          options:0
+                                                                            error:NULL];
+                id queryRaw = [argsDict objectForKey:@"query"];
+                NSString *query = [queryRaw isKindOfClass:[NSString class]] ? queryRaw : nil;
+                // Some models may emit "search_query" (Zhipu schema).
+                if (!query) {
+                    id q2 = [argsDict objectForKey:@"search_query"];
+                    query = [q2 isKindOfClass:[NSString class]] ? q2 : nil;
+                }
+                if (!query || query.length == 0) {
+                    @synchronized(toolResults) {
+                        [toolResults addObject:@{
+                            @"role": @"tool",
+                            @"tool_call_id": callId ?: @"",
+                            @"content": @"Error: missing 'query' argument"
+                        }];
+                    }
+                    continue;
+                }
+                NSError *err = nil;
+                NSString *resultText = [self _autonomousWebSearchWithQuery:query
+                                                                       error:&err];
+                if (err || resultText.length == 0) {
+                    @synchronized(toolResults) {
+                        [toolResults addObject:@{
+                            @"role": @"tool",
+                            @"tool_call_id": callId ?: @"",
+                            @"content": [NSString stringWithFormat:@"Web search failed: %@", err.localizedDescription ?: @"empty"]
+                        }];
+                    }
+                } else {
+                    @synchronized(toolResults) {
+                        [toolResults addObject:@{
+                            @"role": @"tool",
+                            @"tool_call_id": callId ?: @"",
+                            @"content": resultText
+                        }];
+                    }
+                }
+                continue;
+            }
+
+            // === fetch_url (provider's OWN native URL reader API) ========
+            // v261102-1: autonomousURLRead → AI calls `fetch_url` to read
+            // a web page. POST to autonomousFetchURL (or derived from chat
+            // base URL) with {"url": "..."} body.
+            if ([fnName isEqualToString:@"fetch_url"]) {
+                NSData *argsData = [args dataUsingEncoding:NSUTF8StringEncoding];
+                NSDictionary *argsDict = [NSJSONSerialization JSONObjectWithData:argsData
+                                                                          options:0
+                                                                            error:NULL];
+                id urlRaw = [argsDict objectForKey:@"url"];
+                NSString *urlStr = [urlRaw isKindOfClass:[NSString class]] ? urlRaw : nil;
+                if (!urlStr || urlStr.length == 0) {
+                    @synchronized(toolResults) {
+                        [toolResults addObject:@{
+                            @"role": @"tool",
+                            @"tool_call_id": callId ?: @"",
+                            @"content": @"Error: missing 'url' argument"
+                        }];
+                    }
+                    continue;
+                }
+                NSError *err = nil;
+                NSString *resultText = [self _autonomousFetchURLWithURL:urlStr
+                                                                    error:&err];
+                if (err || resultText.length == 0) {
+                    @synchronized(toolResults) {
+                        [toolResults addObject:@{
+                            @"role": @"tool",
+                            @"tool_call_id": callId ?: @"",
+                            @"content": [NSString stringWithFormat:@"URL fetch failed: %@", err.localizedDescription ?: @"empty"]
+                        }];
+                    }
+                } else {
+                    @synchronized(toolResults) {
+                        [toolResults addObject:@{
+                            @"role": @"tool",
+                            @"tool_call_id": callId ?: @"",
+                            @"content": resultText
+                        }];
+                    }
+                }
+                continue;
+            }
+
             // === tavily_search ============================================
             // Existing handler — search the web via Tavily.
             if (![fnName isEqualToString:@"tavily_search"]) {
@@ -1264,9 +1517,71 @@
                 }
             }
         }
+        // v261102-1: per-tool "done" markers — always show (gated by
+        // showToolCalls, same as the pre-call markers). Per spec:
+        //   search    → 已搜索"xxx"
+        //   fetch_url → 已读取 https://xxx.com/xxx...
+        //   get_current_time → 已获取时间
+        //   get_device_info   → 已获取设备简单信息
+        //   generate_image    → 已生成图片
+        //   (other)           → 已完成工具调用 fnName
+        // We use the callId → toolCallAcc mapping (preserved above as
+        // toolCallAcc) to find each tool's name + args, then emit the
+        // matching done marker in a :::tool gray box.
+        NSMutableArray *doneMarkers = [NSMutableArray array];
+        BOOL showToolCallsDone = YES;
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"showToolCalls"]) {
+            showToolCallsDone = [[NSUserDefaults standardUserDefaults] boolForKey:@"showToolCalls"];
+        }
+        if (showToolCallsDone) {
+            for (NSDictionary *tc in toolCallAcc) {
+                NSString *fnName = [tc objectForKey:@"name"] ?: @"";
+                NSString *args = [tc objectForKey:@"arguments"] ?: @"{}";
+                NSData *argsData = [args dataUsingEncoding:NSUTF8StringEncoding];
+                NSDictionary *argsDict = [NSJSONSerialization JSONObjectWithData:argsData options:0 error:NULL] ?: @{};
+                NSString *m = nil;
+                if ([fnName isEqualToString:@"tavily_search"] ||
+                    [fnName isEqualToString:@"web_search"]) {
+                    id q = [argsDict objectForKey:@"query"];
+                    if (!q) q = [argsDict objectForKey:@"search_query"];
+                    NSString *qs = [q isKindOfClass:[NSString class]] ? q : @"?";
+                    m = [NSString stringWithFormat:@"\n:::tool\n已搜索“%@”\n:::\n", qs];
+                } else if ([fnName isEqualToString:@"fetch_url"]) {
+                    id u = [argsDict objectForKey:@"url"];
+                    NSString *us = [u isKindOfClass:[NSString class]] ? u : @"?";
+                    NSString *displayURL = us.length > 60
+                        ? [NSString stringWithFormat:@"%@…", [us substringToIndex:60]]
+                        : us;
+                    m = [NSString stringWithFormat:@"\n:::tool\n已读取 %@\n:::\n", displayURL];
+                } else if ([fnName isEqualToString:@"get_current_time"]) {
+                    m = @"\n:::tool\n已获取时间\n:::\n";
+                } else if ([fnName isEqualToString:@"get_device_info"]) {
+                    m = @"\n:::tool\n已获取设备简单信息\n:::\n";
+                } else if ([fnName isEqualToString:@"generate_image"]) {
+                    m = @"\n:::tool\n已生成图片\n:::\n";
+                } else {
+                    m = [NSString stringWithFormat:@"\n:::tool\n已完成工具调用 %@\n:::\n", fnName];
+                }
+                if (m) [doneMarkers addObject:m];
+            }
+        }
         // Re-launch stream on main — segmented thinking: preserve
         // _accumulated so pre-tool-call text + markers stay visible.
         dispatch_async(dispatch_get_main_queue(), ^{
+            // v261102-1: append per-tool "done" markers BEFORE the
+            // showSearchResults block (so order is: pre-marker → done-marker →
+            // optional result summary → AI continues). The done markers
+            // come from the parent scope's doneMarkers array.
+            if ([doneMarkers count] > 0) {
+                for (NSString *m in doneMarkers) {
+                    [self->_accumulated appendString:m];
+                }
+                if ([self->_delegate respondsToSelector:@selector(networkService:didReceiveChunkForConversationID:fullText:)]) {
+                    [self->_delegate networkService:self
+                        didReceiveChunkForConversationID:self->_conversationID
+                                             fullText:self->_accumulated];
+                }
+            }
             if (showSearchResults && [resultSummaries count] > 0) {
                 for (NSString *summary in resultSummaries) {
                     [self->_accumulated appendFormat:@"[结果] %@\n\n", summary];
@@ -1519,6 +1834,11 @@
     [_model release];
     [_baseMessages release];
     [_tavilyKey release];
+    // v261102-1: autonomous-URL copy properties.
+    [_autonomousSearchURL release];
+    [_autonomousSearchKey release];
+    [_autonomousFetchURL release];
+    [_autonomousFetchKey release];
     [super dealloc];
 }
 
@@ -1849,7 +2169,8 @@
         netErr = nil;
         data = [NetworkService _syncSendRequest:req response:&resp error:&netErr];
         if (!netErr) break;
-        if (attempt == 0 && transitWebSearch && netErr.code == -1012) {
+        if (attempt == 0 && transitWebSearch &&
+            (netErr.code == -1012 || netErr.code == -1200)) {
             NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
             if (httpEndpoint) {
                 [[Logger sharedLogger] warn:[NSString stringWithFormat:
@@ -1964,7 +2285,8 @@
         netErr = nil;
         data = [NetworkService _syncSendRequest:req response:&resp error:&netErr];
         if (!netErr) break;
-        if (attempt == 0 && useTransit && netErr.code == -1012) {
+        if (attempt == 0 && useTransit &&
+            (netErr.code == -1012 || netErr.code == -1200)) {
             NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
             if (httpEndpoint) {
                 [[Logger sharedLogger] warn:[NSString stringWithFormat:
@@ -2059,7 +2381,8 @@
         netErr = nil;
         data = [NetworkService _syncSendRequest:req response:&resp error:&netErr];
         if (!netErr) break;
-        if (attempt == 0 && netErr.code == -1012) {
+        if (attempt == 0 &&
+            (netErr.code == -1012 || netErr.code == -1200)) {
             NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
             if (httpEndpoint) {
                 [[Logger sharedLogger] warn:[NSString stringWithFormat:
@@ -2245,7 +2568,8 @@
         netErr = nil;
         data = [NetworkService _syncSendRequest:req response:&resp error:&netErr];
         if (!netErr) break;
-        if (attempt == 0 && netErr.code == -1012) {
+        if (attempt == 0 &&
+            (netErr.code == -1012 || netErr.code == -1200)) {
             NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
             if (httpEndpoint) {
                 [[Logger sharedLogger] warn:[NSString stringWithFormat:
@@ -2332,7 +2656,8 @@
         netErr = nil;
         data = [NetworkService _syncSendRequest:req response:&resp error:&netErr];
         if (!netErr) break;
-        if (attempt == 0 && netErr.code == -1012) {
+        if (attempt == 0 &&
+            (netErr.code == -1012 || netErr.code == -1200)) {
             NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
             if (httpEndpoint) {
                 [[Logger sharedLogger] warn:@"FETCH-IMG ⚠ https 中转 TLS -1012 (iOS6 握手失败) — 自动改用 http 重试"];
@@ -2413,6 +2738,193 @@
     [del release];
     dispatch_release(sem);
     return result;
+}
+
+// v261102-1: Autonomous web search (provider's OWN native search API).
+// POSTs to autonomousSearchURL when set; otherwise derives the endpoint
+// from the chat's own baseURL by stripping `/chat/completions` (or
+// `/v1/chat/completions`) and appending `/web_search` (智谱-style) — the
+// caller can override the URL in provider-edit if their vendor uses a
+// different path (e.g. DeepSeek's `/tools/search`).
+// The body is a UNION of Zhipu + DeepSeek schemas so a single call works
+// against either:
+//   { query, search_query, search_engine:"search_std",
+//     search_intent:false, count:5, need_content:true }
+// Both APIs ignore unknown fields, so this is safe.
+// Auth: autonomousSearchKey when set; otherwise the chat's own apiKey.
+// Returns the assembled text fed back to the model as the tool result
+// (titles + URLs + snippets, truncated to ~6000 chars to keep token
+// cost reasonable). Returns nil + *error on failure.
+- (NSString *)_autonomousWebSearchWithQuery:(NSString *)query error:(NSError **)error
+{
+    if (!query || query.length == 0) return nil;
+    NSString *endpoint = self.autonomousSearchURL;
+    if (![endpoint isKindOfClass:[NSString class]] || endpoint.length == 0) {
+        // Derive from the chat baseURL: strip trailing /chat/completions
+        // (or /v1/chat/completions) and append /web_search.
+        NSString *base = self.baseURL;
+        if (![base isKindOfClass:[NSString class]] || base.length == 0) {
+            if (error) *error = [NSError errorWithDomain:@"iOS6AIChat" code:400
+                userInfo:@{NSLocalizedDescriptionKey: @"自主搜索未配置 URL 且无 baseURL 可推导"}];
+            return nil;
+        }
+        NSString *trimmed = [base stringByTrimmingCharactersInSet:
+            [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+        // Strip trailing /chat/completions or /v1/chat/completions.
+        if ([trimmed hasSuffix:@"/chat/completions"]) {
+            trimmed = [trimmed substringToIndex:trimmed.length - @"/chat/completions".length];
+        } else if ([trimmed hasSuffix:@"/v1/chat/completions"]) {
+            trimmed = [trimmed substringToIndex:trimmed.length - @"/v1/chat/completions".length];
+        }
+        endpoint = [trimmed stringByAppendingPathComponent:@"web_search"];
+    }
+    NSString *apiKey = self.autonomousSearchKey;
+    if (![apiKey isKindOfClass:[NSString class]] || apiKey.length == 0) {
+        apiKey = self.apiKey;
+    }
+    NSDictionary *body = @{
+        @"query":          query,
+        @"search_query":   query,
+        @"search_engine":  @"search_std",
+        @"search_intent":  @(NO),
+        @"count":          @(5),
+        @"need_content":   @(YES)
+    };
+    NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+    if (!bodyData) return nil;
+    NSURL *url = [NSURL URLWithString:endpoint];
+    if (!url) {
+        if (error) *error = [NSError errorWithDomain:@"iOS6AIChat" code:400
+            userInfo:@{NSLocalizedDescriptionKey: @"自主搜索 URL 无效"}];
+        return nil;
+    }
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
+                                                          cachePolicy:NSURLRequestReloadIgnoringCacheData
+                                                      timeoutInterval:30.0];
+    [req setHTTPMethod:@"POST"];
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    if (apiKey.length > 0) {
+        [req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey]
+        forHTTPHeaderField:@"Authorization"];
+    }
+    [req setHTTPBody:bodyData];
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"AUTO-SEARCH → POST %@ | q=%@…", endpoint,
+        ([query length] > 40 ? [NSString stringWithFormat:@"%@…", [query substringToIndex:40]] : query)]];
+    NSURLResponse *resp = nil;
+    NSError *netErr = nil;
+    NSData *data = [NetworkService _syncSendRequest:req response:&resp error:&netErr];
+    if (netErr) { if (error) *error = netErr; return nil; }
+    if ([self _checkHTTPError:resp data:data error:error]) return nil;
+    if (!data || data.length == 0) return nil;
+    NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+    if (![json isKindOfClass:[NSDictionary class]]) return nil;
+    // Response shape varies by vendor:
+    //   Zhipu:   { search_result: [{title, content, link, media, ...}] }
+    //   DeepSeek:{ results: [{title, url, snippet, summary, content, ...}] }
+    // Build a unified text feed for the model.
+    NSArray *results = [json objectForKey:@"search_result"];
+    if (![results isKindOfClass:[NSArray class]]) {
+        results = [json objectForKey:@"results"];
+    }
+    if (![results isKindOfClass:[NSArray class]]) {
+        // Single-object fallback: just dump the JSON.
+        NSString *dump = [[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] autorelease];
+        if (dump.length > 6000) dump = [NSString stringWithFormat:@"%@…", [dump substringToIndex:6000]];
+        return dump ?: @"(search returned non-standard response)";
+    }
+    NSMutableString *out = [NSMutableString string];
+    [out appendFormat:@"Search results for \"%@\" (%lu):\n", query, (unsigned long)[results count]];
+    NSInteger i = 1;
+    for (NSDictionary *r in results) {
+        if (![r isKindOfClass:[NSDictionary class]]) continue;
+        NSString *title = [r objectForKey:@"title"] ?: @"";
+        NSString *link  = [r objectForKey:@"link"] ?: @"";
+        if (link.length == 0) link = [r objectForKey:@"url"] ?: @"";
+        NSString *snippet = [r objectForKey:@"snippet"] ?: @"";
+        if (snippet.length == 0) snippet = [r objectForKey:@"content"] ?: @"";
+        if (snippet.length > 300) snippet = [NSString stringWithFormat:@"%@…", [snippet substringToIndex:300]];
+        [out appendFormat:@"%ld. %@\n   URL: %@\n   %@\n\n",
+            (long)i++, title, link, snippet];
+        if (i > 8) break;  // cap at 8 results
+    }
+    if (out.length > 6000) out = [NSMutableString stringWithFormat:@"%@…", [out substringToIndex:6000]];
+    return out;
+}
+
+// v261102-1: Autonomous URL fetch (provider's OWN native URL reader API).
+// POSTs to autonomousFetchURL with {"url": "..."} body. URL derivation
+// when not configured: strip /chat/completions from baseURL, append
+// /fetch_url. Auth: autonomousFetchKey or chat apiKey.
+// Returns the page's title + content (truncated to ~8000 chars).
+- (NSString *)_autonomousFetchURLWithURL:(NSString *)urlStr error:(NSError **)error
+{
+    if (!urlStr || urlStr.length == 0) return nil;
+    NSString *endpoint = self.autonomousFetchURL;
+    if (![endpoint isKindOfClass:[NSString class]] || endpoint.length == 0) {
+        NSString *base = self.baseURL;
+        if (![base isKindOfClass:[NSString class]] || base.length == 0) {
+            if (error) *error = [NSError errorWithDomain:@"iOS6AIChat" code:400
+                userInfo:@{NSLocalizedDescriptionKey: @"自主读取 URL 未配置且无 baseURL 可推导"}];
+            return nil;
+        }
+        NSString *trimmed = [base stringByTrimmingCharactersInSet:
+            [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+        if ([trimmed hasSuffix:@"/chat/completions"]) {
+            trimmed = [trimmed substringToIndex:trimmed.length - @"/chat/completions".length];
+        } else if ([trimmed hasSuffix:@"/v1/chat/completions"]) {
+            trimmed = [trimmed substringToIndex:trimmed.length - @"/v1/chat/completions".length];
+        }
+        endpoint = [trimmed stringByAppendingPathComponent:@"fetch_url"];
+    }
+    NSString *apiKey = self.autonomousFetchKey;
+    if (![apiKey isKindOfClass:[NSString class]] || apiKey.length == 0) {
+        apiKey = self.apiKey;
+    }
+    NSDictionary *body = @{ @"url": urlStr };
+    NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+    if (!bodyData) return nil;
+    NSURL *url = [NSURL URLWithString:endpoint];
+    if (!url) {
+        if (error) *error = [NSError errorWithDomain:@"iOS6AIChat" code:400
+            userInfo:@{NSLocalizedDescriptionKey: @"自主读取 URL 端点无效"}];
+        return nil;
+    }
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
+                                                          cachePolicy:NSURLRequestReloadIgnoringCacheData
+                                                      timeoutInterval:60.0];
+    [req setHTTPMethod:@"POST"];
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    if (apiKey.length > 0) {
+        [req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey]
+        forHTTPHeaderField:@"Authorization"];
+    }
+    [req setHTTPBody:bodyData];
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"AUTO-FETCH → POST %@ | url=%@…", endpoint,
+        ([urlStr length] > 60 ? [NSString stringWithFormat:@"%@…", [urlStr substringToIndex:60]] : urlStr)]];
+    NSURLResponse *resp = nil;
+    NSError *netErr = nil;
+    NSData *data = [NetworkService _syncSendRequest:req response:&resp error:&netErr];
+    if (netErr) { if (error) *error = netErr; return nil; }
+    if ([self _checkHTTPError:resp data:data error:error]) return nil;
+    if (!data || data.length == 0) return nil;
+    NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+    if (![json isKindOfClass:[NSDictionary class]]) {
+        // Some readers return raw text body — accept that too.
+        NSString *raw = [[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] autorelease];
+        if (raw.length > 8000) raw = [NSString stringWithFormat:@"%@…", [raw substringToIndex:8000]];
+        return raw ?: @"(fetch returned non-JSON)";
+    }
+    NSString *title = [json objectForKey:@"title"] ?: @"";
+    NSString *content = [json objectForKey:@"content"] ?: @"";
+    if (content.length == 0) content = [json objectForKey:@"markdown"] ?: @"";
+    if (content.length == 0) content = [json objectForKey:@"text"] ?: @"";
+    if (content.length > 8000) content = [NSString stringWithFormat:@"%@…", [content substringToIndex:8000]];
+    NSMutableString *out = [NSMutableString string];
+    if (title.length > 0) [out appendFormat:@"Title: %@\n\n", title];
+    [out appendString:content];
+    return out.length > 0 ? out : @"(empty page)";
 }
 
 @end

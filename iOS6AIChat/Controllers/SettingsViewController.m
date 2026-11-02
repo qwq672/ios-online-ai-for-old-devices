@@ -70,6 +70,8 @@ NSString *const SettingsKeyImageGenModel = @"imageGenModel";
 
 // v261025-11: global image-gen feature switch (default ON).
 NSString *const SettingsKeyImageGenFeatureEnabled = @"imageGenFeatureEnabled";
+NSString *const SettingsKeyEnableTimeTool = @"enableTimeTool";
+NSString *const SettingsKeyEnableDeviceInfoTool = @"enableDeviceInfoTool";
 
 // v261025-11: model-autonomous capability switches (default OFF).
 NSString *const SettingsKeyModelAutonomousWebSearch = @"modelAutonomousWebSearch";
@@ -475,7 +477,10 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                                 // v261025-11: the three new switches reset too.
                                 SettingsKeyImageGenFeatureEnabled,
                                 SettingsKeyModelAutonomousWebSearch,
-                                SettingsKeyModelAutonomousURLReading]) {
+                                SettingsKeyModelAutonomousURLReading,
+                                // v261102-1: time/device-info tool toggles.
+                                SettingsKeyEnableTimeTool,
+                                SettingsKeyEnableDeviceInfoTool]) {
             [d removeObjectForKey:key];
         }
         [d synchronize];
@@ -582,7 +587,7 @@ titleForHeaderInSection:(NSInteger)section
         case kSectionTransit:    return NSLocalizedString(@"中转服务器", nil);
         case kSectionDirect:     return NSLocalizedString(@"直连后端", nil);
         case kSectionModel:      return NSLocalizedString(@"模型", nil);
-        case kSectionWebSearch:  return NSLocalizedString(@"联网搜索 (Tavily)", nil);
+        case kSectionWebSearch:  return NSLocalizedString(@"搜索与工具", nil);
         case kSectionPrompt:     return NSLocalizedString(@"系统提示词", nil);
         case kSectionAdvanced:   return NSLocalizedString(@"高级", nil);
         case kSectionAbout:      return NSLocalizedString(@"关于", nil);
@@ -946,9 +951,11 @@ titleForFooterInSection:(NSInteger)section
         return cell;
     }
     // v261025-11 row 1: 生成图片 全局功能开关 (#7, default ON).
-    // OFF → composer 加号菜单隐藏生图 toggle、ModelMgmt 隐藏生图模型行、
-    // 发送永远不走生图 API。
-    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"生成图片", nil)]];
+    // v261102-1: label "生图功能（beta）" — reflects the feature's current
+    // maturity (still tuning model defaults, prompt handling, provider
+    // routing). OFF → composer 加号菜单隐藏生图 toggle、ModelMgmt 隐藏
+    // 生图模型行、发送永远不走生图 API、tools 数组也不声明 generate_image。
+    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"生图功能（beta）", nil)]];
     UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
     BOOL igFeature = [[NSUserDefaults standardUserDefaults]
         objectForKey:SettingsKeyImageGenFeatureEnabled]
@@ -991,16 +998,20 @@ titleForFooterInSection:(NSInteger)section
         [cell.contentView addSubview:tf];
         return cell;
     }
-    // v261025-11 rows 3-4 (#9): model-autonomous capability switches.
-    // These are NOT the Tavily tool-call path — they tell models with
-    // built-in browsing / URL-reading (via system prompt hints) to use
-    // their own abilities instead of (or alongside) tool calls.
+    // v261102-1: rows 3-4 now hold the time/device-info tool toggles
+    // (the global 自主联网搜索/自主读取URL switches have moved to the
+    // per-provider edit page — they're provider-specific capabilities,
+    // not a global hint). Default ON for both keeps the previous
+    // "always available" behavior unless user explicitly turns off.
     if (row == 3) {
-        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"自主联网搜索", nil)]];
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"获取时间工具", nil)]];
         UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-        BOOL on = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelAutonomousWebSearch];
+        BOOL on = YES;
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:SettingsKeyEnableTimeTool]) {
+            on = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyEnableTimeTool];
+        }
         [sw setOn:on animated:NO];
-        [sw addTarget:self action:@selector(_autoWebSearchToggle:)
+        [sw addTarget:self action:@selector(_enableTimeToolToggle:)
          forControlEvents:UIControlEventValueChanged];
         sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
         CGRect f = cell.contentView.bounds;
@@ -1009,11 +1020,14 @@ titleForFooterInSection:(NSInteger)section
         return cell;
     }
     if (row == 4) {
-        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"自主读取URL", nil)]];
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"获取设备信息工具", nil)]];
         UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-        BOOL on = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelAutonomousURLReading];
+        BOOL on = YES;
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:SettingsKeyEnableDeviceInfoTool]) {
+            on = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyEnableDeviceInfoTool];
+        }
         [sw setOn:on animated:NO];
-        [sw addTarget:self action:@selector(_autoURLReadToggle:)
+        [sw addTarget:self action:@selector(_enableDeviceInfoToolToggle:)
          forControlEvents:UIControlEventValueChanged];
         sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
         CGRect f = cell.contentView.bounds;
@@ -1265,6 +1279,18 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 - (IBAction)_autoURLReadToggle:(UISwitch *)sw
 {
     [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyModelAutonomousURLReading];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+// v261102-1: per-tool enable toggles (moved here from per-message UI —
+// these are stable preferences, not something the user flips per send).
+- (IBAction)_enableTimeToolToggle:(UISwitch *)sw
+{
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyEnableTimeTool];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+- (IBAction)_enableDeviceInfoToolToggle:(UISwitch *)sw
+{
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyEnableDeviceInfoTool];
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 // v261025-13: agent-style tool call display toggles.

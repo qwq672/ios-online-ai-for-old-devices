@@ -976,7 +976,12 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
 
     BOOL thinkingLive = [ChatMessageCell _isThinkingLive:_message];
     CGFloat tailHeight = useBubble ? 6.0f : 0;  // v261025-33: no tail for non-bubble AI
-    CGFloat safety = useBubble ? 20 : 8;
+    // v261102-1: AI safety 8→24. boundingRectWithSize regularly UNDERESTIMATES
+    // the real UITextView layout by one line (~17pt for a 15pt font). The old
+    // 8pt slack was entirely consumed by the (4,4,4,4) textContainerInset
+    // → any underestimate clipped the last line. 24pt leaves 16pt of headroom
+    // past the inset, comfortably absorbing a 1-line drift.
+    CGFloat safety = useBubble ? 20 : 24;
     CGFloat insetV = useBubble ? 14 : 8;  // v261025-33: textContainerInset vertical total
     CGFloat bubbleWidth;
     if (!useBubble) {
@@ -1235,10 +1240,11 @@ static NSMutableDictionary *gExpandedThinking = nil;  // messageID -> @"1"
     // NOT measure. AI inset=(4,4,4,4) → +8pt; user inset=(7,10,7,10) → +14pt.
     // The old formula omitted this → text frame 8-14pt shorter than needed
     // → last line ALWAYS clipped. Now we add it to the height.
+    // v261102-1: AI safety 8→24 (sync with _layoutInternal) — see comment there.
     CGFloat insetV = useBubble ? 14 : 8;   // top+bottom textContainerInset
     CGFloat tailH = useBubble ? 6 : 0;
     CGFloat vPad = useBubble ? 5 : 4;
-    CGFloat safety = useBubble ? 20 : 8;
+    CGFloat safety = useBubble ? 20 : 24;
     CGFloat bubbleHeight = textRect.size.height + insetV + 2 * vPad + tailH + safety
                           + thinkingH + imagesH;
     CGFloat result = bubbleHeight + 2 * verticalPad + buttonH;

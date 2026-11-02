@@ -22,6 +22,7 @@ enum {
     kPESectionConn,
     kPESectionTest,
     kPESectionModels,
+    kPESectionAutonomous,   // v261102-1: 自主联网搜索 + 自主URL读取
     kPESectionDelete,
     kPESectionCount
 };
@@ -36,6 +37,11 @@ static NSInteger const kPESheetQuickPick = 481;
     UITextField *_baseURLField;
     UITextField *_apiKeyField;
     UITextField *_newModelField;
+    // v261102-1: autonomous search/fetch URL + key fields (4 total).
+    UITextField *_autoSearchURLField;
+    UITextField *_autoSearchKeyField;
+    UITextField *_autoFetchURLField;
+    UITextField *_autoFetchKeyField;
     // Models list view-source (read from _entry, kept as a mutable ref).
     // (We don't keep a separate ivar — we always read/write [entry models].)
     // Pending alert state.
@@ -97,6 +103,11 @@ static NSInteger const kPESheetQuickPick = 481;
     [_baseURLField release];
     [_apiKeyField release];
     [_newModelField release];
+    // v261102-1: autonomous search/fetch URL+key fields.
+    [_autoSearchURLField release];
+    [_autoSearchKeyField release];
+    [_autoFetchURLField release];
+    [_autoFetchKeyField release];
     [_pendingDeleteModelID release];
     [_pendingDeleteProviderID release];
     [_searchResults release];
@@ -152,7 +163,9 @@ static NSInteger const kPESheetQuickPick = 481;
     self.view.backgroundColor = [iOS6Theme pinstripeBackground];
     _tableView.backgroundColor = [UIColor clearColor];
     _tableView.backgroundView = nil;
-    for (UITextField *f in [NSArray arrayWithObjects:_baseURLField, _apiKeyField, _newModelField, nil]) {
+    for (UITextField *f in [NSArray arrayWithObjects:_baseURLField, _apiKeyField, _newModelField,
+                            _autoSearchURLField, _autoSearchKeyField,
+                            _autoFetchURLField, _autoFetchKeyField, nil]) {
         if (![f isKindOfClass:[UITextField class]]) continue;
         f.backgroundColor = [iOS6Theme inputFieldBackgroundColor];
         f.textColor = [iOS6Theme inputFieldTextColor];
@@ -246,6 +259,14 @@ static NSInteger const kPESheetQuickPick = 481;
     if (section == kPESectionConn)    return 2;   // BaseURL + API Key
     if (section == kPESectionTest)    return 1;
     if (section == kPESectionModels)  return (NSInteger)[[_entry objectForKey:@"models"] count] + 2;  // models + 添加 + 搜索
+    // v261102-1: 自主能力 — 6 rows:
+    //   0: 自主联网搜索 (toggle)
+    //   1: 自主搜索 URL (text field, blank = auto-derive from baseURL)
+    //   2: 自主搜索 API Key (text field, blank = use provider key)
+    //   3: 自主URL读取 (toggle)
+    //   4: 自主读取 URL (text field, blank = auto-derive)
+    //   5: 自主读取 API Key (text field, blank = use provider key)
+    if (section == kPESectionAutonomous) return 6;
     if (section == kPESectionDelete)  return 1;
     return 0;
 }
@@ -257,6 +278,7 @@ static NSInteger const kPESheetQuickPick = 481;
     if (section == kPESectionConn)    return NSLocalizedString(@"连接", nil);
     if (section == kPESectionTest)    return @"";
     if (section == kPESectionModels)  return NSLocalizedString(@"模型", nil);
+    if (section == kPESectionAutonomous) return NSLocalizedString(@"自主搜索与URL读取", nil);
     return @"";
 }
 
@@ -286,6 +308,10 @@ static NSInteger const kPESheetQuickPick = 481;
     }
     if (section == kPESectionModels) {
         return NSLocalizedString(@"★ = 加入加号菜单快捷列表；左滑删除单个模型；点行设为当前激活。", nil);
+    }
+    if (section == kPESectionAutonomous) {
+        // v261102-1: explain the auto-derive + key fallback rules.
+        return NSLocalizedString(@"打开后，AI 将通过供应商自带的搜索/URL 读取工具调用，不再使用 Tavily。URL 留空时自动从 BaseURL 推导（剥离 /chat/completions 后追加 /web_search 或 /fetch_url）。Key 留空时沿用本供应商的 API Key。", nil);
     }
     return @"";
 }
@@ -482,6 +508,104 @@ static NSInteger const kPESheetQuickPick = 481;
         cell.textLabel.textColor = [iOS6Theme tintColor];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+        return cell;
+    }
+
+    // v261102-1: 自主搜索与URL读取 section — 6 rows:
+    //   0/3: toggle (自主联网搜索 / 自主URL读取)
+    //   1/4: URL field (留空 → auto-derive from baseURL)
+    //   2/5: API Key field (留空 → use provider apiKey)
+    if (indexPath.section == kPESectionAutonomous) {
+        BOOL isSearch = (indexPath.row < 3);  // rows 0-2 = search, 3-5 = fetch
+        NSInteger localRow = indexPath.row % 3;
+        if (localRow == 0) {
+            // Toggle row.
+            NSString *label = isSearch
+                ? NSLocalizedString(@"自主联网搜索", nil)
+                : NSLocalizedString(@"自主URL读取", nil);
+            cell.textLabel.text = label;
+            cell.textLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
+            cell.textLabel.textColor = [iOS6Theme textColor];
+            UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectZero] autorelease];
+            BOOL on = isSearch
+                ? [[_entry objectForKey:@"autonomousWebSearch"] boolValue]
+                : [[_entry objectForKey:@"autonomousURLRead"] boolValue];
+            [sw setOn:on animated:NO];
+            sw.tag = isSearch ? 700 : 701;
+            [sw addTarget:self action:@selector(_autonomousToggle:)
+              forControlEvents:UIControlEventValueChanged];
+            CGFloat cw = cell.contentView.bounds.size.width;
+            sw.frame = CGRectMake(cw - 12 - 79, (44 - 27) / 2, 79, 27);
+            sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+            [cell.contentView addSubview:sw];
+            return cell;
+        }
+        // URL or Key text field row.
+        static CGFloat const kAutoLabelW = 70.0f;
+        NSString *label = nil;
+        UITextField *field = nil;
+        NSString *placeholder = nil;
+        BOOL secure = NO;
+        UIKeyboardType kbd = UIKeyboardTypeURL;
+        NSString *seedKey = nil;
+        if (isSearch && localRow == 1) {
+            label = NSLocalizedString(@"搜索 URL", nil);
+            seedKey = @"autonomousSearchURL";
+            placeholder = NSLocalizedString(@"留空 = 自动推导", nil);
+            field = [self _makeField:&_autoSearchURLField
+                          seedValue:[_entry objectForKey:seedKey]
+                         secureText:NO
+                       keyboardType:UIKeyboardTypeURL];
+            field.tag = 710;
+        } else if (isSearch && localRow == 2) {
+            label = NSLocalizedString(@"搜索 Key", nil);
+            seedKey = @"autonomousSearchKey";
+            placeholder = NSLocalizedString(@"留空 = 沿用 Key", nil);
+            secure = YES;
+            kbd = UIKeyboardTypeDefault;
+            field = [self _makeField:&_autoSearchKeyField
+                          seedValue:[_entry objectForKey:seedKey]
+                         secureText:YES
+                       keyboardType:UIKeyboardTypeDefault];
+            field.tag = 711;
+        } else if (!isSearch && localRow == 1) {
+            label = NSLocalizedString(@"读取 URL", nil);
+            seedKey = @"autonomousFetchURL";
+            placeholder = NSLocalizedString(@"留空 = 自动推导", nil);
+            field = [self _makeField:&_autoFetchURLField
+                          seedValue:[_entry objectForKey:seedKey]
+                         secureText:NO
+                       keyboardType:UIKeyboardTypeURL];
+            field.tag = 720;
+        } else {  // !isSearch && localRow == 2
+            label = NSLocalizedString(@"读取 Key", nil);
+            seedKey = @"autonomousFetchKey";
+            placeholder = NSLocalizedString(@"留空 = 沿用 Key", nil);
+            secure = YES;
+            kbd = UIKeyboardTypeDefault;
+            field = [self _makeField:&_autoFetchKeyField
+                          seedValue:[_entry objectForKey:seedKey]
+                         secureText:YES
+                       keyboardType:UIKeyboardTypeDefault];
+            field.tag = 721;
+        }
+        (void)secure; (void)kbd;
+        UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(12, 0, kAutoLabelW, 44)];
+        l.text = label;
+        l.backgroundColor = [UIColor clearColor];
+        l.opaque = NO;
+        l.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:14]];
+        l.textColor = [iOS6Theme textColor];
+        l.adjustsFontSizeToFitWidth = YES;
+        l.minimumScaleFactor = 0.7f;
+        l.autoresizingMask = UIViewAutoresizingFlexibleRightMargin;
+        [cell.contentView addSubview:l];
+        [l release];
+        CGFloat w = cell.contentView.bounds.size.width;
+        field.placeholder = placeholder;
+        field.frame = CGRectMake(12 + kAutoLabelW + 4, 7, w - 12 - kAutoLabelW - 4 - 12, 30);
+        field.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        [cell.contentView addSubview:field];
         return cell;
     }
 
@@ -691,6 +815,17 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     }
 }
 
+// v261102-1: autonomous search/URL toggle handler.
+- (void)_autonomousToggle:(UISwitch *)sw
+{
+    if (sw.tag == 700) {
+        [_entry setObject:[NSNumber numberWithBool:sw.on] forKey:@"autonomousWebSearch"];
+    } else if (sw.tag == 701) {
+        [_entry setObject:[NSNumber numberWithBool:sw.on] forKey:@"autonomousURLRead"];
+    }
+    [self _persist];
+}
+
 #pragma mark - Format / template pickers
 
 - (void)_formatSegChanged:(UISegmentedControl *)seg
@@ -830,6 +965,24 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         NSString *v = [textField.text stringByTrimmingCharactersInSet:
                        [NSCharacterSet whitespaceAndNewlineCharacterSet]];
         [_entry setObject:v forKey:@"apiKey"];
+    }
+    // v261102-1: autonomous search/fetch URL+key fields.
+    else if (textField.tag == 710) {
+        NSString *v = [textField.text stringByTrimmingCharactersInSet:
+                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        [_entry setObject:v forKey:@"autonomousSearchURL"];
+    } else if (textField.tag == 711) {
+        NSString *v = [textField.text stringByTrimmingCharactersInSet:
+                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        [_entry setObject:v forKey:@"autonomousSearchKey"];
+    } else if (textField.tag == 720) {
+        NSString *v = [textField.text stringByTrimmingCharactersInSet:
+                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        [_entry setObject:v forKey:@"autonomousFetchURL"];
+    } else if (textField.tag == 721) {
+        NSString *v = [textField.text stringByTrimmingCharactersInSet:
+                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        [_entry setObject:v forKey:@"autonomousFetchKey"];
     }
     [self _persist];
     // Reload to refresh the template row + displayName.

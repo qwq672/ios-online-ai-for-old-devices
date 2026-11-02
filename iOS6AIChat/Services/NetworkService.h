@@ -29,6 +29,23 @@
 @property (nonatomic, assign) id<NetworkServiceDelegate> delegate;
 @property (nonatomic, assign) BOOL thinkingEnabled;
 
+// v261102-1: per-provider autonomous capability switches + URL/key overrides.
+// When autonomousWebSearch=YES, the request declares a `web_search` tool
+// (function-calling) instead of `tavily_search`. When the AI invokes it,
+// the service POSTs to autonomousSearchURL (or a URL derived from the
+// chat base URL if autonomousSearchURL is empty). autonomousSearchKey, if
+// empty, falls back to the chat's own apiKey.
+// Same shape for autonomousURLRead / fetch_url. These take precedence
+// over the Tavily path — when either is ON, tavily_search is OMITTED
+// from the tools array (so the model routes through the provider's own
+// native search/fetch instead of Tavily).
+@property (nonatomic, assign) BOOL autonomousWebSearch;
+@property (nonatomic, assign) BOOL autonomousURLRead;
+@property (nonatomic, copy)   NSString *autonomousSearchURL;
+@property (nonatomic, copy)   NSString *autonomousSearchKey;
+@property (nonatomic, copy)   NSString *autonomousFetchURL;
+@property (nonatomic, copy)   NSString *autonomousFetchKey;
+
 // Kick off a streaming chat completion.
 - (BOOL)streamChatWithUseTransit:(BOOL)useTransit
                        transitURL:(NSString *)transitURL

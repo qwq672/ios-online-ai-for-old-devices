@@ -51,6 +51,14 @@ extern NSString *const SettingsKeyImageGenModel;
 // hides the image-model row, and sends never route to the image API.
 extern NSString *const SettingsKeyImageGenFeatureEnabled;
 
+// v261102-1: global toggles for the two lightweight tool_calls (default ON).
+// When OFF, the tool is omitted from the request `tools` array entirely —
+// the AI can't invoke get_current_time / get_device_info. Useful when a
+// provider rejects the tools array or when the user just doesn't want
+// the AI to know about device/time.
+extern NSString *const SettingsKeyEnableTimeTool;
+extern NSString *const SettingsKeyEnableDeviceInfoTool;
+
 // v261025-11: model-autonomous capability switches (default OFF).
 // "支持自主联网搜索" — the model has built-in web search (no Tavily
 // tool-calls needed); when ON we append a system-prompt hint telling the

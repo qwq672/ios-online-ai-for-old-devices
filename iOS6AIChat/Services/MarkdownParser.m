@@ -114,8 +114,10 @@ static void AppendAttrString(NSMutableAttributedString *out,
     NSUInteger i = 0;
     BOOL inFence = NO;
     BOOL inMathBlock = NO;
+    BOOL inToolBlock = NO;  // v261102-1: :::tool ... ::: gray status box
     NSMutableArray *fencedLines = [NSMutableArray array];
     NSMutableArray *mathLines = [NSMutableArray array];
+    NSMutableArray *toolLines = [NSMutableArray array];
     BOOL prevWasBlank = NO;
     BOOL inParagraph = NO;
     NSMutableArray *tableBuffer = [NSMutableArray array];
@@ -125,6 +127,37 @@ static void AppendAttrString(NSMutableAttributedString *out,
         NSString *rawLine = [lines objectAtIndex:i];
         NSString *line = [rawLine stringByTrimmingCharactersInSet:
                            [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+
+        // === Tool status fence (:::tool ... :::) =========================
+        // v261102-1: gray status box for tool-call process / done markers.
+        // Opens with `:::tool` on its own line, closes with `:::` on its
+        // own line. Inside is rendered as a single-line italic gray label
+        // with a soft gray background (visually distinct from code blocks).
+        if ([line isEqualToString:@":::tool"]) {
+            if (!inToolBlock) {
+                inToolBlock = YES;
+                [toolLines removeAllObjects];
+            } else {
+                // Nested (shouldn't happen) — just close.
+                [self _appendToolStatus:toolLines to:out baseFont:baseFont];
+                inToolBlock = NO;
+                [toolLines removeAllObjects];
+            }
+            i++;
+            continue;
+        }
+        if (inToolBlock && [line isEqualToString:@":::"]) {
+            [self _appendToolStatus:toolLines to:out baseFont:baseFont];
+            inToolBlock = NO;
+            [toolLines removeAllObjects];
+            i++;
+            continue;
+        }
+        if (inToolBlock) {
+            [toolLines addObject:line];
+            i++;
+            continue;
+        }
 
         // === Code fence toggle ============================================
         if ([line hasPrefix:@"```"]) {
@@ -626,6 +659,27 @@ static void AppendAttrString(NSMutableAttributedString *out,
     UIFont *hFont = [UIFont boldSystemFontOfSize:pt];
     AppendAttrString(out, title, hFont, [iOS6Theme textColor], nil, 0, 0);
     AppendAttrString(out, @"\n", baseFont, [iOS6Theme textColor], nil, 0, 0);
+}
+
++ (void)_appendToolStatus:(NSArray *)lines
+                       to:(NSMutableAttributedString *)out
+                 baseFont:(UIFont *)baseFont
+{
+    // v261102-1: gray box for tool-call status markers. The body is one
+    // or more short label lines ("正在搜索"xxx"…", "已获取时间" etc) —
+    // join them with " · " so multi-line markers stay compact. Italic
+    // gray text on a soft gray background, padded with blank bg lines
+    // top + bottom so the box is visually distinct from regular prose.
+    if ([lines count] == 0) return;
+    NSString *body = [lines componentsJoinedByString:@" · "];
+    if (body.length == 0) return;
+    UIFont *toolFont = [UIFont italicSystemFontOfSize:baseFont.pointSize - 1] ?: baseFont;
+    UIColor *fg = [iOS6Theme secondaryTextColor];
+    UIColor *bg = [iOS6Theme codeBackgroundColor];
+    AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
+    AppendAttrString(out, body, toolFont, fg, bg, 0, 0);
+    AppendAttrString(out, @"\n", toolFont, fg, bg, 0, 0);
+    AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
 }
 
 + (void)_appendFencedCode:(NSArray *)lines

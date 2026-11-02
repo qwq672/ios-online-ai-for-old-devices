@@ -986,6 +986,15 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     NSString *apiKey     = [conn objectForKey:@"apiKey"];
     NSString *model      = [conn objectForKey:@"model"];
     CGFloat temperature  = [[settings objectForKey:SettingsKeyTemperature] floatValue];
+    // v261102-1: per-provider autonomous capability flags + URL/key
+    // overrides. Installed on _networkService before the stream launches
+    // so the tools-array builder + the tool-call dispatcher both see them.
+    _networkService.autonomousWebSearch  = [[conn objectForKey:@"autonomousWebSearch"] boolValue];
+    _networkService.autonomousURLRead    = [[conn objectForKey:@"autonomousURLRead"] boolValue];
+    _networkService.autonomousSearchURL  = [conn objectForKey:@"autonomousSearchURL"];
+    _networkService.autonomousSearchKey  = [conn objectForKey:@"autonomousSearchKey"];
+    _networkService.autonomousFetchURL   = [conn objectForKey:@"autonomousFetchURL"];
+    _networkService.autonomousFetchKey   = [conn objectForKey:@"autonomousFetchKey"];
 
     // v261024-15: log the outgoing request for crash/error diagnosis.
     [[Logger sharedLogger] info:[NSString stringWithFormat:
@@ -1011,23 +1020,15 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
             systemPrompt];
     }
 
-    // v261025-11 (#9): model-autonomous capability hints. These target
-    // models with BUILT-IN browsing/URL-reading (no tool_calls needed) —
-    // the system prompt tells the model it may (and should) use its own
-    // abilities for fresh information instead of relying on the client's
-    // Tavily tool calls.
-    BOOL autoWeb = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelAutonomousWebSearch];
-    BOOL autoURL = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyModelAutonomousURLReading];
-    if (autoWeb) {
-        systemPrompt = [NSString stringWithFormat:
-            @"%@ You have built-in web search capability — proactively search the web for current information when it would improve your answer.",
-            systemPrompt];
-    }
-    if (autoURL) {
-        systemPrompt = [NSString stringWithFormat:
-            @"%@ You can read URLs directly — when the user mentions a link or asks about a web page, fetch and use its actual content.",
-            systemPrompt];
-    }
+    // v261025-11 (#9): model-autonomous capability hints REMOVED from
+    // the global system prompt path. The 自主联网搜索 / 自主URL读取
+    // toggles have moved to the per-provider edit page (v261102-1) —
+    // they're provider-specific capabilities (each vendor has a different
+    // search/fetch API), so they belong with the provider config, not as
+    // a global system-prompt hint. The NetworkService now declares
+    // `web_search` / `fetch_url` tools (function-calling) when the
+    // active provider has these toggles ON, and routes the AI's tool
+    // invocations through the provider's own native search/fetch API.
 
     // If web search is on, ALWAYS pre-search the user's last message and
     // inject results as a system message. This is reliable — even if the
