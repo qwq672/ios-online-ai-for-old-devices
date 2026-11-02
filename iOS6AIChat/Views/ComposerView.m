@@ -64,8 +64,10 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
         _fieldBorderUIColor = [[iOS6Theme composerFieldBorderColor] retain];
         _textView.layer.borderColor = [_fieldBorderUIColor CGColor];
         if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
+            // v261025-33: tighter insets — bottom=1 prevents the empty
+            // space below single-line text that was visible on both iOS.
             [_textView performSelector:@selector(setTextContainerInset:)
-                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(4, 6, 4, 6)]];
+                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(2, 6, 1, 6)]];
         }
         // v261025-32: removed keyboard "Done" accessory button.
         // ChatVC already has tap-to-dismiss on the table view background.

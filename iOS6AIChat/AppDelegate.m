@@ -102,20 +102,21 @@
     for (NSUInteger i = 0; i < [navs count]; i++) {
         UINavigationController *nav = [navs objectAtIndex:i];
         if (![nav isKindOfClass:[UINavigationController class]]) continue;
-        // v261025-31: iOS 7+ — DON'T touch system controls at all.
-        // No barStyle, no tintColor, no backgroundImage. Let iOS 7 render
-        // its native flat translucent navbar with default blue buttons.
-        // Setting barStyle=Default + tintColor=blue on iOS 7 makes the bar
-        // blue-tinted (not the desired flat white). Only iOS 6 needs styling.
+        // v261025-33: iOS 6 — full styling (backgroundImage + barStyle + tintColor).
+        // iOS 7 — only barStyle (BarStyleBlack = dark translucent for dark mode,
+        // BarStyleDefault = light translucent for light mode). No backgroundImage
+        // or tintColor — let system render flat. barStyle alone controls the
+        // light/dark appearance of the translucent bar.
         if (!IsIOS7OrLater()) {
             UIImage *navBg = [iOS6Theme barBackgroundImageWithHeight:44];
             if (navBg) {
                 [nav.navigationBar setBackgroundImage:navBg forBarMetrics:UIBarMetricsDefault];
             }
-            nav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
             nav.navigationBar.tintColor = [iOS6Theme barItemTintColor];
             nav.navigationBar.translucent = NO;
         }
+        // barStyle set on BOTH iOS versions — controls dark/light on both.
+        nav.navigationBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
     }
 }
 
