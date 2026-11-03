@@ -1430,21 +1430,25 @@
             }
         }
         // Append tool results to messages.
-        for (NSDictionary *tr in toolResults) {
+        // v261103-5: FIX "tool call stops answering" bug — append a nudge
+        // to the LAST tool result's content (not as a separate user msg,
+        // which some models interpret as a new question). The nudge tells
+        // the AI to produce a final answer. Without this, DeepSeek and
+        // some other models see the tool results and generate EMPTY content
+        // (they "think" but don't answer), triggering the "空回复" error.
+        NSInteger trCount = [toolResults count];
+        for (NSInteger ti = 0; ti < trCount; ti++) {
+            NSMutableDictionary *tr = [NSMutableDictionary dictionaryWithDictionary:[toolResults objectAtIndex:ti]];
+            if (ti == trCount - 1) {
+                // Last tool result — append the nudge to its content.
+                NSString *origContent = [tr objectForKey:@"content"] ?: @"";
+                NSString *nudged = [NSString stringWithFormat:
+                    @"%@\n\n---\nPlease now provide your final answer to the user based on the above tool results.",
+                    origContent];
+                [tr setObject:nudged forKey:@"content"];
+            }
             [newMessages addObject:tr];
         }
-        // v261103-5: FIX "tool call stops answering" bug — after tool
-        // results, append a system-level nudge telling the AI to respond.
-        // Without this, some models (especially DeepSeek) see the tool
-        // results and generate EMPTY content (they "think" but don't
-        // answer), triggering the "空回复" error path.
-        // The nudge is a user-role message (not system — system messages
-        // mid-conversation can confuse some models) that says "based on
-        // the tool results above, please give your answer to the user".
-        [newMessages addObject:@{
-            @"role": @"user",
-            @"content": @"Please provide your final answer based on the tool results above. Do not call more tools unless necessary."
-        }];
         self.baseMessages = newMessages;
 
         // v261103-1: REMOVED inline result summary ("[结果] %@\n\n").

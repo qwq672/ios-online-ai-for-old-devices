@@ -1462,7 +1462,15 @@ didFinishForConversationID:(NSString *)conversationID
     // already logged the raw body head for diagnosis) instead of silently
     // showing a blank/“…” bubble.
     if (fullText.length == 0) {
-        fullText = NSLocalizedString(@"⚠️ 服务器返回了空回复（详见日志——可能为中转/上游异常）", nil);
+        // v261103-5: if the AI produced thinking content but no answer
+        // (common after tool calls — the AI "thought" but didn't respond),
+        // show the thinking content instead of the generic "空回复" error.
+        NSString *thinking = [svc accumulatedThinking];
+        if (thinking && thinking.length > 0) {
+            fullText = [NSString stringWithFormat:@"（AI 完成了推理但未生成回复。推理内容：）\n\n%@", thinking];
+        } else {
+            fullText = NSLocalizedString(@"⚠️ 服务器返回了空回复（详见日志——可能为上游异常）", nil);
+        }
     }
     [_conversation updateLastAssistantMessageContent:fullText ?: @""];
     // Attach accumulated thinking text to the message — preserves it
