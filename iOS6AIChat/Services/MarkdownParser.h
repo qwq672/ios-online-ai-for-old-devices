@@ -25,4 +25,15 @@
                                        baseFont:(UIFont *)baseFont
                                           width:(CGFloat)width;
 
+// v261103-1: fast-path variant for streaming. When fast=YES, skips the
+// expensive passes that aren't visually critical during streaming:
+//   - table parsing (rare, complex)
+//   - math block parsing (rare)
+//   - emoji-font attribute application (O(n) per render)
+// The full path runs once on completion to restore all formatting.
++ (NSAttributedString *)attributedStringFromMarkdown:(NSString *)markdown
+                                       baseFont:(UIFont *)baseFont
+                                          width:(CGFloat)width
+                                          fast:(BOOL)fast;
+
 @end

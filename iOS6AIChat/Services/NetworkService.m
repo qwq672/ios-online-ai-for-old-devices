@@ -1159,24 +1159,22 @@
             if (![fnName isKindOfClass:[NSString class]]) fnName = @"";
 
             // === get_current_time =========================================
-            // Returns: {iso8601, timezone, day_of_week}
-            // No parameters needed.
+            // v261103-1: 返回 PLAIN TEXT (不是 JSON) 给模型。原版返回 JSON,
+            // 模型容易在回复里原样 echo, 用户看到一堆 JSON 混在对话里很乱。
+            // 现在用自然语言格式, 模型 echo 也只是一句可读的话。
             if ([fnName isEqualToString:@"get_current_time"]) {
                 NSDate *now = [NSDate date];
                 NSDateFormatter *isoFmt = [[[NSDateFormatter alloc] init] autorelease];
-                [isoFmt setDateFormat:@"yyyy-MM-dd'T'HH:mm:ssZZZZ"];
+                [isoFmt setDateFormat:@"yyyy-MM-dd HH:mm:ss"];
                 NSString *iso = [isoFmt stringFromDate:now];
                 NSDateFormatter *dowFmt = [[[NSDateFormatter alloc] init] autorelease];
                 [dowFmt setDateFormat:@"EEEE"];
                 NSString *dow = [dowFmt stringFromDate:now];
                 NSTimeZone *tz = [NSTimeZone systemTimeZone];
                 NSString *contentStr = [NSString stringWithFormat:
-                    @"{\n  \"iso8601\": \"%@\",\n  \"timezone\": \"%@\",\n  \"timezone_abbreviation\": \"%@\",\n  \"day_of_week\": \"%@\",\n  \"unix_timestamp\": %.0f\n}",
-                    iso,
-                    [tz name],
-                    [tz abbreviation],
-                    dow,
-                    [now timeIntervalSince1970]];
+                    @"Current time: %@ (%@, UTC%@). Timezone: %@.",
+                    iso, dow, [tz abbreviation] ?: @"?",
+                    [tz name]];
                 @synchronized(toolResults) {
                     [toolResults addObject:@{
                         @"role": @"tool",
@@ -1188,9 +1186,7 @@
             }
 
             // === get_device_info ==========================================
-            // Returns: {model, hardware_identifier, system_version, battery,
-            //           screen_width, screen_height, language, locale}
-            // No parameters needed.
+            // v261103-1: 同样改 PLAIN TEXT。
             if ([fnName isEqualToString:@"get_device_info"]) {
                 UIDevice *device = [UIDevice currentDevice];
                 [device setBatteryMonitoringEnabled:YES];
@@ -1211,8 +1207,6 @@
                 }
                 // Get hardware identifier (e.g. "iPhone4,1") via sysctl.
                 NSString *hwMachine = @"unknown";
-                // v261024-19: NO @try — sysctl returns 0 size on failure;
-                // fall-through to "unknown" is the same effect.
                 size_t size = 0;
                 sysctlbyname("hw.machine", NULL, &size, NULL, 0);
                 if (size > 0) {
@@ -1230,18 +1224,15 @@
                 NSLocale *locale = [NSLocale currentLocale];
                 NSString *localeId = [locale localeIdentifier] ?: @"unknown";
                 NSString *contentStr = [NSString stringWithFormat:
-                    @"{\n  \"model\": \"%@\",\n  \"hardware_identifier\": \"%@\",\n  \"system_version\": \"%@\",\n  \"system_name\": \"%@\",\n  \"battery_level\": \"%@\",\n  \"battery_state\": \"%@\",\n  \"screen_width\": %.0f,\n  \"screen_height\": %.0f,\n  \"screen_scale\": %.1f,\n  \"language\": \"%@\",\n  \"locale\": \"%@\"\n}",
+                    @"Device: %@ (hardware %@). System: %@ %@. Battery: %@ (%@). Screen: %.0fx%.0f @%.1fx. Language: %@. Locale: %@.",
                     [device model] ?: @"unknown",
                     hwMachine,
+                    [device systemName] ?: @"iOS",
                     [device systemVersion] ?: @"unknown",
-                    [device systemName] ?: @"unknown",
-                    batteryStr,
-                    batteryStateStr,
-                    screen.size.width,
-                    screen.size.height,
+                    batteryStr, batteryStateStr,
+                    screen.size.width, screen.size.height,
                     [[UIScreen mainScreen] scale],
-                    lang,
-                    localeId];
+                    lang, localeId];
                 @synchronized(toolResults) {
                     [toolResults addObject:@{
                         @"role": @"tool",
@@ -1497,22 +1488,17 @@
         }
         self.baseMessages = newMessages;
 
-        // v261025-13: capture search result summaries for inline display.
-        NSMutableArray *resultSummaries = [NSMutableArray array];
-        BOOL showSearchResults = NO;  // default OFF
-        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"showSearchResults"]) {
-            showSearchResults = [[NSUserDefaults standardUserDefaults] boolForKey:@"showSearchResults"];
-        }
-        if (showSearchResults) {
-            for (NSDictionary *tr in toolResults) {
-                NSString *content = [tr objectForKey:@"content"];
-                if ([content isKindOfClass:[NSString class]] && content.length > 0) {
-                    NSString *summary = content.length > 300 ?
-                        [NSString stringWithFormat:@"%@…", [content substringToIndex:300]] : content;
-                    [resultSummaries addObject:summary];
-                }
-            }
-        }
+        // v261103-1: REMOVED inline result summary ("[结果] %@\n\n").
+        // 原逻辑: 当 showSearchResults toggle ON 时, 把 tool result content
+        // 截 300 字内联输出到 _accumulated — 用户看到 JSON / 搜索结果摘要
+        // 直接混在对话里。即使 toggle OFF, 模型仍可能 echo 工具返回的 JSON
+        // 内容到自己的回复里。彻底解决:
+        //   1. get_current_time / get_device_info 已改返回 PLAIN TEXT
+        //   2. web_search / fetch_url 的 result 只发给模型, 不再内联到 chat
+        //   3. 用户看到的只有 :::tool 灰框 (已搜索 / 已读取 / 已获取时间)
+        // 旧的 showSearchResults toggle 不再读取 (用户即使打开也不显示),
+        // 设置页那个 toggle 行后续可以移除。
+
         // v261102-1: per-tool "done" markers — always show (gated by
         // showToolCalls, same as the pre-call markers). Per spec:
         //   search    → 已搜索"xxx"
@@ -1564,23 +1550,13 @@
         // Re-launch stream on main — segmented thinking: preserve
         // _accumulated so pre-tool-call text + markers stay visible.
         dispatch_async(dispatch_get_main_queue(), ^{
-            // v261102-1: append per-tool "done" markers BEFORE the
-            // showSearchResults block (so order is: pre-marker → done-marker →
-            // optional result summary → AI continues). The done markers
-            // come from the parent scope's doneMarkers array.
+            // v261103-1: append per-tool "done" markers (gray :::tool box)
+            // — the ONLY visible artifact of the tool call. Tool result
+            // content (JSON or text) is fed back to the model in the
+            // messages array but NEVER shown in the chat bubble.
             if ([doneMarkers count] > 0) {
                 for (NSString *m in doneMarkers) {
                     [self->_accumulated appendString:m];
-                }
-                if ([self->_delegate respondsToSelector:@selector(networkService:didReceiveChunkForConversationID:fullText:)]) {
-                    [self->_delegate networkService:self
-                        didReceiveChunkForConversationID:self->_conversationID
-                                             fullText:self->_accumulated];
-                }
-            }
-            if (showSearchResults && [resultSummaries count] > 0) {
-                for (NSString *summary in resultSummaries) {
-                    [self->_accumulated appendFormat:@"[结果] %@\n\n", summary];
                 }
                 if ([self->_delegate respondsToSelector:@selector(networkService:didReceiveChunkForConversationID:fullText:)]) {
                     [self->_delegate networkService:self
@@ -2756,8 +2732,10 @@
     if (!query || query.length == 0) return nil;
     NSString *endpoint = self.autonomousSearchURL;
     if (![endpoint isKindOfClass:[NSString class]] || endpoint.length == 0) {
-        // Derive from the chat baseURL: strip trailing /chat/completions
-        // (or /v1/chat/completions) and append /web_search.
+        // Derive from the chat baseURL + provider template:
+        //   zhipu:    strip /chat/completions → append /web_search
+        //   deepseek: strip /chat/completions → append /tools/search
+        //   others:   strip /chat/completions → append /web_search (default OpenAI-compat)
         NSString *base = self.baseURL;
         if (![base isKindOfClass:[NSString class]] || base.length == 0) {
             if (error) *error = [NSError errorWithDomain:@"iOS6AIChat" code:400
@@ -2772,12 +2750,20 @@
         } else if ([trimmed hasSuffix:@"/v1/chat/completions"]) {
             trimmed = [trimmed substringToIndex:trimmed.length - @"/v1/chat/completions".length];
         }
-        endpoint = [trimmed stringByAppendingPathComponent:@"web_search"];
+        // Provider-specific path suffix (DeepSeek's API uses /tools/search
+        // instead of /web_search; user-reported bug).
+        NSString *suffix = [self.provider isEqualToString:ProviderIDDeepSeek]
+            ? @"tools/search"
+            : @"web_search";
+        endpoint = [trimmed stringByAppendingPathComponent:suffix];
     }
     NSString *apiKey = self.autonomousSearchKey;
     if (![apiKey isKindOfClass:[NSString class]] || apiKey.length == 0) {
         apiKey = self.apiKey;
     }
+    // Body: union of Zhipu + DeepSeek schemas (each API ignores unknown fields).
+    //   Zhipu:   { search_query, search_engine, search_intent, count, content_size }
+    //   DeepSeek:{ query, count, need_content }
     NSDictionary *body = @{
         @"query":          query,
         @"search_query":   query,
@@ -2858,6 +2844,10 @@
     if (!urlStr || urlStr.length == 0) return nil;
     NSString *endpoint = self.autonomousFetchURL;
     if (![endpoint isKindOfClass:[NSString class]] || endpoint.length == 0) {
+        // Derive from baseURL + provider template:
+        //   zhipu:    strip /chat/completions → append /fetch_url
+        //   deepseek: strip /chat/completions → append /tools/fetch
+        //   others:   strip /chat/completions → append /fetch_url (default)
         NSString *base = self.baseURL;
         if (![base isKindOfClass:[NSString class]] || base.length == 0) {
             if (error) *error = [NSError errorWithDomain:@"iOS6AIChat" code:400
@@ -2871,7 +2861,11 @@
         } else if ([trimmed hasSuffix:@"/v1/chat/completions"]) {
             trimmed = [trimmed substringToIndex:trimmed.length - @"/v1/chat/completions".length];
         }
-        endpoint = [trimmed stringByAppendingPathComponent:@"fetch_url"];
+        // Provider-specific path suffix (DeepSeek's API uses /tools/fetch).
+        NSString *suffix = [self.provider isEqualToString:ProviderIDDeepSeek]
+            ? @"tools/fetch"
+            : @"fetch_url";
+        endpoint = [trimmed stringByAppendingPathComponent:suffix];
     }
     NSString *apiKey = self.autonomousFetchKey;
     if (![apiKey isKindOfClass:[NSString class]] || apiKey.length == 0) {

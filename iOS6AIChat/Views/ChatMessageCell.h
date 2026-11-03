@@ -66,6 +66,17 @@
 // whole height cache; heights rebuild lazily on the next layout pass.
 + (void)invalidateHeightCache;
 
+// v261103-1: streaming-mode signaling for the render cache.
+// ChatViewController calls +markMessageStreaming: when a message starts
+// streaming and +markMessageDone: when it finishes. During streaming,
+// the cell uses a FAST render path (no emoji-font pass, no user-color
+// remap, no table/math-block parsing) — this is the root-cause fix for
+// long-content lag during streaming. The slow / full render path runs
+// ONCE on completion (and on subsequent reloads of the same content).
++ (void)markMessageStreaming:(NSString *)messageID;
++ (void)markMessageDone:(NSString *)messageID;
++ (BOOL)isMessageStreaming:(NSString *)messageID;
+
 - (void)applyMessage:(Message *)message;
 
 @end

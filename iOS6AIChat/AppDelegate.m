@@ -147,6 +147,16 @@
 - (void)applicationWillResignActive:(UIApplication *)application {}
 - (void)applicationDidEnterBackground:(UIApplication *)application {}
 - (void)applicationWillEnterForeground:(UIApplication *)application {}
+// v261103-1: clear the badge + cancel any pending local notifications
+// when the user returns to the app — they've seen the alert, no need
+// to keep the badge or pile up notifications.
+- (void)applicationDidBecomeActive:(UIApplication *)application {
+    application.applicationIconBadgeNumber = 0;
+    // Don't cancelAllLocalNotifications — that wipes EVERYTHING
+    // (including ones the user might have scheduled elsewhere).
+    // We just clear the badge; the scheduled ones fire once and are
+    // auto-removed by iOS after they fire.
+}
 - (void)applicationWillTerminate:(UIApplication *)application {}
 
 - (void)dealloc

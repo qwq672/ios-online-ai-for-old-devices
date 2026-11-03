@@ -48,20 +48,20 @@ static NSString * const kHexLightCodeBorder     = @"#D0D0D0";
 // (#0F1A2E). This gives a true "dark mode" feel rather than the
 // previous navy-tinted dark mode.
 static NSString * const kHexDarkTint            = @"#1E3A8A";  // deep navy (reverted from #000000)
-static NSString * const kHexDarkNavbarTop       = @"#0A0A0A";  // near-black grey (was #0F1A2E navy-black)
+static NSString * const kHexDarkNavbarTop       = @"#050505";  // v261103-1: deeper black (was #0A0A0A)
 static NSString * const kHexDarkNavbarBottom    = @"#000000";  // pure black
-static NSString * const kHexDarkTabbarTop        = @"#0A0A0A";  // near-black grey
+static NSString * const kHexDarkTabbarTop        = @"#050505";  // v261103-1: deeper (was #0A0A0A)
 static NSString * const kHexDarkTabbarBottom     = @"#000000";  // pure black
-static NSString * const kHexDarkPinstripe        = @"#1A1A1A";  // dark grey (was #1A2540 navy-grey)
-static NSString * const kHexDarkPinstripeBG     = @"#0A0A0A";  // near-black bg (was #0F1A2E navy-black)
-static NSString * const kHexDarkBubbleUser      = @"#1A1A1A";  // dark grey (was #1E3A5F navy-tinted)
-static NSString * const kHexDarkBubbleUserB     = @"#2A2A2A";  // grey border (was #2E4A7F navy)
-static NSString * const kHexDarkBubbleAI        = @"#0F0F0F";  // near-black (was #0F1A2E navy-black)
-static NSString * const kHexDarkBubbleAIB       = @"#2A2A2A";  // grey border (was #2E4A7F)
-static NSString * const kHexDarkText            = @"#E8E8F0";  // off-white with slight cool tint
-static NSString * const kHexDarkTextSecondary   = @"#8B95B0";  // muted blue-grey
-static NSString * const kHexDarkCodeBG          = @"#1A1A1A";  // dark grey code bg
-static NSString * const kHexDarkCodeBorder      = @"#2A2A2A";
+static NSString * const kHexDarkPinstripe        = @"#151515";  // v261103-1: darker grey (was #1A1A1A)
+static NSString * const kHexDarkPinstripeBG     = @"#070707";  // v261103-1: deeper bg (was #0A0A0A)
+static NSString * const kHexDarkBubbleUser      = @"#151515";  // v261103-1: darker grey (was #1A1A1A)
+static NSString * const kHexDarkBubbleUserB     = @"#252525";  // v261103-1: darker border (was #2A2A2A)
+static NSString * const kHexDarkBubbleAI        = @"#080808";  // v261103-1: near-black (was #0F0F0F)
+static NSString * const kHexDarkBubbleAIB       = @"#252525";  // v261103-1: darker border (was #2A2A2A)
+static NSString * const kHexDarkText            = @"#D8D8E0";  // v261103-1: dimmer off-white (was #E8E8F0) — reduces eye strain on darker bg
+static NSString * const kHexDarkTextSecondary   = @"#7A8298";  // v261103-1: dimmer blue-grey (was #8B95B0)
+static NSString * const kHexDarkCodeBG          = @"#111111";  // v261103-1: darker code bg (was #1A1A1A)
+static NSString * const kHexDarkCodeBorder      = @"#252525";  // v261103-1: darker (was #2A2A2A)
 
 // Additional dark/light form-control colors for dark mode UI fix.
 // Light: standard iOS form controls (white bg / light grey)
@@ -79,18 +79,18 @@ static NSString * const kHexLightButtonSel       = @"#D0D0D0";
 static NSString * const kHexLightThinkingBG      = @"#F7F7F7";
 static NSString * const kHexLightThinkingBorder  = @"#C8C8C8";
 
-static NSString * const kHexDarkInputBG          = @"#1A1A1A";   // dark grey fill (was navy)
-static NSString * const kHexDarkInputBorder      = @"#2A2A2A";
-static NSString * const kHexDarkInputText        = @"#E8E8F0";
-static NSString * const kHexDarkPlaceholder       = @"#8B95B0";
-static NSString * const kHexDarkControlBG        = @"#0A0A0A";
+static NSString * const kHexDarkInputBG          = @"#111111";   // v261103-1: darker fill (was #1A1A1A)
+static NSString * const kHexDarkInputBorder      = @"#252525";   // v261103-1: darker (was #2A2A2A)
+static NSString * const kHexDarkInputText        = @"#D8D8E0";   // v261103-1: dimmer (was #E8E8F0)
+static NSString * const kHexDarkPlaceholder       = @"#7A8298";   // v261103-1: dimmer (was #8B95B0)
+static NSString * const kHexDarkControlBG        = @"#050505";   // v261103-1: deeper (was #0A0A0A)
 static NSString * const kHexDarkControlSel        = @"#1E3A8A";   // selected = deep navy tint
-static NSString * const kHexDarkControlNorm      = @"#1A1A1A";
-static NSString * const kHexDarkHairline         = @"#2A2A2A";
-static NSString * const kHexDarkButtonBG         = @"#1A1A1A";
+static NSString * const kHexDarkControlNorm      = @"#151515";   // v261103-1: darker (was #1A1A1A)
+static NSString * const kHexDarkHairline         = @"#252525";   // v261103-1: darker (was #2A2A2A)
+static NSString * const kHexDarkButtonBG         = @"#151515";   // v261103-1: darker (was #1A1A1A)
 static NSString * const kHexDarkButtonSel        = @"#1E3A8A";   // active button = deep navy tint
-static NSString * const kHexDarkThinkingBG       = @"#1A1A1A";
-static NSString * const kHexDarkThinkingBorder   = @"#2A2A2A";
+static NSString * const kHexDarkThinkingBG       = @"#111111";   // v261103-1: darker (was #1A1A1A)
+static NSString * const kHexDarkThinkingBorder   = @"#252525";   // v261103-1: darker (was #2A2A2A)
 
 @implementation iOS6Theme
 
@@ -787,61 +787,18 @@ static const uint8_t kNoiseCells[24] = {
 };
 
 // --- Messages-style chat backdrop ---------------------------------------
-// A 16x16pt paper tile: flat base + 4 hairline pinstripes + sparse grain
-// dots. Repeats via colorWithPatternImage. Light = dove-blue paper
-// (IMG_0446 reference), dark = charcoal grain.
+// v261103-1: chat background is now ALWAYS a flat solid color (was a
+// pinstripe pattern on iOS 6). User feedback: the pinstripe texture
+// clashes with solid-color AI text/bubble backgrounds — looks "突兀".
+// Solid color matches the bubble aesthetic and reduces visual noise.
+// Dark mode tone: deeper black-grey (#070707) — darker than the previous
+// #0A0A0A for less eye strain at night.
 + (UIColor *)chatBackgroundPatternColor
 {
-    // v261025-31: iOS 7 — flat solid background (no pinstripe pattern).
-    if (IsIOS7OrLater()) {
-        return [self isDarkMode]
-            ? [UIColor colorWithRed:0.11f green:0.11f blue:0.11f alpha:1.0f]
-            : [UIColor whiteColor];
-    }
-    NSString *key = [self isDarkMode] ? @"chatbg_pattern_dark"
-                                      : @"chatbg_pattern_light";
-    NSMutableDictionary *cache = [self _themeImageCache];
-    UIColor *cached = [cache objectForKey:key];
-    if (cached) return cached;
-
-    CGFloat tile = 16.0f;
-    CGFloat scale = [UIScreen mainScreen].scale;
-    if (scale < 1) scale = 1;
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(tile, tile), NO, scale);
-    CGContextRef ctx = UIGraphicsGetCurrentContext();
-    if (!ctx) {
-        UIGraphicsEndImageContext();
-        return [self pinstripeBackground];   // graceful fallback
-    }
-    BOOL dark = [self isDarkMode];
-
-    // Base fill.
-    CGContextSetFillColorWithColor(ctx, [self colorWithHex:
-        (dark ? @"#17171A" : @"#D7DEE6")].CGColor);
-    CGContextFillRect(ctx, CGRectMake(0, 0, tile, tile));
-
-    // Fine horizontal pinstripes every 4pt — reads as laid paper fibres.
-    CGContextSetFillColorWithColor(ctx, [UIColor colorWithWhite:1.0f
-        alpha:(dark ? 0.02f : 0.28f)].CGColor);
-    for (CGFloat y = 0.5f; y < tile; y += 4.0f) {
-        CGContextFillRect(ctx, CGRectMake(0, y, tile, 0.5f));
-    }
-
-    // Sparse grain dots (deterministic table above).
-    CGContextSetFillColorWithColor(ctx, [UIColor colorWithWhite:0.0f
-        alpha:(dark ? 0.10f : 0.035f)].CGColor);
-    for (int i = 0; i < 24; i += 2) {
-        CGFloat px = (CGFloat)kNoiseCells[i] * (tile / 16.0f);
-        CGFloat py = (CGFloat)kNoiseCells[i + 1] * (tile / 16.0f);
-        CGContextFillRect(ctx, CGRectMake(px, py, 1.0f / scale, 1.0f / scale));
-    }
-
-    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    if (!img) return [self pinstripeBackground];
-    UIColor *pattern = [UIColor colorWithPatternImage:img];
-    [cache setObject:pattern forKey:key];
-    return pattern;
+    // Solid flat color — both iOS 6 and iOS 7.
+    return [self isDarkMode]
+        ? [UIColor colorWithRed:0.027f green:0.027f blue:0.027f alpha:1.0f]   // #070707
+        : [UIColor colorWithWhite:0.93f alpha:1.0f];                            // #EDEDED
 }
 
 // --- Pre-rendered stretchable chat bubble -------------------------------

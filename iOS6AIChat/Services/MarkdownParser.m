@@ -82,6 +82,20 @@ static void AppendAttrString(NSMutableAttributedString *out,
                                           baseFont:(UIFont *)baseFont
                                              width:(CGFloat)width
 {
+    // Backwards-compat entry point — calls the fast-path variant with
+    // fast=NO (full features). Existing callers (height calc, test code)
+    // keep the slow path; only the streaming render path passes fast=YES.
+    return [self attributedStringFromMarkdown:markdown
+                                      baseFont:baseFont
+                                         width:width
+                                         fast:NO];
+}
+
++ (NSAttributedString *)attributedStringFromMarkdown:(NSString *)markdown
+                                          baseFont:(UIFont *)baseFont
+                                             width:(CGFloat)width
+                                             fast:(BOOL)fast
+{
     if (!markdown || markdown.length == 0) {
         return [[[NSAttributedString alloc] initWithString:@""] autorelease];
     }
@@ -182,7 +196,11 @@ static void AppendAttrString(NSMutableAttributedString *out,
         }
 
         // === Math block toggle ($$...$$) =================================
-        if ([line hasPrefix:@"$$"]) {
+        // v261103-1: skip math block parsing in fast mode (rare + complex).
+        // Math blocks are flushed at end-of-input if `inMathBlock` is true,
+        // so a streaming chunk that opens $$ but doesn't close it just
+        // renders as plain text — the final full-path render handles it.
+        if (!fast && [line hasPrefix:@"$$"]) {
             if (!inMathBlock) {
                 inMathBlock = YES;
                 [mathLines removeAllObjects];
@@ -216,7 +234,8 @@ static void AppendAttrString(NSMutableAttributedString *out,
 
         // === Table detection =============================================
         // A table row starts with | and ends with |.
-        if ([line hasPrefix:@"|"] && [line hasSuffix:@"|"]) {
+        // v261103-1: skip table parsing in fast mode (rare + complex).
+        if (!fast && [line hasPrefix:@"|"] && [line hasSuffix:@"|"]) {
             if (!inTable) {
                 inTable = YES;
                 [tableBuffer removeAllObjects];
@@ -319,52 +338,145 @@ static void AppendAttrString(NSMutableAttributedString *out,
         }
 
         // === Unordered list item =========================================
-        if ([line hasPrefix:@"- "]
-            || [line hasPrefix:@"* "]
-            || [line hasPrefix:@"+ "]) {
-            NSString *body = [line substringFromIndex:2];
-            [self _appendInlineMarkup:body
-                                   to:out
-                             baseFont:baseFont
-                              prefix:@"•  "];
-            // v261025-13: list items need explicit trailing newline —
-            // _appendInlineMarkup doesn't append one (only the paragraph
-            // case does). Without this, list items run together.
-            [out appendAttributedString:[[[NSAttributedString alloc]
-                                            initWithString:@"\n"] autorelease]];
-            i++;
-            continue;
+        // v261103-1: 列表渲染 bug 修复 — 之前用 `line` (已 trim) 检查 prefix,
+        // 导致 `  - item` 这种带缩进的列表项被 trim 成 `- item` 后才匹配,
+        // 看似没问题, 但实际连带导致后续 `inParagraph` 状态错乱 + 缩进嵌套
+        // 列表无法识别。现在用 rawLine 检测, 同时支持多种 bullet 字符。
+        // 支持的 bullet:
+        //   - * +  → 标准 markdown
+        //   • ◦ ○ ● ◇ ◆ → AI 常用的 unicode bullet (DeepSeek/GLM 经常用)
+        BOOL isUnorderedListItem = NO;
+        NSString *unorderedBody = nil;
+        NSString *unorderedPrefix = nil;
+        // 标准 markdown bullet (允许 0-3 个前导空格, 不能是 4+ 否则变成 code block)
+        NSArray *unorderedBullets = @[@"- ", @"* ", @"+ "];
+        for (NSString *b in unorderedBullets) {
+            if ([rawLine hasPrefix:b]) {
+                // 排除 4+ 空格缩进 (那是 indented code block, 不是 list)
+                NSRange leadingWS = [rawLine rangeOfString:@"^ {0,3}"
+                    options:NSRegularExpressionSearch];
+                (void)leadingWS;
+                if ([rawLine length] >= 4 && [[rawLine substringToIndex:4]
+                    isEqualToString:@"    "]) {
+                    // 4-space indent → not a list (let it fall through)
+                } else {
+                    isUnorderedListItem = YES;
+                    NSUInteger prefixLen = 0;
+                    while (prefixLen < [rawLine length] && [rawLine characterAtIndex:prefixLen] == ' ') prefixLen++;
+                    unorderedBody = [rawLine substringFromIndex:prefixLen + 2];
+                    NSString *indent = [rawLine substringToIndex:prefixLen];
+                    unorderedPrefix = [NSString stringWithFormat:@"%@•  ", indent];
+                }
+                break;
+            }
         }
-        // Indented unordered bullet.
-        if ([line hasPrefix:@"    - "] || [line hasPrefix:@"  - "]) {
-            NSString *body = [line stringByTrimmingCharactersInSet:
-                              [NSCharacterSet characterSetWithCharactersInString:@" "]];
-            body = [body substringFromIndex:2];
-            [self _appendInlineMarkup:body
+        // Unicode bullet (• ◦ ○ ● ◇ ◆ 等) — 整行 trim 后以这些字符开头
+        if (!isUnorderedListItem) {
+            unichar firstChar = (line.length > 0) ? [line characterAtIndex:0] : 0;
+            if (firstChar == 0x2022 /* • */ || firstChar == 0x25CB /* ○ */ ||
+                firstChar == 0x25CF /* ● */ || firstChar == 0x25C6 /* ◆ */ ||
+                firstChar == 0x25C7 /* ◇ */ || firstChar == 0x25E6 /* ◦ */ ||
+                firstChar == 0x2023 /* ‣ */) {
+                // 后面跟空格或直接是文字
+                if (line.length > 1) {
+                    unichar nextC = [line characterAtIndex:1];
+                    if (nextC == ' ' || nextC == '\t') {
+                        isUnorderedListItem = YES;
+                        unorderedBody = [line substringFromIndex:2];
+                        // strip trailing whitespace
+                        unorderedBody = [unorderedBody stringByTrimmingCharactersInSet:
+                            [NSCharacterSet whitespaceCharacterSet]];
+                        unorderedPrefix = @"•  ";
+                    } else {
+                        // 紧贴文字也接受 (•item)
+                        isUnorderedListItem = YES;
+                        unorderedBody = [line substringFromIndex:1];
+                        unorderedPrefix = @"•  ";
+                    }
+                }
+            }
+        }
+        if (isUnorderedListItem) {
+            // 段落 → 列表转换时插入空行, 让前面段落的换行符生效。
+            if (inParagraph) {
+                [out appendAttributedString:[[[NSAttributedString alloc]
+                                                initWithString:@"\n"] autorelease]];
+                inParagraph = NO;
+            }
+            [self _appendInlineMarkup:unorderedBody
                                    to:out
                              baseFont:baseFont
-                              prefix:@"   ◦  "];
+                              prefix:unorderedPrefix];
+            // v261025-13: list items need explicit trailing newline.
             [out appendAttributedString:[[[NSAttributedString alloc]
                                             initWithString:@"\n"] autorelease]];
             i++;
             continue;
         }
 
-        // === Ordered list item (1. / 2. / ...) ==========================
+        // === Ordered list item (1. / 2. / 1、 / 1) / 1） etc) ============
+        // v261103-1: 扩展 ordered list 支持, 兼容 AI 输出的多种枚举格式:
+        //   1. xxx   → 标准 markdown (digit + period + space)
+        //   1、 xxx  → 中文风格 (digit + ideographic comma)
+        //   1) xxx   → 西文括号
+        //   1） xxx  → 中文全角括号
+        //   ① ② ③ → 圆圈数字 (单字符前缀, 后跟空格或紧贴)
+        BOOL isOrderedListItem = NO;
+        NSString *orderedBody = nil;
+        NSString *orderedPrefix = nil;
         NSRegularExpression *orderedRegex = [NSRegularExpression
-            regularExpressionWithPattern:@"^(\\d+)\\.\\s"
+            regularExpressionWithPattern:@"^(\\d+)\\.(\\s|、)"
                                   options:0 error:NULL];
         NSTextCheckingResult *ordMatch = [orderedRegex firstMatchInString:line
                                                                     options:0
                                                                       range:NSMakeRange(0, line.length)];
         if (ordMatch) {
             NSString *numStr = [line substringWithRange:[ordMatch rangeAtIndex:1]];
-            NSString *body = [line substringFromIndex:ordMatch.range.location + ordMatch.range.length];
-            NSString *prefix = [NSString stringWithFormat:@"%@.  ", numStr];
-            [self _appendInlineMarkup:body
+            NSUInteger bodyStart = ordMatch.range.location + ordMatch.range.length;
+            orderedBody = [line substringFromIndex:bodyStart];
+            orderedPrefix = [NSString stringWithFormat:@"%@.  ", numStr];
+            isOrderedListItem = YES;
+        }
+        if (!isOrderedListItem) {
+            // 1) / 1） style
+            NSRegularExpression *parenRegex = [NSRegularExpression
+                regularExpressionWithPattern:@"^(\\d+)[)）](\\s*)"
+                                      options:0 error:NULL];
+            NSTextCheckingResult *parenMatch = [parenRegex firstMatchInString:line
+                                                                        options:0
+                                                                          range:NSMakeRange(0, line.length)];
+            if (parenMatch) {
+                NSString *numStr = [line substringWithRange:[parenMatch rangeAtIndex:1]];
+                NSUInteger bodyStart = parenMatch.range.location + parenMatch.range.length;
+                orderedBody = [line substringFromIndex:bodyStart];
+                orderedPrefix = [NSString stringWithFormat:@"%@)  ", numStr];
+                isOrderedListItem = YES;
+            }
+        }
+        if (!isOrderedListItem) {
+            // ① ② ③ circled digits (U+2460..U+2473 = 1-20)
+            unichar firstC = (line.length > 0) ? [line characterAtIndex:0] : 0;
+            if (firstC >= 0x2460 && firstC <= 0x2473) {
+                int num = (int)(firstC - 0x2460) + 1;
+                if (line.length > 1) {
+                    unichar nextC = [line characterAtIndex:1];
+                    NSUInteger bodyStart = (nextC == ' ' || nextC == '\t') ? 2 : 1;
+                    orderedBody = [line substringFromIndex:bodyStart];
+                    orderedPrefix = [NSString stringWithFormat:@"%d.  ", num];
+                    isOrderedListItem = YES;
+                }
+            }
+        }
+        if (isOrderedListItem) {
+            if (inParagraph) {
+                [out appendAttributedString:[[[NSAttributedString alloc]
+                                                initWithString:@"\n"] autorelease]];
+                inParagraph = NO;
+            }
+            [self _appendInlineMarkup:orderedBody
                                    to:out
                              baseFont:baseFont
-                              prefix:prefix];
+                              prefix:orderedPrefix];
             [out appendAttributedString:[[[NSAttributedString alloc]
                                             initWithString:@"\n"] autorelease]];
             i++;
@@ -399,7 +511,11 @@ static void AppendAttrString(NSMutableAttributedString *out,
     // iOS 6 doesn't auto-fallback to the emoji font for emoji in
     // NSAttributedString — the base font (Helvetica) has no emoji glyphs
     // → renders as □ (tofu). Explicit font override fixes this.
-    [self _applyEmojiFont:out baseFont:baseFont];
+    // v261103-1: skip the emoji-font pass in fast mode (O(n) per render,
+    // unnecessary during streaming). The final full-path render applies it.
+    if (!fast) {
+        [self _applyEmojiFont:out baseFont:baseFont];
+    }
     return [out autorelease];
 }
 
@@ -611,6 +727,16 @@ static void AppendAttrString(NSMutableAttributedString *out,
                                       range:NSMakeRange(0, label.length)];
                     [linkAttr addAttribute:NSForegroundColorAttributeName
                                        value:[iOS6Theme tintColor]
+                                       range:NSMakeRange(0, label.length)];
+                    // v261103-1: attach the URL so UITextView can open it
+                    // when the user taps the link. NSLinkAttributeName is
+                    // iOS 7+ on UITextView, but on iOS 6 the value is still
+                    // stored and ChatMessageCell's textView delegate can
+                    // intercept via textView:shouldInteractWithURL:.
+                    // (iOS 6 UITextView calls the delegate even without
+                    //  the attribute being officially "supported".)
+                    [linkAttr addAttribute:NSLinkAttributeName
+                                       value:url
                                        range:NSMakeRange(0, label.length)];
                     [out appendAttributedString:linkAttr];
                     [linkAttr release];

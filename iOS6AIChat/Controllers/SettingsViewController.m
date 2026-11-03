@@ -72,6 +72,7 @@ NSString *const SettingsKeyImageGenModel = @"imageGenModel";
 NSString *const SettingsKeyImageGenFeatureEnabled = @"imageGenFeatureEnabled";
 NSString *const SettingsKeyEnableTimeTool = @"enableTimeTool";
 NSString *const SettingsKeyEnableDeviceInfoTool = @"enableDeviceInfoTool";
+NSString *const SettingsKeyShowSuggestions = @"showSuggestions";
 
 // v261025-11: model-autonomous capability switches (default OFF).
 NSString *const SettingsKeyModelAutonomousWebSearch = @"modelAutonomousWebSearch";
@@ -480,7 +481,9 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                                 SettingsKeyModelAutonomousURLReading,
                                 // v261102-1: time/device-info tool toggles.
                                 SettingsKeyEnableTimeTool,
-                                SettingsKeyEnableDeviceInfoTool]) {
+                                SettingsKeyEnableDeviceInfoTool,
+                                // v261103-1: show-suggestions toggle.
+                                SettingsKeyShowSuggestions]) {
             [d removeObjectForKey:key];
         }
         [d synchronize];
@@ -512,7 +515,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 {
     NSInteger logical = [self _logicalSectionForDisplayed:section];
     switch (logical) {
-        case kSectionTheme:     return 3;  // dark mode, font size, image compression
+        case kSectionTheme:     return 4;  // dark mode, font size, image compression, show suggestions
         // v261025-11 去重: 6->4 — 删「默认提供商」(与两层 provider 条目体系
         // 重复, 全局 provider 只剩 fallback 用途) 和「中转默认模型」
         // (每个模型条目都有明确 id, 让服务器选默认已无意义; NetworkService
@@ -526,9 +529,11 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         // 两处同时维护正是“逻辑乱”的根源）。
         // v261025-11: +1 行「生成图片」全局功能开关 (#7)。
         case kSectionModel:      return 2;
-        // v261025-11: +2 行「支持自主联网搜索」/「支持自主读取URL」(#9)。
-        // v261025-13: +2 rows 显示工具调用 / 显示搜索结果 (agent-style).
-        case kSectionWebSearch:  return 7;
+        // v261103-1: removed 显示搜索结果 row (feature removed from
+        // NetworkService — tool results are never shown inline now).
+        // Now 6 rows: enable / Tavily Key / max results / 获取时间工具 /
+        // 获取设备信息工具 / 显示工具调用.
+        case kSectionWebSearch:  return 6;
         case kSectionPrompt:     return 1;
         case kSectionAdvanced:   return 1;  // 流式输出
         case kSectionAbout:      return 5;  // author / email / version / github / license
@@ -853,6 +858,26 @@ titleForFooterInSection:(NSInteger)section
         [cell.contentView addSubview:imgSeg];
         return cell;
     }
+    if (row == 3) {
+        // v261103-1: show suggestion chips + welcome greeting on empty new
+        // conversations. Default ON. When OFF, the empty placeholder still
+        // shows the welcome greeting (text-only, no perf cost) but the
+        // suggestion chips strip is hidden.
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"显示建议", nil)]];
+        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+        BOOL showSuggestions = YES;
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:SettingsKeyShowSuggestions]) {
+            showSuggestions = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyShowSuggestions];
+        }
+        [sw setOn:showSuggestions animated:NO];
+        [sw addTarget:self action:@selector(_showSuggestionsToggle:)
+         forControlEvents:UIControlEventValueChanged];
+        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f = cell.contentView.bounds;
+        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+        [cell.contentView addSubview:sw];
+        return cell;
+    }
     return cell;
 }
 
@@ -1052,22 +1077,11 @@ titleForFooterInSection:(NSInteger)section
         [cell.contentView addSubview:sw];
         return cell;
     }
-    if (row == 6) {
-        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"显示搜索结果", nil)]];
-        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-        BOOL on = NO;  // default OFF
-        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"showSearchResults"]) {
-            on = [[NSUserDefaults standardUserDefaults] boolForKey:@"showSearchResults"];
-        }
-        [sw setOn:on animated:NO];
-        [sw addTarget:self action:@selector(_showSearchResultsToggle:)
-         forControlEvents:UIControlEventValueChanged];
-        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-        CGRect f = cell.contentView.bounds;
-        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
-        [cell.contentView addSubview:sw];
-        return cell;
-    }
+    // v261103-1: removed row 6 "显示搜索结果" toggle (feature removed from
+    // NetworkService — tool results are now NEVER shown inline in the chat
+    // bubble; only the gray :::tool "已..." frame is shown). Row count for
+    // kSectionWebSearch is now 6 (was 7). Falls through to row 2 (max
+    // results) below — but row 6 is no longer requested by tableView.
     // row 2: max results stepper + value label.
     [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"结果数", nil)]];
     NSInteger max = [[settings objectForKey:SettingsKeyTavilyMaxResults] integerValue];
@@ -1270,17 +1284,14 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
                                                         object:nil];
 }
 
-// v261025-11 (#9): model-autonomous capability switches.
-- (IBAction)_autoWebSearchToggle:(UISwitch *)sw
-{
-    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyModelAutonomousWebSearch];
-    [[NSUserDefaults standardUserDefaults] synchronize];
-}
-- (IBAction)_autoURLReadToggle:(UISwitch *)sw
-{
-    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyModelAutonomousURLReading];
-    [[NSUserDefaults standardUserDefaults] synchronize];
-}
+// v261103-1: removed dead _autoWebSearchToggle: / _autoURLReadToggle:
+// IBAction methods — the global 自主联网搜索 / 自主读取URL toggles have
+// moved to the per-provider edit page (v261102-1), so these global
+// handlers were no longer wired to any UI. The persisted defaults
+// SettingsKeyModelAutonomousWebSearch / SettingsKeyModelAutonomousURLReading
+// are still declared (for back-compat with old installs that wrote them)
+// but are never read by any code path now.
+
 // v261102-1: per-tool enable toggles (moved here from per-message UI —
 // these are stable preferences, not something the user flips per send).
 - (IBAction)_enableTimeToolToggle:(UISwitch *)sw
@@ -1299,10 +1310,24 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"showToolCalls"];
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
-- (IBAction)_showSearchResultsToggle:(UISwitch *)sw
+// v261103-1: removed _showSearchResultsToggle: — the inline [结果] %@ summary
+// feature was removed from NetworkService (tool results are now NEVER shown
+// in the chat bubble, only the gray :::tool "已..." frame). The toggle row
+// in the settings page is also removed (see numberOfRowsInSection + the
+// row renderer). The persisted default "showSearchResults" is still reset
+// by the reset-to-defaults flow for back-compat.
+// v261103-1: show-suggestions toggle. Controls whether the empty-state
+// placeholder includes a horizontally-scrollable suggestion-chip strip.
+// The welcome greeting text always shows (it's just two labels, no perf
+// cost); only the chips strip is gated by this toggle.
+- (IBAction)_showSuggestionsToggle:(UISwitch *)sw
 {
-    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"showSearchResults"];
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyShowSuggestions];
     [[NSUserDefaults standardUserDefaults] synchronize];
+    // Broadcast a theme-change notification so any visible ChatViewController
+    // rebuilds its empty placeholder (picks up the new toggle state).
+    [[NSNotificationCenter defaultCenter] postNotificationName:iOS6ThemeDidChangeNotification
+                                                        object:nil];
 }
 
 // v261025-3: 中转自带模型 toggle.

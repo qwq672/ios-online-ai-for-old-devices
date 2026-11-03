@@ -109,6 +109,12 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 @property (nonatomic, retain) UIView *emptyPlaceholderView;
 @property (nonatomic, retain) UILabel *emptyTitleLabel;
 @property (nonatomic, retain) UILabel *emptyHintLabel;
+// v261103-1: welcome message (2-line time-based greeting) + suggestion
+// chips strip. Shown ONLY on new (empty) conversations, not on history
+// or in-progress conversations.
+@property (nonatomic, retain) UILabel *greetingLine1Label;
+@property (nonatomic, retain) UILabel *greetingLine2Label;
+@property (nonatomic, retain) UIScrollView *suggestionScrollView;
 // v261025-6: pending user-message-edit alert state. The alert (tag 600)
 // asks the user to edit their original message; on save, the conv is
 // truncated from this message onward and the (possibly edited) text is
@@ -140,6 +146,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
             emptyPlaceholderView=_emptyPlaceholderView,
             emptyTitleLabel=_emptyTitleLabel,
             emptyHintLabel=_emptyHintLabel,
+            greetingLine1Label=_greetingLine1Label,
+            greetingLine2Label=_greetingLine2Label,
+            suggestionScrollView=_suggestionScrollView,
             pendingEditMessageID=_pendingEditMessageID,
             pendingEditOriginalText=_pendingEditOriginalText,
             imageGenInProgress=_imageGenInProgress,
@@ -197,6 +206,10 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     [_emptyTitleLabel release];
     [_emptyHintLabel release];
     [_emptyPlaceholderView release];
+    // v261103-1: welcome message + suggestion chips.
+    [_greetingLine1Label release];
+    [_greetingLine2Label release];
+    [_suggestionScrollView release];
     // v261025-6: pending edit alert state.
     [_pendingEditMessageID release];
     [_pendingEditOriginalText release];
@@ -413,6 +426,16 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     if (_networkService) {
         [_networkService cancelStream];
     }
+    // v261103-1: clear the streaming render flag on the abandoned
+    // assistant message (if any) so subsequent renders use the FULL
+    // path. Without this, a half-streamed message would stay flagged
+    // as "streaming" forever and never get the full markdown render.
+    if ([_conversation.messages count] > 0) {
+        Message *last = [_conversation.messages objectAtIndex:[_conversation.messages count] - 1];
+        if ([last isAssistant]) {
+            [ChatMessageCell markMessageDone:last.messageID];
+        }
+    }
     // v261025-8: also cancel a pending image generation — its completion
     // block checks the flag and discards the result.
     if (_imageGenInProgress) {
@@ -457,6 +480,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 // v261025-5: empty-state placeholder. The chat view used to show a blank
 // dark void when there were no messages (screenshot IMG_0452). Now it
 // shows a centered title + hint label so the user knows what to do.
+// v261103-1: redesigned — now shows a 2-line time-based welcome message
+// + a horizontally-scrollable suggestion-chip strip below it. Suggestion
+// chips are gated by the "showSuggestions" user default (default ON).
 - (void)_buildEmptyPlaceholder
 {
     if (_emptyPlaceholderView) return;   // already built
@@ -468,36 +494,216 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     _emptyPlaceholderView.hidden = YES;
     [self.view addSubview:_emptyPlaceholderView];
 
-    // Big muted title centered in the upper third.
-    CGFloat titleW = frame.size.width - 32;
-    _emptyTitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, frame.size.height * 0.30, titleW, 36)];
-    _emptyTitleLabel.text = NSLocalizedString(@"开始新对话", nil);
-    _emptyTitleLabel.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:22]];
-    _emptyTitleLabel.textColor = [iOS6Theme secondaryTextColor];
-    _emptyTitleLabel.textAlignment = NSTextAlignmentCenter;
-    _emptyTitleLabel.backgroundColor = [UIColor clearColor];
-    _emptyTitleLabel.shadowColor = [iOS6Theme isDarkMode]
+    // v261103-1: 2-line welcome message — time-based prefix on line 1,
+    // greeting phrase on line 2. Centered in the upper-middle of the chat.
+    // Layout: both labels anchored at y = height * 0.25 (a bit higher
+    // than the old 0.30 to leave room for suggestion chips below).
+    CGFloat labelW = frame.size.width - 32;
+    CGFloat baseY = frame.size.height * 0.22;
+    _greetingLine1Label = [[UILabel alloc] initWithFrame:CGRectMake(16, baseY, labelW, 32)];
+    _greetingLine1Label.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:22]];
+    _greetingLine1Label.textColor = [iOS6Theme textColor];
+    _greetingLine1Label.textAlignment = NSTextAlignmentCenter;
+    _greetingLine1Label.backgroundColor = [UIColor clearColor];
+    _greetingLine1Label.shadowColor = [iOS6Theme isDarkMode]
         ? [UIColor colorWithWhite:0.0f alpha:0.4f]
         : [UIColor colorWithWhite:1.0f alpha:0.7f];
-    _emptyTitleLabel.shadowOffset = CGSizeMake(0, 1);
-    _emptyTitleLabel.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
-                                         UIViewAutoresizingFlexibleTopMargin |
-                                         UIViewAutoresizingFlexibleBottomMargin);
-    [_emptyPlaceholderView addSubview:_emptyTitleLabel];
+    _greetingLine1Label.shadowOffset = CGSizeMake(0, 1);
+    _greetingLine1Label.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
+                                            UIViewAutoresizingFlexibleTopMargin |
+                                            UIViewAutoresizingFlexibleBottomMargin);
+    [_emptyPlaceholderView addSubview:_greetingLine1Label];
 
-    // Hint line right below the title.
-    _emptyHintLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, frame.size.height * 0.30 + 38, titleW, 22)];
-    _emptyHintLabel.text = NSLocalizedString(@"在下方输入框输入消息，或点击右上角 + 新建会话", nil);
-    _emptyHintLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
-    _emptyHintLabel.textColor = [iOS6Theme secondaryTextColor];
-    _emptyHintLabel.alpha = 0.85f;
-    _emptyHintLabel.textAlignment = NSTextAlignmentCenter;
-    _emptyHintLabel.backgroundColor = [UIColor clearColor];
-    _emptyHintLabel.numberOfLines = 0;
-    _emptyHintLabel.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
-                                        UIViewAutoresizingFlexibleTopMargin |
-                                        UIViewAutoresizingFlexibleBottomMargin);
+    _greetingLine2Label = [[UILabel alloc] initWithFrame:CGRectMake(16, baseY + 36, labelW, 24)];
+    _greetingLine2Label.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
+    _greetingLine2Label.textColor = [iOS6Theme secondaryTextColor];
+    _greetingLine2Label.textAlignment = NSTextAlignmentCenter;
+    _greetingLine2Label.backgroundColor = [UIColor clearColor];
+    _greetingLine2Label.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
+                                            UIViewAutoresizingFlexibleTopMargin |
+                                            UIViewAutoresizingFlexibleBottomMargin);
+    [_emptyPlaceholderView addSubview:_greetingLine2Label];
+
+    // v261103-1: suggestion chips — horizontal scroll view below the
+    // welcome message. Each chip is a rounded-rect button with a preset
+    // suggestion text. Tapping a chip fills the composer input with the
+    // preset text (doesn't auto-send — user can edit before sending).
+    BOOL showSuggestions = YES;
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"showSuggestions"]) {
+        showSuggestions = [[NSUserDefaults standardUserDefaults] boolForKey:@"showSuggestions"];
+    }
+    if (showSuggestions) {
+        CGFloat chipsY = baseY + 80;
+        CGFloat chipsH = 44;
+        // The scroll view is full-width but chips are laid out side-by-side.
+        // visible chips count = 3 (per user spec). Each chip is
+        // (scrollW - 2*gap) / 3 wide; total content width is
+        // chipCount * (chipW + gap) + gap.
+        _suggestionScrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(0, chipsY, frame.size.width, chipsH)];
+        _suggestionScrollView.showsHorizontalScrollIndicator = NO;
+        _suggestionScrollView.showsVerticalScrollIndicator = NO;
+        _suggestionScrollView.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
+                                                  UIViewAutoresizingFlexibleTopMargin |
+                                                  UIViewAutoresizingFlexibleBottomMargin);
+        _suggestionScrollView.backgroundColor = [UIColor clearColor];
+        [_emptyPlaceholderView addSubview:_suggestionScrollView];
+        [self _populateSuggestionChips];
+    }
+
+    // v261103-1: hidden legacy labels (keep the old title/hint ivars so
+    // existing references don't crash, but they're not displayed). The
+    // new welcome message replaces them.
+    _emptyTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _emptyTitleLabel.hidden = YES;
+    [_emptyPlaceholderView addSubview:_emptyTitleLabel];
+    _emptyHintLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _emptyHintLabel.hidden = YES;
     [_emptyPlaceholderView addSubview:_emptyHintLabel];
+
+    // Apply the current time-based greeting text.
+    [self _updateGreetingText];
+}
+
+// v261103-1: 12+ preset suggestions. Tapping a chip fills the composer
+// with the text (doesn't auto-send — user can edit). User spec says at
+// least 12 presets; we have 14.
++ (NSArray *)_suggestionPresets
+{
+    static NSArray *presets = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        presets = @[
+            @"最近发生了什么事？",
+            @"目前哪家 AI 综合能力最强？",
+            @"写一首关于春天的诗",
+            @"帮我写一个 Python 快速排序",
+            @"解释一下量子纠缠",
+            @"iPhone 3GS 当年有什么亮点？",
+            @"推荐一本好书",
+            @"今天该吃什么？",
+            @"讲个笑话听听",
+            @"如何高效学习编程？",
+            @"为什么天空是蓝色的？",
+            @"介绍一下你自己",
+            @"翻译：Hello, World!",
+            @"现在几点了？"
+        ];
+    });
+    return presets;
+}
+
+- (void)_populateSuggestionChips
+{
+    if (!_suggestionScrollView) return;
+    // Remove any existing chip subviews (called on rebuild after theme change).
+    for (UIView *v in [_suggestionScrollView.subviews copy]) {
+        [v removeFromSuperview];
+    }
+    NSArray *presets = [ChatViewController _suggestionPresets];
+    CGFloat gap = 8.0f;
+    CGFloat padX = 12.0f;
+    // Visible chip width: 3 chips fit in the viewport. Compute as
+    // (scrollW - 2*gap - 2*padX) / 3 so each chip is equal-width per
+    // user spec ("每个按钮长度一样宽度一样并排").
+    CGFloat viewportW = _suggestionScrollView.bounds.size.width;
+    CGFloat chipW = (viewportW - 2 * padX - 2 * gap) / 3.0f;
+    if (chipW < 80) chipW = 80;
+    CGFloat chipH = _suggestionScrollView.bounds.size.height;
+    // Lay out all chips horizontally.
+    CGFloat x = padX;
+    for (NSUInteger i = 0; i < [presets count]; i++) {
+        NSString *text = [presets objectAtIndex:i];
+        UIButton *chip = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+        chip.frame = CGRectMake(x, 0, chipW, chipH);
+        // Truncate long text with ellipsis if needed (button.titleLabel
+        // does this when lineBreakMode is set).
+        chip.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
+        chip.titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+        chip.titleLabel.textAlignment = NSTextAlignmentCenter;
+        [chip setTitle:text forState:UIControlStateNormal];
+        [chip setTitleColor:[iOS6Theme textColor] forState:UIControlStateNormal];
+        [chip setTitleColor:[iOS6Theme tintColor] forState:UIControlStateHighlighted];
+        // iOS 6 rounded-rect button has its own background; tint it to
+        // match the theme (subtle gray fill so chips read as "tappable
+        // pill" not "iOS button").
+        chip.backgroundColor = [iOS6Theme isDarkMode]
+            ? [UIColor colorWithWhite:1.0f alpha:0.06f]
+            : [UIColor colorWithWhite:0.0f alpha:0.05f];
+        // Layer styling for a rounded pill.
+        chip.layer.cornerRadius = chipH / 2.0f;
+        chip.layer.borderWidth = 1.0f;
+        chip.layer.borderColor = [iOS6Theme isDarkMode]
+            ? [UIColor colorWithWhite:1.0f alpha:0.15f].CGColor
+            : [UIColor colorWithWhite:0.0f alpha:0.10f].CGColor;
+        chip.tag = 8000 + (NSInteger)i;
+        [chip addTarget:self action:@selector(_suggestionChipTapped:)
+          forControlEvents:UIControlEventTouchUpInside];
+        [_suggestionScrollView addSubview:chip];
+        x += chipW + gap;
+    }
+    _suggestionScrollView.contentSize = CGSizeMake(x, chipH);
+}
+
+- (void)_suggestionChipTapped:(UIButton *)chip
+{
+    NSUInteger idx = (NSUInteger)(chip.tag - 8000);
+    NSArray *presets = [ChatViewController _suggestionPresets];
+    if (idx >= [presets count]) return;
+    NSString *text = [presets objectAtIndex:idx];
+    if (!_composer || !_composer.textView) return;
+    // Fill the composer with the preset text (don't auto-send — user can
+    // edit before pressing send). ComposerView's textView is public.
+    _composer.textView.text = text;
+    [_composer.textView becomeFirstResponder];
+    // Trigger the composer's internal "text changed" handler so the send
+    // button enables + height auto-adjusts. UITextViewTextDidChangeNotification
+    // is the canonical iOS 6+ constant for this.
+    [[NSNotificationCenter defaultCenter] postNotificationName:UITextViewTextDidChangeNotification
+                                                        object:_composer.textView];
+}
+
+// v261103-1: time-based greeting. Picks a time word (早上好 / 中午好 /
+// 下午好 / 晚上好 / 凌晨好 / 黎明好) and a greeting phrase from a small
+// pool (with time-appropriate candidates). Random pick within each slot
+// avoids repetition across multiple new-conversation opens in a day.
+- (void)_updateGreetingText
+{
+    if (!_greetingLine1Label || !_greetingLine2Label) return;
+    NSCalendar *cal = [NSCalendar currentCalendar];
+    NSUInteger hour = [[cal components:NSHourCalendarUnit fromDate:[NSDate date]] hour];
+    NSString *timeWord;
+    NSArray *greetingPool;
+    if (hour >= 5 && hour < 9) {
+        timeWord = @"早上好";
+        greetingPool = @[@"今天打算做什么？", @"又是一天，准备好了吗？", @"吃早餐了吗？", @"早起的鸟儿有虫吃"];
+    } else if (hour >= 9 && hour < 11) {
+        timeWord = @"上午好";
+        greetingPool = @[@"要我帮你干什么吗？", @"聊点什么呢？", @"今天顺利吗？"];
+    } else if (hour >= 11 && hour < 13) {
+        timeWord = @"中午好";
+        greetingPool = @[@"该吃午饭了", @"饿了吗", @"午休一下？"];
+    } else if (hour >= 13 && hour < 18) {
+        timeWord = @"下午好";
+        greetingPool = @[@"要我帮你干什么吗？", @"聊点什么呢？", @"喝杯茶？"];
+    } else if (hour >= 18 && hour < 23) {
+        timeWord = @"晚上好";
+        greetingPool = @[@"今天过得怎么样？", @"聊点什么呢？", @"晚饭吃了吗？"];
+    } else {
+        timeWord = @"凌晨好";
+        greetingPool = @[@"现在该睡了吧", @"别熬了", @"这么晚还在忙？"];
+    }
+    // Deterministic-ish pick: hash by day so the same greeting shows
+    // throughout a session, but different across days.
+    NSDateFormatter *dayFmt = [[[NSDateFormatter alloc] init] autorelease];
+    [dayFmt setDateFormat:@"yyyy-MM-dd"];
+    NSString *dayStr = [dayFmt stringFromDate:[NSDate date]];
+    NSUInteger seed = 0;
+    for (NSUInteger i = 0; i < dayStr.length; i++) {
+        seed = seed * 31 + (NSUInteger)[dayStr characterAtIndex:i];
+    }
+    NSUInteger pick = seed % [greetingPool count];
+    _greetingLine1Label.text = timeWord;
+    _greetingLine2Label.text = [greetingPool objectAtIndex:pick];
 }
 
 - (void)_updateEmptyPlaceholder
@@ -971,8 +1177,10 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
     // Disable composer while streaming.
     _composer.isStreaming = YES;
-
-    // Read settings.
+    // v261103-1: mark the assistant message as "streaming" so the cell
+    // uses the FAST render path (no emoji-font / color-remap / table /
+    // math passes). Cleared in didFinish/didFail/didGenerateImage.
+    [ChatMessageCell markMessageStreaming:assistantMsg.messageID];
     NSDictionary *settings = [SettingsViewController loadSettings];
     BOOL useTransit       = [[settings objectForKey:SettingsKeyUseTransit] boolValue];
     NSString *transitURL  = [settings objectForKey:SettingsKeyTransitURL];
@@ -1010,6 +1218,15 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     NSString *basePrompt = [settings objectForKey:SettingsKeySystemPrompt]
                             ?: @"You are a helpful assistant.";
     NSString *systemPrompt = [CharacterManagementViewController effectiveSystemPromptWithBase:basePrompt];
+
+    // v261103-1: 输出格式 hint — 避免模型把列表/解释用 ``` ``` 包起来。
+    // 用户报告 markdown 列表"渲染成代码块" — 根因之一是 AI 把列表内容
+    // 用 code fence 包裹 (尤其 DeepSeek/GLM 倾向如此)。这里加一段轻提示
+    // 告诉模型: 列表、解释、说明文字直接用 markdown, 不要裹 code fence。
+    // code fence 仅用于真正的代码片段。
+    systemPrompt = [NSString stringWithFormat:
+        @"%@\n\nOutput format: Use plain markdown for lists (- item, 1. item) and explanations. Do NOT wrap lists, explanations, or normal prose in ``` code fences — code fences are for actual code only. Keep responses concise unless asked for detail.",
+        systemPrompt];
 
     // If deep thinking is on, augment the system prompt with a chain-of-
     // thought instruction. The model's native reasoning_content field is
@@ -1258,6 +1475,43 @@ didFinishForConversationID:(NSString *)conversationID
         }
     }
     [[ConversationStore sharedStore] saveConversation:_conversation];
+    // v261103-1: streaming finished → clear the fast-path flag. The next
+    // render uses the FULL MarkdownParser path (restores emoji font,
+    // color remap, tables, math blocks).
+    if ([_conversation.messages count] > 0) {
+        Message *last = [_conversation.messages objectAtIndex:[_conversation.messages count] - 1];
+        if ([last isAssistant]) {
+            [ChatMessageCell markMessageDone:last.messageID];
+            // v261103-1: fire a local notification when the app is in the
+            // background so the user is alerted that the AI reply finished.
+            // iOS 6: UILocalNotification (deprecated in iOS 10 but the only
+            // option for our deployment target 6.0). The notification body
+            // is the first ~80 chars of the reply (enough for the user to
+            // decide whether to switch back to the app).
+            UIApplicationState appState = [[UIApplication sharedApplication] applicationState];
+            if (appState != UIApplicationStateActive) {
+                NSString *preview = fullText ?: @"";
+                // Strip markdown markers + newlines for a cleaner preview.
+                preview = [preview stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+                preview = [preview stringByReplacingOccurrencesOfString:@"**" withString:@""];
+                preview = [preview stringByReplacingOccurrencesOfString:@"`" withString:@""];
+                preview = [preview stringByReplacingOccurrencesOfString:@":::tool" withString:@""];
+                preview = [preview stringByReplacingOccurrencesOfString:@":::" withString:@""];
+                if (preview.length > 80) {
+                    preview = [NSString stringWithFormat:@"%@…", [preview substringToIndex:80]];
+                }
+                UILocalNotification *notif = [[[UILocalNotification alloc] init] autorelease];
+                if (notif) {
+                    notif.fireDate = [NSDate date];
+                    notif.timeZone = [NSTimeZone defaultTimeZone];
+                    notif.alertBody = preview.length > 0 ? preview : @"AI 回复完成";
+                    notif.alertAction = NSLocalizedString(@"查看", nil);
+                    notif.applicationIconBadgeNumber = 1;
+                    [[UIApplication sharedApplication] scheduleLocalNotification:notif];
+                }
+            }
+        }
+    }
     [self _refreshLastRowForce:YES];
     _composer.isStreaming = NO;
     [self _hideSearchStatus];
@@ -1294,6 +1548,14 @@ didFailForConversationID:(NSString *)conversationID
     }
     [_conversation updateLastAssistantMessageContent:errText];
     [[ConversationStore sharedStore] saveConversation:_conversation];
+    // v261103-1: clear streaming flag on failure too — the message is
+    // now stable (error text), so render it through the FULL path.
+    if ([_conversation.messages count] > 0) {
+        Message *last = [_conversation.messages objectAtIndex:[_conversation.messages count] - 1];
+        if ([last isAssistant]) {
+            [ChatMessageCell markMessageDone:last.messageID];
+        }
+    }
     [self _refreshLastRowForce:YES];
     _composer.isStreaming = NO;
     [self _hideSearchStatus];

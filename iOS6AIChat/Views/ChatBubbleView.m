@@ -60,8 +60,16 @@
         _borderColor = [[iOS6Theme bubbleUserBorderColor] retain];
     } else if (_role == BubbleRoleError) {
         // v261025-32: red-tinted error bubble — distinct from normal AI.
-        _fillColor = [[UIColor colorWithRed:0.96f green:0.92f blue:0.92f alpha:1.0f] retain];
-        _borderColor = [[UIColor colorWithRed:0.85f green:0.30f blue:0.30f alpha:0.6f] retain];
+        // v261103-1: dark-mode aware — light mode keeps the warm pink tint,
+        // dark mode uses a deep red on charcoal so the error reads as
+        // "danger" without blowing out the eye in low-light.
+        if ([iOS6Theme isDarkMode]) {
+            _fillColor = [[UIColor colorWithRed:0.22f green:0.10f blue:0.10f alpha:1.0f] retain];
+            _borderColor = [[UIColor colorWithRed:0.70f green:0.25f blue:0.25f alpha:0.85f] retain];
+        } else {
+            _fillColor = [[UIColor colorWithRed:0.96f green:0.92f blue:0.92f alpha:1.0f] retain];
+            _borderColor = [[UIColor colorWithRed:0.85f green:0.30f blue:0.30f alpha:0.6f] retain];
+        }
     } else {
         _fillColor = [[iOS6Theme bubbleAssistantColor] retain];
         _borderColor = [[iOS6Theme bubbleAssistantBorderColor] retain];

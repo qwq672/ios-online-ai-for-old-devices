@@ -59,6 +59,12 @@ extern NSString *const SettingsKeyImageGenFeatureEnabled;
 extern NSString *const SettingsKeyEnableTimeTool;
 extern NSString *const SettingsKeyEnableDeviceInfoTool;
 
+// v261103-1: show suggestion chips + welcome greeting on empty new
+// conversations (default ON). When OFF, the empty placeholder still
+// shows but with no chips strip (the welcome greeting stays — it's
+// just text, no perf cost).
+extern NSString *const SettingsKeyShowSuggestions;
+
 // v261025-11: model-autonomous capability switches (default OFF).
 // "支持自主联网搜索" — the model has built-in web search (no Tavily
 // tool-calls needed); when ON we append a system-prompt hint telling the
