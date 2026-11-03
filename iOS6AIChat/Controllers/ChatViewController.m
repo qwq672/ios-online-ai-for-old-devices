@@ -615,26 +615,25 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
         NSString *text = [presets objectAtIndex:i];
         UIButton *chip = [UIButton buttonWithType:UIButtonTypeRoundedRect];
         chip.frame = CGRectMake(x, 0, chipW, chipH);
-        // Truncate long text with ellipsis if needed (button.titleLabel
-        // does this when lineBreakMode is set).
         chip.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
         chip.titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
         chip.titleLabel.textAlignment = NSTextAlignmentCenter;
         [chip setTitle:text forState:UIControlStateNormal];
         [chip setTitleColor:[iOS6Theme textColor] forState:UIControlStateNormal];
         [chip setTitleColor:[iOS6Theme tintColor] forState:UIControlStateHighlighted];
-        // iOS 6 rounded-rect button has its own background; tint it to
-        // match the theme (subtle gray fill so chips read as "tappable
-        // pill" not "iOS button").
+        // v261103-3: FIX CRASH — was setting chip.layer.borderColor to a
+        // CGColorRef from an autoreleased UIColor. When the UIColor drains
+        // at runloop end, the CGColor becomes a dangling pointer → SIGSEGV
+        // when the layer draws the border. Same crash class as the
+        // ChatBubbleView borderColor bug fixed in v261025-5.
+        // Fix: don't set borderColor at all — use background color + corner
+        // radius only. Clean and crash-free.
         chip.backgroundColor = [iOS6Theme isDarkMode]
             ? [UIColor colorWithWhite:1.0f alpha:0.06f]
             : [UIColor colorWithWhite:0.0f alpha:0.05f];
-        // Layer styling for a rounded pill.
         chip.layer.cornerRadius = chipH / 2.0f;
-        chip.layer.borderWidth = 1.0f;
-        chip.layer.borderColor = [iOS6Theme isDarkMode]
-            ? [UIColor colorWithWhite:1.0f alpha:0.15f].CGColor
-            : [UIColor colorWithWhite:0.0f alpha:0.10f].CGColor;
+        chip.layer.borderWidth = 0;  // no border = no dangling CGColor
+        chip.clipsToBounds = YES;
         chip.tag = 8000 + (NSInteger)i;
         [chip addTarget:self action:@selector(_suggestionChipTapped:)
           forControlEvents:UIControlEventTouchUpInside];

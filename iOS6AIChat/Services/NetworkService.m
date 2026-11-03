@@ -2355,25 +2355,14 @@
         return nil;
     }
 
-    // v261103-2: image gen goes DIRECT to the provider's image API by
-    // default. If the user configured a proxy URL (in Advanced settings),
-    // route through it as a geo-proxy (useful for bypassing OpenAI's
-    // country/region blocks). The old hardcoded transit fallback
-    // (ai-transit.awa.lat) is removed — it was in a blocked region
-    // anyway and didn't help.
-    NSString *endpoint;
-    NSString *proxyURL = transitURL;
-    BOOL hasProxy = [proxyURL isKindOfClass:[NSString class]] && proxyURL.length > 0;
-    if (hasProxy) {
-        // Route through the user's proxy. X-Target-URL tells the proxy
-        // where to forward.
-        NSString *base = [proxyURL stringByTrimmingCharactersInSet:
-                [NSCharacterSet characterSetWithCharactersInString:@"/"]];
-        endpoint = [base stringByAppendingPathComponent:@"v1/images/generations"];
-    } else {
-        // Direct to the provider's image API.
-        endpoint = imageTarget;
-    }
+    // v261103-3: image gen ALWAYS goes direct to the provider's image API.
+    // The proxy URL option was removed from settings — user testing showed
+    // transit/proxy doesn't help (OpenAI geo-blocks regardless of proxy
+    // location, and the default transit server was in a blocked region).
+    // Direct connection lets providers like Zhipu (cogview) work fine;
+    // OpenAI image gen may fail with geo-block, which is a provider-side
+    // issue the user solves by choosing a non-blocking provider.
+    NSString *endpoint = imageTarget;
 
     // Build body — per model family:
     //   dall-e-*:  {model, prompt, n, size, response_format=b64_json}
@@ -2411,11 +2400,7 @@
                                                           timeoutInterval:120.0];  // image gen can be slow
         [req setHTTPMethod:@"POST"];
         [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-        // v261103-2: only set X-Target-URL when going through a proxy.
-        // Direct requests don't need it.
-        if (hasProxy) {
-            [req setValue:imageTarget forHTTPHeaderField:@"X-Target-URL"];
-        }
+        // v261103-3: no X-Target-URL — direct connection, no proxy.
         if (apiKey.length > 0) {
             [req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey]
             forHTTPHeaderField:@"Authorization"];

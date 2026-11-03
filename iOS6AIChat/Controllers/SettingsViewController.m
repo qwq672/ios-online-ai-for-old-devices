@@ -536,7 +536,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         // 获取设备信息工具 / 显示工具调用.
         case kSectionWebSearch:  return 6;
         case kSectionPrompt:     return 1;
-        case kSectionAdvanced:   return 2;  // 流式输出 + 可选代理 URL
+        case kSectionAdvanced:   return 1;  // 流式输出 (代理 URL 已移除)
         case kSectionAbout:      return 5;  // author / email / version / github / license
         case kSectionReset:      return 1;
         default: return 0;
@@ -1094,40 +1094,22 @@ titleForFooterInSection:(NSInteger)section
 
 - (UITableViewCell *)_advancedCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
 {
-    if (row == 0) {
-        // 流式输出 toggle.
-        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"流式输出", nil)]];
-        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-        BOOL streamingOn = YES;
-        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingOutput"]) {
-            streamingOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"streamingOutput"];
-        }
-        [sw setOn:streamingOn animated:NO];
-        [sw addTarget:self action:@selector(_streamingOutputToggle:)
-         forControlEvents:UIControlEventValueChanged];
-        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-        CGRect f = cell.contentView.bounds;
-        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
-        [cell.contentView addSubview:sw];
-        return cell;
+    // v261103-3: only one row — 流式输出. The "代理 URL" row was removed
+    // (image gen always goes direct now; user confirmed transit/proxy
+    // doesn't help with OpenAI's geo-block anyway).
+    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"流式输出", nil)]];
+    UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+    BOOL streamingOn = YES;
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingOutput"]) {
+        streamingOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"streamingOutput"];
     }
-    // v261103-2: row 1 — optional proxy URL for image generation.
-    // This replaces the old "Transit URL" field from the removed 中转服务器
-    // section. When set, image generation routes through this proxy (useful
-    // for bypassing geo-blocks on OpenAI's image API). When empty, image
-    // gen goes direct. Chat and Tavily search ALWAYS go direct regardless
-    // of this setting.
-    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"代理 URL", nil)]];
+    [sw setOn:streamingOn animated:NO];
+    [sw addTarget:self action:@selector(_streamingOutputToggle:)
+     forControlEvents:UIControlEventValueChanged];
+    sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     CGRect f = cell.contentView.bounds;
-    CGRect tfFrame = CGRectMake(kPad + kLabelWidth + 8, (kRowH - 30) / 2,
-                                 f.size.width - kPad - kLabelWidth - 8 - kPad - 8, 30);
-    UITextField *tf = [self _textFieldWithFrame:tfFrame
-                                            key:SettingsKeyTransitURL
-                                      placeholder:NSLocalizedString(@"可选，生图代理用", nil)
-                                       isSecure:NO
-                                  keyboardType:UIKeyboardTypeURL];
-    tf.text = [settings objectForKey:SettingsKeyTransitURL];
-    [cell.contentView addSubview:tf];
+    sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+    [cell.contentView addSubview:sw];
     return cell;
 }
 
