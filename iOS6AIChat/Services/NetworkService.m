@@ -274,23 +274,14 @@
     // OpenAI /v1/chat/completions format below.
     BOOL anthropic = [SettingsViewController providerUsesAnthropicFormat:self.provider];
 
-    // v261025-12: don't read a mutated self.transitURL — if a prior -1012
-    // fallback set httpFallbackTried=YES, compute the http URL from the
-    // ORIGINAL transitURL (which is never mutated now). This prevents
-    // service-instance state poisoning across sends / tool-call turns.
-    NSString *base;
-    if (self.useTransit) {
-        if (self.httpFallbackTried && [self.transitURL hasPrefix:@"https://"]) {
-            base = [NetworkService _httpFallbackForURLString:self.transitURL];
-        } else {
-            base = self.transitURL;
-        }
-    } else {
-        base = self.baseURL;
-    }
+    // v261103-2: chat ALWAYS goes direct to the provider's baseURL.
+    // The transit server is no longer used for chat (user testing showed
+    // iOS 6 TLS reaches providers directly, and transit caused more errors
+    // than it solved). The transitURL property is kept only for image gen
+    // (which may use it as an optional geo-proxy).
+    NSString *base = self.baseURL;
     if (!base || base.length == 0) {
-        base = self.useTransit ? @"https://ai-transit.awa.lat"
-                               : (anthropic ? @"https://api.anthropic.com" : @"https://api.openai.com");
+        base = anthropic ? @"https://api.anthropic.com" : @"https://api.openai.com";
     }
     NSString *endpoint = [base stringByTrimmingCharactersInSet:
                           [NSCharacterSet characterSetWithCharactersInString:@"/"]];
@@ -370,29 +361,8 @@
         }
         [req setValue:@"2023-06-01" forHTTPHeaderField:@"anthropic-version"];
     }
-    // v261025-3: transit is now a pure TLS pass-through proxy.
-    // Client tells transit where to forward via X-Target-URL header.
-    if (self.useTransit) {
-        NSString *target = [self.baseURL stringByTrimmingCharactersInSet:
-                            [NSCharacterSet characterSetWithCharactersInString:@"/"]];
-        if (target.length > 0) {
-            NSString *targetEndpoint;
-            if (anthropic) {
-                if ([target hasSuffix:@"/v1"] || [target hasSuffix:@"/v1/"]) {
-                    targetEndpoint = [target stringByAppendingPathComponent:@"messages"];
-                } else {
-                    targetEndpoint = [target stringByAppendingPathComponent:@"v1/messages"];
-                }
-            } else {
-                if ([target hasSuffix:@"/v1"] || [target hasSuffix:@"/v1/"]) {
-                    targetEndpoint = [target stringByAppendingPathComponent:@"chat/completions"];
-                } else {
-                    targetEndpoint = [target stringByAppendingPathComponent:@"v1/chat/completions"];
-                }
-            }
-            [req setValue:targetEndpoint forHTTPHeaderField:@"X-Target-URL"];
-        }
-    }
+    // v261103-2: removed X-Target-URL header — chat no longer goes through
+    // a transit proxy. The request goes directly to the provider's endpoint.
     [req setHTTPBody:bodyData];
 
     // Reset accumulators for this turn.
@@ -971,34 +941,11 @@
 
 - (void)connection:(NSURLConnection *)connection didFailWithError:(NSError *)error
 {
-    // v261025-3: iOS 6 TLS transit fallback — when the STREAM dies with
-    // -1012 (NSURLErrorUserCancelledAuthentication = the TLS handshake
-    // aborted during certificate negotiation; iOS 6 SecureTransport can't
-    // negotiate Cloudflare's modern-only edge), flip the relay base to
-    // http and relaunch the WHOLE stream once. Field evidence: plain HTTP
-    // to the same worker reaches it end-to-end (a 403 upstream body came
-    // back through it), so the relay serves both schemes. Direct-mode
-    // (non-transit) requests are NEVER downgraded.
-    // v261102-1: also fire on -1200 (NSURLErrorSecureConnectionFailed) —
-    // user-reported image-upload SSL error: iOS 6 SecureTransport aborts
-    // mid-handshake against some Cloudflare edge configs and surfaces as
-    // -1200 instead of -1012. Same remedy: retry the whole stream over
-    // plain HTTP through the transit worker (which serves both schemes).
-    if (self.useTransit && !self.httpFallbackTried &&
-        (error.code == -1012 || error.code == -1200) &&
-        [self.transitURL isKindOfClass:[NSString class]] &&
-        [self.transitURL hasPrefix:@"https://"]) {
-        // v261025-12: do NOT mutate self.transitURL. Set the flag only —
-        // _launchStreamWithMessages reads httpFallbackTried and computes
-        // the http URL from the ORIGINAL (unmutated) transitURL. This
-        // prevents state poisoning across sends / tool-call turns.
-        self.httpFallbackTried = YES;
-        NSString *httpBase = [NetworkService _httpFallbackForURLString:self.transitURL];
-        [[Logger sharedLogger] warn:[NSString stringWithFormat:
-            @"NET ⚠ https 中转 TLS -1012 (iOS6 无法与 Cloudflare 完成握手) — 整条流改用 http 重发: %@", httpBase ?: @"(fallback failed)"]];
-        [self _launchStreamWithMessages:self.baseMessages];
-        return;
-    }
+    // v261103-2: removed the transit TLS fallback (https → http retry).
+    // Chat no longer goes through a transit proxy, so there's no transit
+    // URL to downgrade. Direct connections stay https — if iOS 6 TLS
+    // can't negotiate with a specific provider, the error surfaces as-is
+    // and the user sees the real failure reason (not a masked retry).
     NSTimeInterval dur = [NSDate timeIntervalSinceReferenceDate] - self.streamStartTs;
     // v261025-1: FAIL log with duration + OS-level error.
     [[Logger sharedLogger] error:[NSString stringWithFormat:
@@ -2071,29 +2018,10 @@
                             error:(NSError **)error
 {
     if (!query || query.length == 0) return nil;
-    NSString *endpoint;
-    // Independent control: Tavily routing is determined SOLELY by the
-    // 'transitWebSearch' toggle, NOT by 'useTransit'.
-    // This matches the user's spec:
-    //   - useTransit=NO, transitWebSearch=YES → only Tavily goes through transit
-    //   - useTransit=YES, transitWebSearch=YES → both AI + Tavily go through transit
-    //   - useTransit=YES, transitWebSearch=NO → only AI goes through transit
-    //   - useTransit=NO, transitWebSearch=NO → both direct
-    BOOL transitWebSearch = YES;  // default ON
-    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"transitWebSearch"]) {
-        transitWebSearch = [[NSUserDefaults standardUserDefaults] boolForKey:@"transitWebSearch"];
-    }
-    if (transitWebSearch) {
-        NSString *base = transitURL;
-        if (!base || base.length == 0) {
-            base = @"https://ai-transit.awa.lat";
-        }
-        base = [base stringByTrimmingCharactersInSet:
-                [NSCharacterSet characterSetWithCharactersInString:@"/"]];
-        endpoint = [base stringByAppendingPathComponent:@"v1/tavily/search"];
-    } else {
-        endpoint = @"https://api.tavily.com/search";
-    }
+    // v261103-2: Tavily search ALWAYS goes direct to api.tavily.com.
+    // The transitWebSearch toggle has been removed — user testing showed
+    // api.tavily.com is directly reachable from iOS 6 (no Cloudflare).
+    NSString *endpoint = @"https://api.tavily.com/search";
 
     if (maxResults < 1) maxResults = 1;
     if (maxResults > 8) maxResults = 8;
@@ -2106,9 +2034,6 @@
     NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
     if (!bodyData) return nil;
 
-    // v261025-1: search request log (the user asked for deep search-
-    // failure diagnosis — is it network or app logic? This line shows
-    // exactly which endpoint was tried.)
     [[Logger sharedLogger] info:[NSString stringWithFormat:
         @"SEARCH → POST %@ | q=%@… max=%ld", endpoint,
         ([query length] > 40 ? [NSString stringWithFormat:@"%@…", [query substringToIndex:40]] : query),
@@ -2118,40 +2043,18 @@
     NSURLResponse *resp = nil;
     NSError *netErr = nil;
     NSData *data = nil;
-    // v261025-3: single https→http retry when the transit TLS handshake
-    // dies with -1012 (iOS 6 vs Cloudflare). Only for the transitWebSearch
-    // branch — the direct api.tavily.com branch is never downgraded.
-    NSString *attemptEndpoint = endpoint;
-    for (NSInteger attempt = 0; attempt < 2; attempt++) {
-        NSURL *url = [NSURL URLWithString:attemptEndpoint];
-        if (!url) { resp = nil; netErr = nil; data = nil; break; }
+    // v261103-2: direct connection to api.tavily.com — no retry loop,
+    // no http fallback. The old transit-based retry was removed along
+    // with the transitWebSearch toggle.
+    NSURL *url = [NSURL URLWithString:endpoint];
+    if (url) {
         NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
                                                               cachePolicy:NSURLRequestReloadIgnoringCacheData
                                                           timeoutInterval:30.0];
         [req setHTTPMethod:@"POST"];
         [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-        // v261025-3: transit no longer routes by X-Provider. Tell it the
-        // real Tavily endpoint via X-Target-URL.
-        if (transitWebSearch) {
-            [req setValue:@"https://api.tavily.com/search"
-               forHTTPHeaderField:@"X-Target-URL"];
-        }
         [req setHTTPBody:bodyData];
-        resp = nil;
-        netErr = nil;
         data = [NetworkService _syncSendRequest:req response:&resp error:&netErr];
-        if (!netErr) break;
-        if (attempt == 0 && transitWebSearch &&
-            (netErr.code == -1012 || netErr.code == -1200)) {
-            NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
-            if (httpEndpoint) {
-                [[Logger sharedLogger] warn:[NSString stringWithFormat:
-                    @"SEARCH ⚠ https 中转 TLS -1012 (iOS6 握手失败) — 自动改用 http 重试: %@", httpEndpoint]];
-                attemptEndpoint = httpEndpoint;
-                continue;
-            }
-        }
-        break;
     }
     NSTimeInterval dur = -[t0 timeIntervalSinceNow];
     if (netErr) {
@@ -2209,9 +2112,11 @@
                                apiKey:(NSString *)apiKey
                                  error:(NSError **)error
 {
-    NSString *base = useTransit ? transitURL : baseURL;
+    // v261103-2: always go direct to the provider's baseURL. The useTransit
+    // parameter is kept for signature compat but ignored.
+    NSString *base = baseURL;
     if (!base || base.length == 0) {
-        base = useTransit ? @"https://ai-transit.awa.lat" : @"https://api.openai.com";
+        base = @"https://api.openai.com";
     }
     NSString *endpoint = [base stringByTrimmingCharactersInSet:
                           [NSCharacterSet characterSetWithCharactersInString:@"/"]];
@@ -2224,12 +2129,9 @@
     NSURLResponse *resp = nil;
     NSError *netErr = nil;
     NSData *data = nil;
-    // v261025-3: single https→http retry on -1012 — transit branch only
-    // (direct baseURL is never downgraded).
-    NSString *attemptEndpoint = endpoint;
-    for (NSInteger attempt = 0; attempt < 2; attempt++) {
-        NSURL *url = [NSURL URLWithString:attemptEndpoint];
-        if (!url) { resp = nil; netErr = nil; data = nil; break; }
+    // v261103-2: single direct request — no retry loop.
+    NSURL *url = [NSURL URLWithString:endpoint];
+    if (url) {
         NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
                                                               cachePolicy:NSURLRequestReloadIgnoringCacheData
                                                           timeoutInterval:15.0];
@@ -2238,36 +2140,7 @@
             [req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey]
             forHTTPHeaderField:@"Authorization"];
         }
-        // v261025-3: transit now requires X-Target-URL (no more X-Provider).
-        // Build target = {baseURL}/v1/models.
-        if (useTransit) {
-            NSString *target = [baseURL stringByTrimmingCharactersInSet:
-                                [NSCharacterSet characterSetWithCharactersInString:@"/"]];
-            if (target.length > 0) {
-                NSString *targetEndpoint;
-                if ([target hasSuffix:@"/v1"] || [target hasSuffix:@"/v1/"]) {
-                    targetEndpoint = [target stringByAppendingPathComponent:@"models"];
-                } else {
-                    targetEndpoint = [target stringByAppendingPathComponent:@"v1/models"];
-                }
-                [req setValue:targetEndpoint forHTTPHeaderField:@"X-Target-URL"];
-            }
-        }
-        resp = nil;
-        netErr = nil;
         data = [NetworkService _syncSendRequest:req response:&resp error:&netErr];
-        if (!netErr) break;
-        if (attempt == 0 && useTransit &&
-            (netErr.code == -1012 || netErr.code == -1200)) {
-            NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
-            if (httpEndpoint) {
-                [[Logger sharedLogger] warn:[NSString stringWithFormat:
-                    @"MODELS ⚠ https 中转 TLS -1012 (iOS6 握手失败) — 自动改用 http 重试: %@", httpEndpoint]];
-                attemptEndpoint = httpEndpoint;
-                continue;
-            }
-        }
-        break;
     }
     NSTimeInterval dur = -[t0 timeIntervalSinceNow];
     if (netErr) {
@@ -2482,15 +2355,25 @@
         return nil;
     }
 
-    // Always use transit for image gen — direct API calls would hit iOS 6
-    // TLS issues with both api.openai.com and open.bigmodel.cn.
-    NSString *base = transitURL;
-    if (!base || base.length == 0) {
-        base = @"https://ai-transit.awa.lat";
+    // v261103-2: image gen goes DIRECT to the provider's image API by
+    // default. If the user configured a proxy URL (in Advanced settings),
+    // route through it as a geo-proxy (useful for bypassing OpenAI's
+    // country/region blocks). The old hardcoded transit fallback
+    // (ai-transit.awa.lat) is removed — it was in a blocked region
+    // anyway and didn't help.
+    NSString *endpoint;
+    NSString *proxyURL = transitURL;
+    BOOL hasProxy = [proxyURL isKindOfClass:[NSString class]] && proxyURL.length > 0;
+    if (hasProxy) {
+        // Route through the user's proxy. X-Target-URL tells the proxy
+        // where to forward.
+        NSString *base = [proxyURL stringByTrimmingCharactersInSet:
+                [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+        endpoint = [base stringByAppendingPathComponent:@"v1/images/generations"];
+    } else {
+        // Direct to the provider's image API.
+        endpoint = imageTarget;
     }
-    base = [base stringByTrimmingCharactersInSet:
-            [NSCharacterSet characterSetWithCharactersInString:@"/"]];
-    NSString *endpoint = [base stringByAppendingPathComponent:@"v1/images/generations"];
 
     // Build body — per model family:
     //   dall-e-*:  {model, prompt, n, size, response_format=b64_json}
@@ -2519,38 +2402,26 @@
     NSURLResponse *resp = nil;
     NSError *netErr = nil;
     NSData *data = nil;
-    NSString *attemptEndpoint = endpoint;
-    for (NSInteger attempt = 0; attempt < 2; attempt++) {
-        NSURL *url = [NSURL URLWithString:attemptEndpoint];
-        if (!url) { resp = nil; netErr = nil; data = nil; break; }
+    // v261103-2: single direct request — no retry loop, no http fallback.
+    // The old transit TLS retry was removed along with the transit server.
+    NSURL *url = [NSURL URLWithString:endpoint];
+    if (url) {
         NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
                                                               cachePolicy:NSURLRequestReloadIgnoringCacheData
                                                           timeoutInterval:120.0];  // image gen can be slow
         [req setHTTPMethod:@"POST"];
         [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-        // v261025-8: X-Target-URL = the resolved per-entry / provider image
-        // endpoint (no more provider-only mapping).
-        [req setValue:imageTarget forHTTPHeaderField:@"X-Target-URL"];
+        // v261103-2: only set X-Target-URL when going through a proxy.
+        // Direct requests don't need it.
+        if (hasProxy) {
+            [req setValue:imageTarget forHTTPHeaderField:@"X-Target-URL"];
+        }
         if (apiKey.length > 0) {
             [req setValue:[NSString stringWithFormat:@"Bearer %@", apiKey]
             forHTTPHeaderField:@"Authorization"];
         }
         [req setHTTPBody:bodyData];
-        resp = nil;
-        netErr = nil;
         data = [NetworkService _syncSendRequest:req response:&resp error:&netErr];
-        if (!netErr) break;
-        if (attempt == 0 &&
-            (netErr.code == -1012 || netErr.code == -1200)) {
-            NSString *httpEndpoint = [NetworkService _httpFallbackForURLString:attemptEndpoint];
-            if (httpEndpoint) {
-                [[Logger sharedLogger] warn:[NSString stringWithFormat:
-                    @"IMG ⚠ https 中转 TLS -1012 (iOS6 握手失败) — 自动改用 http 重试: %@", httpEndpoint]];
-                attemptEndpoint = httpEndpoint;
-                continue;
-            }
-        }
-        break;
     }
     if (netErr) {
         if (error) *error = netErr;

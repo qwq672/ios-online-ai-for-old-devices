@@ -108,12 +108,15 @@ static CGFloat const kRowH = 44.0f;
 
 enum {
     kSectionTheme = 0,
-    kSectionTransit,
+    // v261103-2: removed kSectionTransit — transit server is no longer
+    // needed for chat (iOS 6 TLS reaches providers directly) or Tavily
+    // (api.tavily.com is directly reachable). The optional proxy URL
+    // moved to kSectionAdvanced (for image gen geo-proxy use case).
     kSectionDirect,
     kSectionModel,
     kSectionWebSearch,
     kSectionPrompt,
-    kSectionAdvanced,   // 流式输出 + 使用中转服务器模型 + 支持思考
+    kSectionAdvanced,   // 流式输出 + 可选代理 URL
     kSectionAbout,
     kSectionReset,
     kSectionCount
@@ -471,7 +474,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                                 SettingsKeyUseTransit, SettingsKeyTransitURL,
                                 SettingsKeyProvider, SettingsKeyBaseURL,
                                 SettingsKeyAPIKey, SettingsKeyModel,
-                                SettingsKeyModelList,    // also reset saved model list
+                                SettingsKeyModelList,
                                 SettingsKeyTemperature, SettingsKeySystemPrompt,
                                 SettingsKeyWebSearchEnabled, SettingsKeyTavilyAPIKey,
                                 SettingsKeyTavilyMaxResults,
@@ -483,7 +486,11 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                                 SettingsKeyEnableTimeTool,
                                 SettingsKeyEnableDeviceInfoTool,
                                 // v261103-1: show-suggestions toggle.
-                                SettingsKeyShowSuggestions]) {
+                                SettingsKeyShowSuggestions,
+                                // v261103-2: transitWebSearch is dead code now
+                                // (toggle removed), but reset it anyway for
+                                // cleanliness on old installs.
+                                @"transitWebSearch"]) {
             [d removeObjectForKey:key];
         }
         [d synchronize];
@@ -516,13 +523,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
     NSInteger logical = [self _logicalSectionForDisplayed:section];
     switch (logical) {
         case kSectionTheme:     return 4;  // dark mode, font size, image compression, show suggestions
-        // v261025-11 去重: 6->4 — 删「默认提供商」(与两层 provider 条目体系
-        // 重复, 全局 provider 只剩 fallback 用途) 和「中转默认模型」
-        // (每个模型条目都有明确 id, 让服务器选默认已无意义; NetworkService
-        // 读不到该 key 默认 NO, 行为不变)。
-        // v261025-13: 4→3 — removed 中转自带模型 (server /v1/transit/models
-        // returns 404, feature never worked; user supplies own models).
-        case kSectionTransit:    return 3;  // 使用中转 / Transit URL / 中转搜索
+        // v261103-2: removed kSectionTransit (was 3 rows: useTransit / Transit URL / 中转搜索).
         case kSectionDirect:     return 2;
         // v261025-8: 模型管理入口（模型/生图模型/能力开关全部集中在
         // ModelManagementViewController —— 设置页不再重复一份模型表单，
@@ -535,7 +536,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         // 获取设备信息工具 / 显示工具调用.
         case kSectionWebSearch:  return 6;
         case kSectionPrompt:     return 1;
-        case kSectionAdvanced:   return 1;  // 流式输出
+        case kSectionAdvanced:   return 2;  // 流式输出 + 可选代理 URL
         case kSectionAbout:      return 5;  // author / email / version / github / license
         case kSectionReset:      return 1;
         default: return 0;
@@ -589,8 +590,8 @@ titleForHeaderInSection:(NSInteger)section
     NSInteger logical = [self _logicalSectionForDisplayed:section];
     switch (logical) {
         case kSectionTheme:     return NSLocalizedString(@"主题", nil);
-        case kSectionTransit:    return NSLocalizedString(@"中转服务器", nil);
-        case kSectionDirect:     return NSLocalizedString(@"直连后端", nil);
+        // v261103-2: removed 中转服务器 section.
+        case kSectionDirect:     return NSLocalizedString(@"API 设置", nil);
         case kSectionModel:      return NSLocalizedString(@"模型", nil);
         case kSectionWebSearch:  return NSLocalizedString(@"搜索与工具", nil);
         case kSectionPrompt:     return NSLocalizedString(@"系统提示词", nil);
@@ -656,8 +657,7 @@ titleForFooterInSection:(NSInteger)section
     switch (logical) {
         case kSectionTheme:
             return [self _themeCellForRow:indexPath.row cell:cell];
-        case kSectionTransit:
-            return [self _transitCellForRow:indexPath.row cell:cell settings:settings];
+        // v261103-2: removed kSectionTransit case.
         case kSectionDirect:
             return [self _directCellForRow:indexPath.row cell:cell settings:settings];
         case kSectionModel:
@@ -881,60 +881,9 @@ titleForFooterInSection:(NSInteger)section
     return cell;
 }
 
-- (UITableViewCell *)_transitCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
-{
-    if (row == 0) {
-        // Transit toggle.
-        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"使用中转", nil)]];
-        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-        [sw setOn:_useTransit animated:NO];
-        [sw addTarget:self action:@selector(_transitToggleChanged:)
-         forControlEvents:UIControlEventValueChanged];
-        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-        CGRect f = cell.contentView.bounds;
-        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
-        [cell.contentView addSubview:sw];
-        return cell;
-    }
-    if (row == 1) {
-        // Transit URL text field.
-        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"Transit URL", nil)]];
-        CGRect f = cell.contentView.bounds;
-        CGRect tfFrame = CGRectMake(kPad + kLabelWidth + 8, (kRowH - 30) / 2,
-                                     f.size.width - kPad - kLabelWidth - 8 - kPad - 8, 30);
-        UITextField *tf = [self _textFieldWithFrame:tfFrame
-                                                  key:SettingsKeyTransitURL
-                                            placeholder:kDefaultTransitURL
-                                              isSecure:NO
-                                         keyboardType:UIKeyboardTypeURL];
-        tf.text = [settings objectForKey:SettingsKeyTransitURL];
-        [cell.contentView addSubview:tf];
-        return cell;
-    }
-    // v261025-11 去重: row 2 is now 中转网络搜索 (默认提供商 row removed —
-    // superseded by the two-tier provider entries in ModelMgmt).
-    if (row == 2) {
-        // 中转网络搜索服务 toggle (default ON).
-        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"中转搜索", nil)]];
-        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-        BOOL transitWebSearch = YES;
-        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"transitWebSearch"]) {
-            transitWebSearch = [[NSUserDefaults standardUserDefaults] boolForKey:@"transitWebSearch"];
-        }
-        [sw setOn:transitWebSearch animated:NO];
-        [sw addTarget:self action:@selector(_transitWebSearchToggle:)
-         forControlEvents:UIControlEventValueChanged];
-        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-        CGRect f3 = cell.contentView.bounds;
-        sw.frame = CGRectMake(f3.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
-        [cell.contentView addSubview:sw];
-        return cell;
-    }
-    // v261025-13: removed 中转自带模型 row (server endpoint 404 —
-    // feature never worked; user supplies own models via 模型管理).
-    // kSectionTransit is now 3 rows (使用中转 / Transit URL / 中转搜索).
-    return cell;  // safety — should never reach here (only rows 0-2 requested)
-}
+// v261103-2: removed _transitCellForRow: method entirely — the 中转服务器
+// settings section has been deleted. Chat + Tavily always go direct; the
+// optional proxy URL moved to the Advanced section (_advancedCellForRow:).
 
 - (UITableViewCell *)_directCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
 {
@@ -1145,22 +1094,40 @@ titleForFooterInSection:(NSInteger)section
 
 - (UITableViewCell *)_advancedCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
 {
-    // Only one row left in Advanced: 流式输出
-    // (useServerModel moved to Transit section, thinkingSupport moved
-    // to Model section)
-    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"流式输出", nil)]];
-    UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-    BOOL streamingOn = YES;
-    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingOutput"]) {
-        streamingOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"streamingOutput"];
+    if (row == 0) {
+        // 流式输出 toggle.
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"流式输出", nil)]];
+        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+        BOOL streamingOn = YES;
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingOutput"]) {
+            streamingOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"streamingOutput"];
+        }
+        [sw setOn:streamingOn animated:NO];
+        [sw addTarget:self action:@selector(_streamingOutputToggle:)
+         forControlEvents:UIControlEventValueChanged];
+        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f = cell.contentView.bounds;
+        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+        [cell.contentView addSubview:sw];
+        return cell;
     }
-    [sw setOn:streamingOn animated:NO];
-    [sw addTarget:self action:@selector(_streamingOutputToggle:)
-     forControlEvents:UIControlEventValueChanged];
-    sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    // v261103-2: row 1 — optional proxy URL for image generation.
+    // This replaces the old "Transit URL" field from the removed 中转服务器
+    // section. When set, image generation routes through this proxy (useful
+    // for bypassing geo-blocks on OpenAI's image API). When empty, image
+    // gen goes direct. Chat and Tavily search ALWAYS go direct regardless
+    // of this setting.
+    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"代理 URL", nil)]];
     CGRect f = cell.contentView.bounds;
-    sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
-    [cell.contentView addSubview:sw];
+    CGRect tfFrame = CGRectMake(kPad + kLabelWidth + 8, (kRowH - 30) / 2,
+                                 f.size.width - kPad - kLabelWidth - 8 - kPad - 8, 30);
+    UITextField *tf = [self _textFieldWithFrame:tfFrame
+                                            key:SettingsKeyTransitURL
+                                      placeholder:NSLocalizedString(@"可选，生图代理用", nil)
+                                       isSecure:NO
+                                  keyboardType:UIKeyboardTypeURL];
+    tf.text = [settings objectForKey:SettingsKeyTransitURL];
+    [cell.contentView addSubview:tf];
     return cell;
 }
 
@@ -1400,11 +1367,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     [tmp searchTransitBundledModels];
 }
 
-- (IBAction)_transitWebSearchToggle:(UISwitch *)sw
-{
-    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"transitWebSearch"];
-    [[NSUserDefaults standardUserDefaults] synchronize];
-}
+// v261103-2: removed _transitWebSearchToggle: — transit search toggle
+// deleted along with the 中转服务器 section. Tavily always goes direct.
 
 - (IBAction)_imageCompressionChanged:(UISegmentedControl *)seg
 {
@@ -1434,16 +1398,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     [_tableView reloadData];
 }
 
-- (IBAction)_transitToggleChanged:(UISwitch *)sw
-{
-    self.useTransit = sw.on;
-    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    [d setBool:sw.on forKey:SettingsKeyUseTransit];
-    [d synchronize];
-    [_fields release];
-    _fields = [[NSMutableDictionary alloc] init];
-    [self.tableView reloadData];
-}
+// v261103-2: removed _transitToggleChanged: — transit toggle deleted
+// along with the 中转服务器 section. Chat always goes direct now.
 
 // v261025-8: provider picker sheet (tag 450). iOS 6 cancel occupies
 // index 0; provider options live at 1..N (6 providers + 自定义 at 7).
