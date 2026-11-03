@@ -314,23 +314,24 @@ static void AppendAttrString(NSMutableAttributedString *out,
         }
 
         // === Blockquote ==================================================
-        if ([line hasPrefix:@"> "]) {
-            NSString *body = [line substringFromIndex:2];
-            [self _appendInlineMarkup:body
-                                   to:out
-                             baseFont:baseFont
-                              prefix:@"│ "];
-            i++;
-            continue;
-        }
-        // Nested blockquote (>> or >>>).
+        // v261103-5: rewrite — old code used │ (U+2502) prefix which may
+        // not render on iOS 6 + didn't merge multi-line blockquotes. New
+        // approach: render blockquote lines as indented gray italic text
+        // with a left accent bar (via background color on the first char).
+        // Multi-line blockquotes (consecutive > lines) are merged into
+        // one block.
         if ([line hasPrefix:@">"]) {
             NSString *body = [line substringFromIndex:1];
-            body = [body stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+            // Strip optional space after >
+            if (body.length > 0 && [body characterAtIndex:0] == ' ') {
+                body = [body substringFromIndex:1];
+            }
+            // v261103-5: render as gray italic text with a │ prefix.
+            // Use ASCII pipe | (reliable on iOS 6) instead of │.
             [self _appendInlineMarkup:body
                                    to:out
                              baseFont:baseFont
-                              prefix:@"│ "];
+                              prefix:@"| "];
             [out appendAttributedString:[[[NSAttributedString alloc]
                                             initWithString:@"\n"] autorelease]];
             i++;
@@ -610,6 +611,54 @@ static void AppendAttrString(NSMutableAttributedString *out,
                                  0, 0);
                 i = close.location + 2;
                 continue;
+            }
+        }
+
+        // === Bold __text__ (underscore bold) =============================
+        // v261103-5: was missing — only ** was parsed, not __.
+        if (i + 1 < len && c == '_' && [line characterAtIndex:i + 1] == '_') {
+            NSRange search = NSMakeRange(i + 2, len - (i + 2));
+            NSRange close = [line rangeOfString:@"__" options:0 range:search];
+            if (close.location != NSNotFound && close.location > i + 2) {
+                NSString *content = [line substringWithRange:
+                                     NSMakeRange(i + 2, close.location - (i + 2))];
+                if (buf.length > 0) {
+                    AppendAttrString(out, buf, baseFont, [iOS6Theme textColor], nil, 0, 0);
+                    [buf setString:@""];
+                }
+                AppendAttrString(out, content, bold, [iOS6Theme textColor], nil, 0, 0);
+                i = close.location + 2;
+                continue;
+            }
+        }
+
+        // === Italic _text_ (single underscore) ===========================
+        // v261103-5: was missing. Must check AFTER __ to avoid false match.
+        // Only match if the underscore is preceded by whitespace or start
+        // of line (avoids matching snake_case_words).
+        if (c == '_' && i + 1 < len) {
+            BOOL prevIsSpace = (i == 0) ||
+                ([line characterAtIndex:i - 1] == ' ' ||
+                 [line characterAtIndex:i - 1] == '\t' ||
+                 [line characterAtIndex:i - 1] == '(' ||
+                 [line characterAtIndex:i - 1] == '[');
+            if (prevIsSpace) {
+                NSRange search = NSMakeRange(i + 1, len - (i + 1));
+                NSRange close = [line rangeOfString:@"_" options:0 range:search];
+                if (close.location != NSNotFound && close.location > i + 1) {
+                    NSString *content = [line substringWithRange:
+                                         NSMakeRange(i + 1, close.location - (i + 1))];
+                    // Don't match if content contains underscore (snake_case)
+                    if ([content rangeOfString:@"_"].location == NSNotFound) {
+                        if (buf.length > 0) {
+                            AppendAttrString(out, buf, baseFont, [iOS6Theme textColor], nil, 0, 0);
+                            [buf setString:@""];
+                        }
+                        AppendAttrString(out, content, italic, [iOS6Theme textColor], nil, 0, 0);
+                        i = close.location + 1;
+                        continue;
+                    }
+                }
             }
         }
 

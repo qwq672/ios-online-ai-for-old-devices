@@ -845,12 +845,12 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         _thinkingSep.hidden = _thinkingCollapsed;
         NSString *headerTitle;
         if (thinkingLive) {
-            headerTitle = @"💭 深度思考中…";
+            headerTitle = @"💭 推理中…";
         } else if (_thinkingCollapsed) {
-            headerTitle = [NSString stringWithFormat:@"💭 深度思考 (点击展开) — %lu 字",
+            headerTitle = [NSString stringWithFormat:@"💭 推理过程 (点击展开) — %lu 字",
                (unsigned long)displayedThinking.length];
         } else {
-            headerTitle = @"💭 深度思考 (点击收起)";
+            headerTitle = @"💭 推理过程 (点击收起)";
         }
         [_thinkingToggle setTitle:headerTitle forState:UIControlStateNormal];
 

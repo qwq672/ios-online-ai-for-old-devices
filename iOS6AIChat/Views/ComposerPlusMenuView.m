@@ -266,7 +266,7 @@ enum {
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
     if (section == kPMSectionToggles) {
-        return NSLocalizedString(@"生图开启时输入框变蓝；深度思考/联网搜索在生图模式下不可用。", nil);
+        return NSLocalizedString(@"生图开启时输入框变蓝；分段推理/联网搜索在生图模式下不可用。", nil);
     }
     if (section == kPMSectionModels) {
         if ([_starredChatModels count] + [_starredImageModels count] == 0) {
@@ -318,7 +318,7 @@ enum {
         BOOL on = NO;
         NSInteger tag = 0;
         if (indexPath.row == 0) {
-            label = NSLocalizedString(@"深度思考", nil);
+            label = NSLocalizedString(@"分段推理", nil);
             on = [ComposerView deepThinkingEnabled];
             tag = 200;
         } else if (indexPath.row == 1) {

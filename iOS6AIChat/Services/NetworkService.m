@@ -1433,6 +1433,18 @@
         for (NSDictionary *tr in toolResults) {
             [newMessages addObject:tr];
         }
+        // v261103-5: FIX "tool call stops answering" bug — after tool
+        // results, append a system-level nudge telling the AI to respond.
+        // Without this, some models (especially DeepSeek) see the tool
+        // results and generate EMPTY content (they "think" but don't
+        // answer), triggering the "空回复" error path.
+        // The nudge is a user-role message (not system — system messages
+        // mid-conversation can confuse some models) that says "based on
+        // the tool results above, please give your answer to the user".
+        [newMessages addObject:@{
+            @"role": @"user",
+            @"content": @"Please provide your final answer based on the tool results above. Do not call more tools unless necessary."
+        }];
         self.baseMessages = newMessages;
 
         // v261103-1: REMOVED inline result summary ("[结果] %@\n\n").
