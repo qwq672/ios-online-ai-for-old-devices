@@ -2,8 +2,6 @@
 
 一个用 Objective-C + 纯代码 UI 写的 iOS 聊天 App，UI 复刻 iOS 6 的拟物化质感（高光、皮革纹理、圆角浮雕气泡）。
 
-支持三种 AI provider：**智谱 GLM / OpenAI / Ollama**，并自带中转开关——开启后所有请求经默认中转服务器 `api-ai.awa.lat` 路由到对应后端，规避 iOS 6 的 TLS 兼容问题；想自建中转见 [`github.com/qwq672/online-ai-transit-server`](https://github.com/qwq672/online-ai-transit-server)。
-
 | 功能                | 实现                                                                 |
 | ------------------- | -------------------------------------------------------------------- |
 | **流式回复**        | `NetworkService` 用 `NSURLConnection` + chunked SSE 增量解析         |
