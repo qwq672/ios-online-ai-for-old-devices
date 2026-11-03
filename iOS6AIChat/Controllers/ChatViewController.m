@@ -1224,7 +1224,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     // 告诉模型: 列表、解释、说明文字直接用 markdown, 不要裹 code fence。
     // code fence 仅用于真正的代码片段。
     systemPrompt = [NSString stringWithFormat:
-        @"%@\n\nOutput format: Use plain markdown for lists (- item, 1. item) and explanations. Do NOT wrap lists, explanations, or normal prose in ``` code fences — code fences are for actual code only. Keep responses concise unless asked for detail.",
+        @"%@\n\nOutput format: Use plain markdown for lists (- item, 1. item), tables (| col1 | col2 |), blockquotes (> text), and explanations. Do NOT wrap lists, tables, blockquotes, or normal prose in ``` code fences — code fences are for actual code only. Keep responses concise unless asked for detail.",
         systemPrompt];
 
     // If deep thinking is on, augment the system prompt with a chain-of-

@@ -21,6 +21,7 @@ NSString *const ComposerViewSendMessageWebSearchKey     = @"ComposerViewSendMess
 NSString *const ComposerViewSendMessageImagesKey         = @"ComposerViewSendMessageImagesKey";
 
 static NSString * const kUDKeyDeepThinking = @"composer.deepThinking";
+static NSString * const kUDKeySegmentedReasoning = @"composer.segmentedReasoning";  // v261103-7
 static NSString * const kUDKeyWebSearch   = @"composer.webSearch";
 static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 
@@ -339,6 +340,9 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 
 + (BOOL)deepThinkingEnabled { NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyDeepThinking]; return n ? [n boolValue] : YES; }
 + (void)setDeepThinkingEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyDeepThinking]; [[NSUserDefaults standardUserDefaults] synchronize]; }
+// v261103-7: 分段推理 (default ON — was always-on before making it a toggle)
++ (BOOL)segmentedReasoningEnabled { NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeySegmentedReasoning]; return n ? [n boolValue] : YES; }
++ (void)setSegmentedReasoningEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeySegmentedReasoning]; [[NSUserDefaults standardUserDefaults] synchronize]; }
 + (BOOL)webSearchEnabled { NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:kUDKeyWebSearch]; return n ? [n boolValue] : NO; }
 + (void)setWebSearchEnabled:(BOOL)e { [[NSUserDefaults standardUserDefaults] setBool:e forKey:kUDKeyWebSearch]; [[NSUserDefaults standardUserDefaults] synchronize]; }
 + (BOOL)imageGenEnabled {

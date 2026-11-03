@@ -519,6 +519,14 @@
     // branch instead of the Tavily branch.
     NSMutableArray *toolsArray = [NSMutableArray array];
 
+    // v261103-7: 分段推理 toggle. When OFF, simple chat mode — no tools.
+    // When ON (default), full agent mode with multi-turn tool calls.
+    BOOL segmentedReasoning = YES;
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"composer.segmentedReasoning"]) {
+        segmentedReasoning = [[NSUserDefaults standardUserDefaults] boolForKey:@"composer.segmentedReasoning"];
+    }
+
+    if (segmentedReasoning) {
     // v261102-1: global toggles for the two lightweight tools.
     BOOL timeToolOn = YES;  // default ON
     if ([[NSUserDefaults standardUserDefaults] objectForKey:SettingsKeyEnableTimeTool]) {
@@ -662,6 +670,8 @@
             }
         }];
     }
+
+    } // end if (segmentedReasoning)
 
     if ([toolsArray count] > 0) {
         [body setObject:toolsArray forKey:@"tools"];

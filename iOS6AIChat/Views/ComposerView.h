@@ -69,6 +69,11 @@ extern NSString *const ComposerViewSendMessageImagesKey;
 
 + (BOOL)deepThinkingEnabled;
 + (void)setDeepThinkingEnabled:(BOOL)enabled;
+// v261103-7: 分段推理 — controls agent-style multi-turn behavior.
+// ON: AI can call tools, see results, think, and answer in multiple
+// rounds (agent mode). OFF: single response only (simple chat mode).
++ (BOOL)segmentedReasoningEnabled;
++ (void)setSegmentedReasoningEnabled:(BOOL)enabled;
 + (BOOL)webSearchEnabled;
 + (void)setWebSearchEnabled:(BOOL)enabled;
 + (BOOL)imageGenEnabled;

@@ -179,8 +179,24 @@ static void AppendAttrString(NSMutableAttributedString *out,
                 inFence = YES;
                 [fencedLines removeAllObjects];
             } else {
-                // Flush fenced code block.
-                [self _appendFencedCode:fencedLines to:out baseFont:baseFont];
+                // v261103-7: before rendering as code block, check if the
+                // fenced content is actually a TABLE (AI sometimes wraps
+                // tables in ``` fences). If we detect a table separator row
+                // (|---|---|), render as table instead of code block.
+                BOOL isTable = NO;
+                for (NSString *fl in fencedLines) {
+                    // A table separator row looks like |---|---| or | --- | --- |
+                    if ([fl hasPrefix:@"|"] && [fl hasSuffix:@"|"] &&
+                        [fl rangeOfString:@"---"].location != NSNotFound) {
+                        isTable = YES;
+                        break;
+                    }
+                }
+                if (isTable) {
+                    [self _appendTable:fencedLines to:out baseFont:baseFont];
+                } else {
+                    [self _appendFencedCode:fencedLines to:out baseFont:baseFont];
+                }
                 inFence = NO;
                 [fencedLines removeAllObjects];
                 [out appendAttributedString:[[[NSAttributedString alloc]
@@ -314,26 +330,21 @@ static void AppendAttrString(NSMutableAttributedString *out,
         }
 
         // === Blockquote ==================================================
-        // v261103-5: rewrite — old code used │ (U+2502) prefix which may
-        // not render on iOS 6 + didn't merge multi-line blockquotes. New
-        // approach: render blockquote lines as indented gray italic text
-        // with a left accent bar (via background color on the first char).
-        // Multi-line blockquotes (consecutive > lines) are merged into
-        // one block.
+        // v261103-7: proper blockquote UI — colored left bar + gray text
+        // + indentation. Replaces the old `| ` prefix approach which the
+        // user said "不要干啥都用代码块代替" — this is now visually distinct
+        // from code blocks.
         if ([line hasPrefix:@">"]) {
             NSString *body = [line substringFromIndex:1];
-            // Strip optional space after >
             if (body.length > 0 && [body characterAtIndex:0] == ' ') {
                 body = [body substringFromIndex:1];
             }
-            // v261103-5: render as gray italic text with a │ prefix.
-            // Use ASCII pipe | (reliable on iOS 6) instead of │.
-            [self _appendInlineMarkup:body
-                                   to:out
-                             baseFont:baseFont
-                              prefix:@"| "];
-            [out appendAttributedString:[[[NSAttributedString alloc]
-                                            initWithString:@"\n"] autorelease]];
+            // Render: ▎ (colored bar) + body in secondary color.
+            UIColor *barColor = [iOS6Theme tintColor];
+            UIColor *quoteColor = [iOS6Theme secondaryTextColor];
+            AppendAttrString(out, @"▎ ", baseFont, barColor, nil, 0, 0);
+            AppendAttrString(out, body, baseFont, quoteColor, nil, 0, 0);
+            AppendAttrString(out, @"\n", baseFont, quoteColor, nil, 0, 0);
             i++;
             continue;
         }

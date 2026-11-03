@@ -228,7 +228,7 @@ enum {
         objectForKey:SettingsKeyImageGenFeatureEnabled]
         ? [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyImageGenFeatureEnabled]
         : YES;
-    if (section == kPMSectionToggles) return igFeature ? 3 : 2;
+    if (section == kPMSectionToggles) return igFeature ? 4 : 3;  // v261103-7: +1 for 分段推理
     if (section == kPMSectionActions) return kPMActionCount;
     if (section == kPMSectionModels) {
         // starredChatModels + starredImageModels + 1 row for "更多...".
@@ -266,7 +266,7 @@ enum {
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
     if (section == kPMSectionToggles) {
-        return NSLocalizedString(@"生图开启时输入框变蓝；分段推理/联网搜索在生图模式下不可用。", nil);
+        return NSLocalizedString(@"生图开启时输入框变蓝；深度思考/联网搜索在生图模式下不可用。", nil);
     }
     if (section == kPMSectionModels) {
         if ([_starredChatModels count] + [_starredImageModels count] == 0) {
@@ -318,10 +318,19 @@ enum {
         BOOL on = NO;
         NSInteger tag = 0;
         if (indexPath.row == 0) {
-            label = NSLocalizedString(@"分段推理", nil);
+            label = NSLocalizedString(@"深度思考", nil);
             on = [ComposerView deepThinkingEnabled];
             tag = 200;
         } else if (indexPath.row == 1) {
+            // v261103-7: 分段推理 toggle — controls agent-style multi-turn
+            // behavior (multiple tool calls + thinking + answering rounds).
+            // When ON: AI can call tools, see results, think, and answer
+            // in multiple rounds (agent mode). When OFF: single response
+            // only, no tool-call loops (simple chat mode).
+            label = NSLocalizedString(@"分段推理", nil);
+            on = [ComposerView segmentedReasoningEnabled];
+            tag = 203;
+        } else if (indexPath.row == 2) {
             label = NSLocalizedString(@"联网搜索", nil);
             on = [ComposerView webSearchEnabled];
             tag = 201;
@@ -332,9 +341,9 @@ enum {
             on = [ComposerView imageGenEnabled];
             tag = 202;
         }
-        // When 生图 is ON, disable DT + Web toggles.
+        // When 生图 is ON, disable DT + 分段推理 + Web toggles.
         BOOL ig = [ComposerView imageGenEnabled];
-        if (indexPath.row < 2 && ig) {
+        if (indexPath.row < 3 && ig) {
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
             cell.textLabel.textColor = [iOS6Theme secondaryTextColor];
             cell.textLabel.alpha = 0.55f;
@@ -508,6 +517,9 @@ enum {
             if ([_delegate respondsToSelector:@selector(plusMenu:webSearchEnabledChanged:)]) {
                 [_delegate plusMenu:self webSearchEnabledChanged:sw.on];
             }
+            break;
+        case 203:  // v261103-7: 分段推理
+            [ComposerView setSegmentedReasoningEnabled:sw.on];
             break;
         case 202: {
             [ComposerView setImageGenEnabled:sw.on];
