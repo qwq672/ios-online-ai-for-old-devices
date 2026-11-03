@@ -606,8 +606,7 @@ titleForFooterInSection:(NSInteger)section
 {
     NSInteger logical = [self _logicalSectionForDisplayed:section];
     switch (logical) {
-        case kSectionTransit:
-            return NSLocalizedString(@"中转是预制可关闭的开关。开则所有 AI 请求经中转服务器路由，iOS 6 上规避 TLS 兼容问题。关则直连。中转搜索独立控制 Tavily 走不走中转。默认 api-ai.awa.lat，可自建：github.com/qwq672/online-ai-transit-server", nil);
+        // v261103-2: removed kSectionTransit case.
         case kSectionDirect:
             return NSLocalizedString(@"全局默认连接：模型条目未单独指定 BaseURL / API Key 时回退到这里。Anthropic 格式（a/）会自动改用 /v1/messages 协议。", nil);
         case kSectionModel:
