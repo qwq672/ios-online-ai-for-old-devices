@@ -32,6 +32,10 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     // a class method is autoreleased, and we need to keep the CGColor
     // alive across the runloop.
     UIColor *_imageGenBgUIColor;
+    // v261103-4: image-gen-mode border color. Same retain-for-CGColor
+    // pattern — prevents the dangling CGColorRef crash that was happening
+    // when imageGen toggled ON and the layer redraw its border.
+    UIColor *_imageGenBorderUIColor;
 }
 @end
 
@@ -136,8 +140,23 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 
 // iOS 6 metal input-toolbar: 1px top highlight → 1px bevel line → vertical
 // gradient body → 1px bottom shadow. (Identical to v261025-8.)
+// v261103-4: iOS 7 — flat solid background (no gradient, no border lines).
+// The old gradient bar looked like a "border/mask" around the buttons on
+// the new flat solid chat background. Flat matches iOS 7 aesthetic.
 - (void)drawRect:(CGRect)rect
 {
+    if (IsIOS7OrLater()) {
+        // iOS 7: flat fill, single hairline at top.
+        [[iOS6Theme composerBarBottomColor] setFill];
+        UIRectFill(rect);
+        // Thin separator line at the very top.
+        CGFloat scale = [[UIScreen mainScreen] scale];
+        if (scale < 1) scale = 1;
+        CGFloat lineH = 0.5f / scale;
+        [[UIColor colorWithWhite:0.0f alpha:0.12f] setFill];
+        UIRectFill(CGRectMake(0, 0, rect.size.width, lineH));
+        return;
+    }
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     if (!ctx) return;
     CGFloat scale = [[UIScreen mainScreen] scale];
@@ -295,10 +314,19 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     if (tvH < 30) tvH = 30;
     // v261025-33: use sizeThatFits to get actual content height, then
     // center vertically — eliminates the empty space below single-line text.
+    // v261103-4: on iOS 7, sizeThatFits includes textContainerInset in its
+    // returned height AND can return a too-small value for single-line
+    // text → text view looks "narrow". Enforce a minimum height so the
+    // input field always looks reasonably sized. The minimum is the
+    // button height (btnH=30) so the text view is at least as tall as
+    // the [+] and [▶] buttons.
     CGSize fitSize = [_textView sizeThatFits:CGSizeMake(tvW, CGFLOAT_MAX)];
     if (fitSize.height > 0 && fitSize.height < tvH) {
         tvH = fitSize.height;
     }
+    // v261103-4: minimum height = button height, so the input field
+    // doesn't look smaller than the buttons next to it.
+    if (tvH < btnH) tvH = btnH;
     CGFloat tvY = (h - tvH) / 2.0f;
     _textView.frame = CGRectMake(tvX, tvY, tvW, tvH);
     
@@ -375,16 +403,16 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     BOOL ig = [[self class] imageGenEnabled];
     if (ig) {
         _textView.backgroundColor = _imageGenBgUIColor;
-        // Border to a slightly more saturated blue to match.
-        _textView.layer.borderColor = [[UIColor colorWithRed:0.4f green:0.6f
-                                                        blue:0.95f alpha:1.0f] CGColor];
-        // (placeholder set via textViewDidChange when empty)
+        // v261103-4: FIX CRASH — was setting layer.borderColor to an
+        // autoreleased UIColor's CGColor (same dangling-pointer class
+        // as the chip borderColor crash). Retain the UIColor in a
+        // dedicated ivar so the CGColor stays alive.
+        [_imageGenBorderUIColor release];
+        _imageGenBorderUIColor = [[UIColor colorWithRed:0.4f green:0.6f
+                                                   blue:0.95f alpha:1.0f] retain];
+        _textView.layer.borderColor = [_imageGenBorderUIColor CGColor];
         if (_textView.text.length == 0) {
             _textView.text = @"";
-            // iOS 6 UITextView doesn't have placeholder natively; we draw a
-            // fake one by setting text to a grayed-out hint and clearing it
-            // on first edit. Simpler: just leave it empty; the blue
-            // background already signals image-gen mode.
         }
     } else {
         _textView.backgroundColor = [iOS6Theme composerFieldBackgroundColor];
@@ -541,19 +569,35 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 - (void)textViewDidChange:(UITextView *)textView
 {
     CGSize measured = [_textView sizeThatFits:CGSizeMake(_textView.frame.size.width, CGFLOAT_MAX)];
+    // v261103-4: clamp to sane range — sizeThatFits can return 0 or
+    // negative on iOS 7 in edge cases (empty text + weird inset state),
+    // which would shrink the composer to nothing and cause layout chaos.
+    if (measured.height < 20) measured.height = 20;
+    if (measured.height > 100) measured.height = 100;
+    // v261103-4: total composer height = text height + vertical padding
+    // (pad=4 top + pad=4 bottom = 8) + small breathing room (4).
     CGFloat needed = measured.height + 12;
-    if (needed < 30) needed = 30;
-    if (needed > 100) needed = 100;
-    CGFloat newH = needed + 12;
-    if ((NSInteger)newH != (NSInteger)self.bounds.size.height) {
+    if (needed < 38) needed = 38;  // min: single line + padding
+    if (needed > 120) needed = 120; // max: ~5 lines
+    if ((NSInteger)needed != (NSInteger)self.bounds.size.height) {
         CGRect f = self.frame;
-        f.size.height = newH;
-        self.frame = f;
-        [self setNeedsLayout];
-        [self layoutIfNeeded];
-        if ([_delegate respondsToSelector:@selector(composerDidChangeHeight:)]) {
-            [_delegate composerDidChangeHeight:self];
-        }
+        f.size.height = needed;
+        // v261103-4: animate the height change — eliminates the "jump"
+        // when the user types a newline. The table view inset update
+        // (in composerDidChangeHeight:) is also animated by the VC,
+        // so the whole transition is smooth.
+        [UIView animateWithDuration:0.15f
+                              delay:0.0f
+                            options:(UIViewAnimationOptionBeginFromCurrentState |
+                                     UIViewAnimationCurveEaseInOut)
+                         animations:^{
+            self.frame = f;
+            [self setNeedsLayout];
+            [self layoutIfNeeded];
+            if ([self->_delegate respondsToSelector:@selector(composerDidChangeHeight:)]) {
+                [self->_delegate composerDidChangeHeight:self];
+            }
+                         } completion:nil];
     }
 }
 
@@ -569,6 +613,8 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     _fieldBorderUIColor = nil;
     [_imageGenBgUIColor release];
     _imageGenBgUIColor = nil;
+    [_imageGenBorderUIColor release];
+    _imageGenBorderUIColor = nil;
     [super dealloc];
 }
 
