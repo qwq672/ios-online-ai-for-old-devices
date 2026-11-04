@@ -20,9 +20,11 @@ jobs:
           distribution: 'temurin'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'platforms;android-33 build-tools;33.0.2'
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager --install "platforms;android-33" "build-tools;33.0.2" "platform-tools" 2>&1 | tail -5
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls $ANDROID_HOME/platforms/ 2>/dev/null || echo "No platforms"
 
       - name: Set up Gradle
         uses: gradle/gradle-build-action@v3
