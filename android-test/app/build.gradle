@@ -1,29 +1,27 @@
-apply plugin: 'com.android.application'
+plugins {
+    id 'com.android.application' version '7.4.2'
+}
 
 android {
-    compileSdkVersion 28
+    namespace 'com.awa.aichat'
+    compileSdk 33
 
     defaultConfig {
         applicationId "com.awa.aichat"
-        // v261103: Android 2.3 (Gingerbread) — targets old devices that
-        // can't run modern AI chat apps (ChatGPT needs Android 6+).
-        minSdkVersion 9       // Android 2.3
-        targetSdkVersion 22   // Android 5.1 (avoids runtime permission model)
+        minSdk 9       // Android 2.3 Gingerbread
+        targetSdk 22   // Android 5.1
         versionCode 1
         versionName "0.1.0"
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_7
-        targetCompatibility JavaVersion.VERSION_1_7
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
 
-    lintOptions {
+    lint {
         abortOnError false
     }
 }
 
-dependencies {
-    // No external deps — pure Android SDK + org.json (built in).
-    // This keeps the APK tiny and compatible with Android 2.3.
-}
+dependencies {}

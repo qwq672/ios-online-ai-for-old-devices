@@ -1,3 +1,2 @@
-// Settings file — used by Gradle to configure the build.
-rootProject.name = "AIChat"
+rootProject.name = 'AIChat'
 include ':app'
