@@ -3,6 +3,7 @@ name: Build iOS IPA on Linux (Theos)
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]
   workflow_dispatch:
     inputs:
       deployment_target:
@@ -111,4 +112,16 @@ jobs:
         with:
           name: iOS6AIChat-unsigned-ipa-linux
           path: iOS6AIChat-unsigned.ipa
+      # v261103-9: Linux build also creates the GitHub release (macOS
+      # runner is perpetually queued — GitHub's macOS backlog means tag
+      # pushes never produce a release via the macOS workflow). The Linux
+      # IPA is actually BETTER for target devices: built with iOS 7.1 SDK
+      # + deployment target 6.0 (armv7/armv7s) — true iOS 6 compatibility.
+      - name: Attach IPA to release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: iOS6AIChat-unsigned.ipa
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           if-no-files-found: error
