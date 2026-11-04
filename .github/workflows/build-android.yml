@@ -33,9 +33,12 @@ jobs:
           unzip -q /tmp/gradle.zip -d /tmp/
           echo "/tmp/gradle-6.1.1/bin" >> $GITHUB_PATH
 
-      - name: Generate Gradle wrapper
+      - name: Generate Gradle wrapper + local.properties
         working-directory: android-test
-        run: gradle wrapper --gradle-version 6.1.1
+        run: |
+          gradle wrapper --gradle-version 6.1.1
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "Created local.properties with sdk.dir=$ANDROID_HOME"
 
       - name: Build debug APK
         working-directory: android-test
