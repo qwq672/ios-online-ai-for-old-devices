@@ -38,11 +38,15 @@ jobs:
         working-directory: android-test
         run: ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tail -80
 
+      - name: List build outputs (debug)
+        working-directory: android-test
+        run: find . -name "*.apk" -type f 2>/dev/null || echo "No APK found"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: AIChat-android-debug
-          path: android-test/app/build/outputs/apk/debug/*.apk
+          path: android-test/**/*.apk
           if-no-files-found: error
 
       - name: Attach APK to release (on tag)
