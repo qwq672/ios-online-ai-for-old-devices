@@ -144,18 +144,21 @@ static void AppendAttrString(NSMutableAttributedString *out,
 
         // === Tool status fence (:::tool ... :::) =========================
         // v261102-1: gray status box for tool-call process / done markers.
-        // Opens with `:::tool` on its own line, closes with `:::` on its
-        // own line. Inside is rendered as a single-line italic gray label
-        // with a soft gray background (visually distinct from code blocks).
-        if ([line isEqualToString:@":::tool"]) {
+        // v261103-8: also handle :::thinking blocks (segmented reasoning).
+        if ([line isEqualToString:@":::tool"] || [line isEqualToString:@":::thinking"]) {
+            NSString *blockType = line;  // remember which type
             if (!inToolBlock) {
                 inToolBlock = YES;
                 [toolLines removeAllObjects];
+                // Store the block type for rendering
+                [toolLines addObject:blockType];
             } else {
-                // Nested (shouldn't happen) — just close.
+                // Close current block, start new one (shouldn't happen)
                 [self _appendToolStatus:toolLines to:out baseFont:baseFont];
                 inToolBlock = NO;
                 [toolLines removeAllObjects];
+                [toolLines addObject:blockType];
+                inToolBlock = YES;
             }
             i++;
             continue;
@@ -851,16 +854,17 @@ static void AppendAttrString(NSMutableAttributedString *out,
                        to:(NSMutableAttributedString *)out
                  baseFont:(UIFont *)baseFont
 {
-    // v261102-1: gray box for tool-call status markers. The body is one
-    // or more short label lines ("正在搜索"xxx"…", "已获取时间" etc) —
-    // join them with " · " so multi-line markers stay compact. Italic
-    // gray text on a soft gray background, padded with blank bg lines
-    // top + bottom so the box is visually distinct from regular prose.
     if ([lines count] == 0) return;
-    NSString *body = [lines componentsJoinedByString:@" · "];
+    // v261103-8: first element is the block type (:::tool or :::thinking)
+    NSString *blockType = [lines objectAtIndex:0];
+    BOOL isThinking = [blockType isEqualToString:@":::thinking"];
+    NSArray *contentLines = [lines subarrayWithRange:NSMakeRange(1, [lines count] - 1)];
+    if ([contentLines count] == 0) return;
+    NSString *body = [contentLines componentsJoinedByString:@" · "];
     if (body.length == 0) return;
     UIFont *toolFont = [UIFont italicSystemFontOfSize:baseFont.pointSize - 1] ?: baseFont;
-    UIColor *fg = [iOS6Theme secondaryTextColor];
+    // v261103-8: thinking blocks use tint color, tool blocks use secondary
+    UIColor *fg = isThinking ? [iOS6Theme tintColor] : [iOS6Theme secondaryTextColor];
     UIColor *bg = [iOS6Theme codeBackgroundColor];
     AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
     AppendAttrString(out, body, toolFont, fg, bg, 0, 0);

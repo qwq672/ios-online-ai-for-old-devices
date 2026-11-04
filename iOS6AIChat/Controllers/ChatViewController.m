@@ -613,7 +613,12 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     CGFloat x = padX;
     for (NSUInteger i = 0; i < [presets count]; i++) {
         NSString *text = [presets objectAtIndex:i];
-        UIButton *chip = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+        // v261103-8: FIX CRASH — was UIButtonTypeRoundedRect which has its
+        // own internal background on iOS 6. Setting custom backgroundColor +
+        // cornerRadius on top of it caused crashes when the button was tapped
+        // (internal background drawing conflict). Use Custom type instead —
+        // no default background, our custom styling works cleanly.
+        UIButton *chip = [UIButton buttonWithType:UIButtonTypeCustom];
         chip.frame = CGRectMake(x, 0, chipW, chipH);
         chip.titleLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
         chip.titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
@@ -645,18 +650,16 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 
 - (void)_suggestionChipTapped:(UIButton *)chip
 {
+    if (!chip) return;
     NSUInteger idx = (NSUInteger)(chip.tag - 8000);
     NSArray *presets = [ChatViewController _suggestionPresets];
     if (idx >= [presets count]) return;
     NSString *text = [presets objectAtIndex:idx];
+    // v261103-8: nil-guard — if composer or textView is nil (e.g. during
+    // view transition), bail out instead of crashing.
     if (!_composer || !_composer.textView) return;
-    // Fill the composer with the preset text (don't auto-send — user can
-    // edit before pressing send). ComposerView's textView is public.
     _composer.textView.text = text;
     [_composer.textView becomeFirstResponder];
-    // Trigger the composer's internal "text changed" handler so the send
-    // button enables + height auto-adjusts. UITextViewTextDidChangeNotification
-    // is the canonical iOS 6+ constant for this.
     [[NSNotificationCenter defaultCenter] postNotificationName:UITextViewTextDidChangeNotification
                                                         object:_composer.textView];
 }

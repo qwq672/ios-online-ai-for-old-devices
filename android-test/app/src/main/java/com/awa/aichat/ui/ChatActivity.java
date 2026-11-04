@@ -38,7 +38,6 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
     private ChatAdapter adapter;
     private NetworkService networkService;
     private boolean isStreaming = false;
-
     private SharedPreferences prefs;
 
     @Override
@@ -58,10 +57,18 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
         networkService = new NetworkService();
         networkService.setListener(this);
 
+        // Settings button (in top bar now)
+        Button settingsButton = (Button) findViewById(R.id.settingsButton);
+        settingsButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new Intent(ChatActivity.this, SettingsActivity.class));
+            }
+        });
+
         // Check if API key is set
         String apiKey = prefs.getString(KEY_API_KEY, "");
         if (apiKey.isEmpty()) {
-            // First launch — open settings
             startActivity(new Intent(this, SettingsActivity.class));
             Toast.makeText(this, "请先设置 API Key", Toast.LENGTH_LONG).show();
         }
@@ -70,7 +77,6 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
             @Override
             public void onClick(View v) {
                 if (isStreaming) {
-                    // Stop
                     networkService.cancel();
                     isStreaming = false;
                     sendButton.setText("发送");
@@ -80,29 +86,19 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
             }
         });
 
-        // Settings button
-        Button settingsButton = (Button) findViewById(R.id.settingsButton);
-        settingsButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                startActivity(new Intent(ChatActivity.this, SettingsActivity.class));
-            }
-        });
-
-        // Enable send button only when input has text
         inputField.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
             @Override
             public void afterTextChanged(Editable s) {
-                sendButton.setEnabled(s.length() > 0);
+                sendButton.setEnabled(s != null && s.length() > 0);
             }
         });
         sendButton.setEnabled(false);
     }
 
     private void sendMessage() {
-        String text = inputField.getText().toString().trim();
+        String text = inputField.getText() != null ? inputField.getText().toString().trim() : "";
         if (text.isEmpty()) return;
 
         // Add user message
@@ -130,33 +126,38 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
 
         // Build message list (exclude the placeholder "…" AI message)
         List<Message> apiMessages = new ArrayList<Message>();
-        apiMessages.addAll(adapter.getMessages());
-        // Remove the last (placeholder) message
-        if (!apiMessages.isEmpty()) {
-            apiMessages.remove(apiMessages.size() - 1);
+        List<Message> allMsgs = adapter.getMessages();
+        for (int i = 0; i < allMsgs.size() - 1; i++) {
+            apiMessages.add(allMsgs.get(i));
         }
 
-        networkService.streamChat(baseURL, apiKey, model, apiMessages, systemPrompt, 0.7f);
+        try {
+            networkService.streamChat(baseURL, apiKey, model, apiMessages, systemPrompt, 0.7f);
+        } catch (Exception e) {
+            isStreaming = false;
+            sendButton.setText("发送");
+            adapter.updateLast("⚠️ " + e.getMessage());
+        }
     }
+
+    // --- NetworkService.Listener ---
 
     @Override
     public void onChunk(String fullText) {
-        runOnUiThread(new Runnable() {
-            // Placeholder — actual update via parameter
-            @Override public void run() {}
-        });
-        // Update the last (AI) message
+        // Already on main thread (NetworkService uses Handler.post)
+        if (isFinishing()) return;
         adapter.updateLast(fullText);
         listView.setSelection(adapter.getCount() - 1);
     }
 
     @Override
     public void onThinking(String thinkingText) {
-        // For now, thinking is not displayed inline — could add a collapsible block
+        // TODO: show thinking in a collapsible block
     }
 
     @Override
     public void onFinish(String fullText, String thinking) {
+        if (isFinishing()) return;
         isStreaming = false;
         sendButton.setText("发送");
         if (fullText == null || fullText.isEmpty()) {
@@ -167,15 +168,18 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
 
     @Override
     public void onError(String message) {
+        if (isFinishing()) return;
         isStreaming = false;
         sendButton.setText("发送");
-        adapter.updateLast("⚠️ " + message);
+        adapter.updateLast("⚠️ " + (message != null ? message : "未知错误"));
         listView.setSelection(adapter.getCount() - 1);
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        networkService.cancel();
+        if (networkService != null) {
+            networkService.cancel();
+        }
     }
 }

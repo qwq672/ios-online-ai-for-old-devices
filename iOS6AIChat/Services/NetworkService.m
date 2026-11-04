@@ -1041,6 +1041,21 @@
     if ([[NSUserDefaults standardUserDefaults] objectForKey:@"showToolCalls"]) {
         showToolCalls = [[NSUserDefaults standardUserDefaults] boolForKey:@"showToolCalls"];
     }
+    // v261103-8: 分段推理 UI — before showing tool markers, insert the
+    // accumulated thinking as an inline :::thinking block so the user
+    // sees the reasoning flow: think → tool call → think → answer.
+    // This is what "分段推理" means visually — each segment is a
+    // distinct block, not crammed together.
+    if (showToolCalls && _thinkingAccumulated.length > 0) {
+        NSString *thinkSnippet = _thinkingAccumulated.length > 200 ?
+            [_thinkingAccumulated substringToIndex:200] : [NSString stringWithString:_thinkingAccumulated];
+        NSString *thinkMarker = [NSString stringWithFormat:
+            @"\n:::thinking\n💭 %@…\n:::\n", thinkSnippet];
+        [_accumulated appendString:thinkMarker];
+        // Clear thinking accumulator — the next turn's thinking will be
+        // a separate :::thinking block (visually segmented from this one).
+        [_thinkingAccumulated setString:@""];
+    }
     if (showToolCalls) {
         for (NSDictionary *tc in toolCallAcc) {
             NSString *fnName = [tc objectForKey:@"name"] ?: @"";
