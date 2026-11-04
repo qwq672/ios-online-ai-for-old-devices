@@ -19,11 +19,10 @@ jobs:
           java-version: '11'
           distribution: 'temurin'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          sdk-platform: 28
-          sdk-build-tools: 28.0.3
+      - name: Accept Android SDK licenses
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platforms;android-28" "build-tools;28.0.3" || true
 
       - name: Install Gradle 6.1.1
         run: |
@@ -34,15 +33,6 @@ jobs:
       - name: Generate Gradle wrapper
         working-directory: android-test
         run: gradle wrapper --gradle-version 6.1.1
-
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle') }}
-          restore-keys: gradle-${{ runner.os }}-
 
       - name: Build debug APK
         working-directory: android-test
