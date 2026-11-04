@@ -122,6 +122,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: iOS6AIChat-unsigned.ipa
-          generate_release_notes: true
+          name: ${{ github.ref_name }}
+          body: |
+            ## ${{ github.ref_name }}
+            
+            Built with Theos + iPhoneOS7.1 SDK + deployment target 6.0 (armv7/armv7s).
+            True iOS 6+ compatibility.
           prerelease: ${{ contains(github.ref_name, '-') }}
-          if-no-files-found: error
