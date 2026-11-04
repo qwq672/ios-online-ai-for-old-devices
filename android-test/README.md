@@ -1,4 +1,4 @@
-# AIChat Android — 测试版
+# AIAnyWhere Android — 测试版
 
 ## 目标
 
