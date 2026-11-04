@@ -19,10 +19,13 @@ jobs:
           java-version: '8'
           distribution: 'temurin'
 
-      - name: Accept Android SDK licenses
+      - name: Accept Android SDK licenses + install platform
         run: |
           yes | sdkmanager --licenses || true
-          sdkmanager "platforms;android-28" "build-tools;28.0.3" || true
+          sdkmanager --install "platforms;android-28" "build-tools;28.0.3" "platform-tools" 2>&1 | tail -10
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "SDK root contents:"
+          ls $ANDROID_HOME/platforms/ 2>/dev/null || echo "No platforms dir"
 
       - name: Install Gradle 6.1.1
         run: |
