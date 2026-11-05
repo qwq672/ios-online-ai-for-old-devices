@@ -483,28 +483,20 @@
     //   https://platform.openai.com/docs/guides/reasoning
     if (doThink) {
         if ([self.provider isEqualToString:ProviderIDZhipu] ||
-            [self.provider isEqualToString:ProviderIDDeepSeek]) {
+            [self.provider isEqualToString:ProviderIDDeepSeek] ||
+            [self.provider isEqualToString:ProviderIDKimi]) {
             [body setObject:@{@"type": @"enabled"} forKey:@"thinking"];
         } else if ([self.provider isEqualToString:ProviderIDOpenAI]) {
-            // gpt-5+: "low" gives a quick reasoning pass; "high" deeper.
-            // Use "low" by default (cheap) — user can request deeper via
-            // the deep-thinking toggle which always lands here.
             [body setObject:@"high" forKey:@"reasoning_effort"];
         }
-        // kimi/ollama/anthropic-custom: nothing — Kimi K2/LinearAI has no
-        // native thinking-control field; toggle just leaves it to model default.
     } else {
-        // v261102-1: 思考开关 OFF → 显式禁用思考 (而非"不发参数"，
-        // 因为模型默认可能是 ON，导致"强制思考" bug)。
         if ([self.provider isEqualToString:ProviderIDZhipu] ||
-            [self.provider isEqualToString:ProviderIDDeepSeek]) {
+            [self.provider isEqualToString:ProviderIDDeepSeek] ||
+            [self.provider isEqualToString:ProviderIDKimi]) {
             [body setObject:@{@"type": @"disabled"} forKey:@"thinking"];
         } else if ([self.provider isEqualToString:ProviderIDOpenAI]) {
-            // OpenAI gpt-5 系列: reasoning_effort "minimal" 几乎禁用思考。
-            // gpt-3.5/gpt-4o: 此字段被忽略，无副作用。
             [body setObject:@"minimal" forKey:@"reasoning_effort"];
         }
-        // 其他提供商：无原生 disabled 字段；不发任何参数，模型按其默认行为。
     }
 
     // Tools array. The two lightweight tools (get_current_time,
@@ -2648,8 +2640,11 @@
             trimmed = [trimmed substringToIndex:trimmed.length - @"/v1/chat/completions".length];
         }
         // Provider-specific path suffix (DeepSeek's API uses /tools/search
-        // instead of /web_search; user-reported bug).
-        NSString *suffix = [self.provider isEqualToString:ProviderIDDeepSeek]
+        // instead of /web_search; Kimi also uses /tools/search).
+        // v261103-10: Kimi (api.moonshot.cn) uses /v1/tools/search and
+        // /v1/tools/fetch — same pattern as DeepSeek.
+        NSString *suffix = ([self.provider isEqualToString:ProviderIDDeepSeek] ||
+                           [self.provider isEqualToString:ProviderIDKimi])
             ? @"tools/search"
             : @"web_search";
         endpoint = [trimmed stringByAppendingPathComponent:suffix];
@@ -2658,16 +2653,22 @@
     if (![apiKey isKindOfClass:[NSString class]] || apiKey.length == 0) {
         apiKey = self.apiKey;
     }
-    // Body: union of Zhipu + DeepSeek schemas (each API ignores unknown fields).
-    //   Zhipu:   { search_query, search_engine, search_intent, count, content_size }
-    //   DeepSeek:{ query, count, need_content }
+    // Body: union of Zhipu + DeepSeek + Kimi schemas (each API ignores
+    // unknown fields).
+    //   Zhipu:    { search_query, search_engine, search_intent, count, content_size }
+    //   DeepSeek: { query, count, need_content }
+    //   Kimi:     { text_query, limit, include_content, timeout_seconds }
     NSDictionary *body = @{
-        @"query":          query,
-        @"search_query":   query,
-        @"search_engine":  @"search_std",
-        @"search_intent":  @(NO),
-        @"count":          @(5),
-        @"need_content":   @(YES)
+        @"query":           query,
+        @"search_query":    query,
+        @"text_query":      query,
+        @"search_engine":   @"search_std",
+        @"search_intent":   @(NO),
+        @"count":           @(5),
+        @"limit":           @(5),
+        @"need_content":    @(YES),
+        @"include_content": @(YES),
+        @"timeout_seconds": @(30)
     };
     NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
     if (!bodyData) return nil;
@@ -2702,7 +2703,11 @@
     //   Zhipu:   { search_result: [{title, content, link, media, ...}] }
     //   DeepSeek:{ results: [{title, url, snippet, summary, content, ...}] }
     // Build a unified text feed for the model.
+    // v261103-10: also check Kimi's response format: { search_results: [...] }
     NSArray *results = [json objectForKey:@"search_result"];
+    if (![results isKindOfClass:[NSArray class]]) {
+        results = [json objectForKey:@"search_results"];
+    }
     if (![results isKindOfClass:[NSArray class]]) {
         results = [json objectForKey:@"results"];
     }
@@ -2720,8 +2725,17 @@
         NSString *title = [r objectForKey:@"title"] ?: @"";
         NSString *link  = [r objectForKey:@"link"] ?: @"";
         if (link.length == 0) link = [r objectForKey:@"url"] ?: @"";
+        // v261103-10: Kimi uses 'snippet' for summary, 'chunks' for content
         NSString *snippet = [r objectForKey:@"snippet"] ?: @"";
         if (snippet.length == 0) snippet = [r objectForKey:@"content"] ?: @"";
+        // Also check Kimi's chunks array for content fragments
+        if (snippet.length == 0) {
+            NSArray *chunks = [r objectForKey:@"chunks"];
+            if ([chunks isKindOfClass:[NSArray class]] && [chunks count] > 0) {
+                NSDictionary *firstChunk = [chunks objectAtIndex:0];
+                snippet = [firstChunk objectForKey:@"text"] ?: @"";
+            }
+        }
         if (snippet.length > 300) snippet = [NSString stringWithFormat:@"%@…", [snippet substringToIndex:300]];
         [out appendFormat:@"%ld. %@\n   URL: %@\n   %@\n\n",
             (long)i++, title, link, snippet];
@@ -2758,8 +2772,9 @@
         } else if ([trimmed hasSuffix:@"/v1/chat/completions"]) {
             trimmed = [trimmed substringToIndex:trimmed.length - @"/v1/chat/completions".length];
         }
-        // Provider-specific path suffix (DeepSeek's API uses /tools/fetch).
-        NSString *suffix = [self.provider isEqualToString:ProviderIDDeepSeek]
+        // Provider-specific path suffix (DeepSeek + Kimi use /tools/fetch).
+        NSString *suffix = ([self.provider isEqualToString:ProviderIDDeepSeek] ||
+                           [self.provider isEqualToString:ProviderIDKimi])
             ? @"tools/fetch"
             : @"fetch_url";
         endpoint = [trimmed stringByAppendingPathComponent:suffix];
