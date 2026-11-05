@@ -19,47 +19,34 @@ jobs:
           java-version: '11'
           distribution: 'temurin'
 
-      - name: Setup Android SDK
+      - name: Set up Android SDK
         run: |
           yes | sdkmanager --licenses || true
           sdkmanager --install "platforms;android-33" "build-tools;33.0.2" "platform-tools" 2>&1 | tail -5
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls $ANDROID_HOME/platforms/ 2>/dev/null || echo "No platforms"
 
-      - name: Install Gradle 7.5
-        run: |
-          wget -q https://services.gradle.org/distributions/gradle-7.5-bin.zip -O /tmp/gradle.zip
-          unzip -q /tmp/gradle.zip -d /tmp/
-          /tmp/gradle-7.5/bin/gradle --version
+      - name: Set up Gradle
+        uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: '7.5'
 
-      - name: Generate wrapper + local.properties
+      - name: Create local.properties
         working-directory: android-test
-        run: |
-          /tmp/gradle-7.5/bin/gradle wrapper --gradle-version 7.5
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
-          echo "Wrapper generated, local.properties created"
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
       - name: Build debug APK
         working-directory: android-test
-        run: |
-          ./gradlew assembleDebug --no-daemon --stacktrace > /tmp/build.log 2>&1
-          EXIT=$?
-          cat /tmp/build.log
-          if [ $EXIT -ne 0 ]; then exit $EXIT; fi
-          echo "=== APK search ==="
-          find . -name "*.apk" -type f
-          ls -la app/build/outputs/apk/debug/ 2>/dev/null || echo "no debug dir"
+        run: gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log | tail -80
 
-      - name: Upload build log
-        if: always()
+      - name: Upload build log (on failure)
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
-          path: |
-            /tmp/build.log
-            android-test/build.log
-            android-test/app/build/reports/
-          if-no-files-found: ignore
+          path: android-test/build.log
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: AIChat-android-debug
