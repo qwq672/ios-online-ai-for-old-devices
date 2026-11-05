@@ -19,39 +19,37 @@ jobs:
           java-version: '11'
           distribution: 'temurin'
 
-      - name: Set up Android SDK
+      - name: Setup Android SDK
         run: |
           yes | sdkmanager --licenses || true
           sdkmanager --install "platforms;android-33" "build-tools;33.0.2" "platform-tools" 2>&1 | tail -5
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          ls $ANDROID_HOME/platforms/ 2>/dev/null || echo "No platforms"
 
-      - name: Set up Gradle
-        uses: gradle/gradle-build-action@v3
-        with:
-          gradle-version: '7.5'
+      - name: Install Gradle 7.5
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-7.5-bin.zip -O /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /tmp/
+          /tmp/gradle-7.5/bin/gradle --version
 
-      - name: Create local.properties
+      - name: Generate wrapper + local.properties
         working-directory: android-test
-        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+        run: |
+          /tmp/gradle-7.5/bin/gradle wrapper --gradle-version 7.5
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
 
       - name: Build debug APK
         working-directory: android-test
-        run: gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log | tail -80
+        run: |
+          ./gradlew assembleDebug --no-daemon --stacktrace
+          echo "=== APK search ==="
+          find . -name "*.apk" -type f
+          ls -la app/build/outputs/apk/debug/
 
-      - name: Upload build log (on failure)
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: android-test/build.log
-
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: AIChat-android-debug
           path: android-test/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Attach APK to release (on tag)
         if: startsWith(github.ref, 'refs/tags/v')
