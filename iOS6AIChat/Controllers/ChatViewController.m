@@ -1538,6 +1538,38 @@ didFailForConversationID:(NSString *)conversationID
         @"networkService didFail conv=%@ code=%ld desc=%@",
         conversationID, (long)error.code,
         error.localizedDescription ?: @"(no desc)"]];
+    // v261103-10: if the error is -1200 (NSURLErrorSecureConnectionFailed)
+    // and the last user message has images, retry WITHOUT images. The -1200
+    // is caused by iOS 6's TLS negotiation failing on large request bodies
+    // (base64 image data makes the JSON body too big). Retrying without
+    // images lets the user at least get a text response.
+    if (error.code == -1200 || error.code == -1012) {
+        for (NSInteger i = [_conversation.messages count] - 1; i >= 0; i--) {
+            Message *m = [_conversation.messages objectAtIndex:i];
+            if ([m isUser] && m.images && [m.images count] > 0) {
+                [[Logger sharedLogger] info:[NSString stringWithFormat:
+                    @"NET ⚠ -1200 on image upload — retrying WITHOUT images (TLS can't handle large body on iOS 6)"]];
+                m.images = nil;
+                // Update the error text to explain what happened.
+                [_conversation updateLastAssistantMessageContent:
+                    @"⚠️ 图片上传失败（iOS 6 TLS 限制）— 已自动转为纯文本重试…"];
+                // Re-send the conversation (without the image).
+                _composer.isStreaming = NO;  // reset for retry
+                // Find the last user message and re-send
+                for (NSInteger j = [_conversation.messages count] - 1; j >= 0; j--) {
+                    Message *userMsg = [_conversation.messages objectAtIndex:j];
+                    if ([userMsg isUser]) {
+                        // Remove the failed assistant placeholder
+                        [_conversation removeLastMessage];
+                        // Re-send
+                        [self _sendUserMessage:userMsg.content];
+                        return;
+                    }
+                }
+                break;
+            }
+        }
+    }
     // v261025-12: clear images from the last user message on failure.
     // Root cause of "图片发送后所有后续消息都报同样错误，只能新建对话" bug:
     // the image (base64) was appended to the conversation history BEFORE

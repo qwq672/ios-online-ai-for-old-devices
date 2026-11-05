@@ -22,6 +22,7 @@
 + (Conversation *)newConversation;
 - (void)appendMessage:(Message *)message;
 - (void)updateLastAssistantMessageContent:(NSString *)content; // for streaming
+- (void)removeLastMessage; // v261103-10: remove the last message (for retry)
 - (Message *)lastMessage;
 - (NSArray *)openAIMessages; // serialise to OpenAI format: [{role, content}]
 - (NSString *)displayTitle;

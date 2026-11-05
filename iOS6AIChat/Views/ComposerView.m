@@ -485,10 +485,11 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     if (!image || image.size.width <= 0 || image.size.height <= 0) return;
 
     NSInteger maxDim = [[NSUserDefaults standardUserDefaults] integerForKey:@"imageMaxDim"];
-    // v261025-13: fallback default — if the user never opened Settings →
-    // image compression page, the key is 0 → resize skipped → 3GS camera
-    // photo (2048×1536) sent raw → 960KB body → server resets TLS → -1200.
-    if (maxDim <= 0) maxDim = 1024;
+    // v261103-10: default 1024→768 + quality 0.7→0.5. The -1200 SSL error
+    // on image upload is caused by the request body being too large for
+    // iOS 6's NSURLConnection TLS negotiation. Smaller images = smaller
+    // base64 = smaller JSON body = TLS handshake succeeds.
+    if (maxDim <= 0) maxDim = 768;
     if (maxDim > 0) {
         CGFloat w = image.size.width, h = image.size.height;
         if (w > maxDim || h > maxDim) {
@@ -507,7 +508,8 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     UIImage *capturedImage = [image retain];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         @autoreleasepool {
-            NSData *jpegData = UIImageJPEGRepresentation(capturedImage, 0.7);
+            // v261103-10: quality 0.7→0.5 for smaller base64 payload.
+            NSData *jpegData = UIImageJPEGRepresentation(capturedImage, 0.5);
             NSString *base64 = jpegData ? [jpegData base64String] : nil;
             dispatch_async(dispatch_get_main_queue(), ^{
                 [capturedImage release];
@@ -586,22 +588,21 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     if ((NSInteger)needed != (NSInteger)self.bounds.size.height) {
         CGRect f = self.frame;
         f.size.height = needed;
-        // v261103-4: animate the height change — eliminates the "jump"
-        // when the user types a newline. The table view inset update
-        // (in composerDidChangeHeight:) is also animated by the VC,
-        // so the whole transition is smooth.
-        [UIView animateWithDuration:0.15f
-                              delay:0.0f
-                            options:(UIViewAnimationOptionBeginFromCurrentState |
-                                     UIViewAnimationCurveEaseInOut)
-                         animations:^{
-            self.frame = f;
-            [self setNeedsLayout];
-            [self layoutIfNeeded];
-            if ([self->_delegate respondsToSelector:@selector(composerDidChangeHeight:)]) {
-                [self->_delegate composerDidChangeHeight:self];
-            }
-                         } completion:nil];
+        // v261103-10: FIX input field jumping on newline.
+        // The animation was causing the input field to "jump" because:
+        // 1. The text view's sizeThatFits changes on every character
+        // 2. The animation block sets frame + triggers layout + notifies delegate
+        // 3. The delegate (ChatViewController) adjusts table view insets
+        // 4. All three happen inside an animation block → conflicting animations
+        // Fix: DON'T animate. Set the frame synchronously, then let the
+        // delegate handle the table view inset update without animation.
+        // This eliminates the "上窜下跳" (jumping up and down) on newline.
+        self.frame = f;
+        [self setNeedsLayout];
+        [self layoutIfNeeded];
+        if ([_delegate respondsToSelector:@selector(composerDidChangeHeight:)]) {
+            [_delegate composerDidChangeHeight:self];
+        }
     }
 }
 

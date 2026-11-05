@@ -35,6 +35,15 @@
     }
 }
 
+// v261103-10: remove the last message (used for -1200 retry without images).
+- (void)removeLastMessage
+{
+    if ([self.messages count] > 0) {
+        [self.messages removeLastObject];
+        self.updatedAt = [NSDate date];
+    }
+}
+
 - (void)updateLastAssistantMessageContent:(NSString *)content
 {
     // For streaming — find the last assistant message and replace its content.
