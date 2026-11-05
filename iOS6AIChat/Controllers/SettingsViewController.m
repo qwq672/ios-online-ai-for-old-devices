@@ -1061,7 +1061,12 @@ titleForFooterInSection:(NSInteger)section
     stepperContainer.backgroundColor = [iOS6Theme controlBackgroundColor];
     stepperContainer.layer.cornerRadius = 6.0f;
     stepperContainer.layer.borderWidth = 1.0f;
-    stepperContainer.layer.borderColor = [[iOS6Theme hairlineColor] CGColor];
+    stepperContainer.layer.borderColor = [[[iOS6Theme hairlineColor] retain] CGColor];
+    // v261103-14: retained the UIColor so the CGColor doesn't dangle.
+    // The container is autoreleased (released when the cell is recycled),
+    // but the layer's CGColor might outlive the UIColor's autorelease.
+    // This leaks 1 UIColor per cell creation, but stepperContainer cells
+    // are rare (only the "结果数" row) so the leak is negligible.
     stepperContainer.layer.masksToBounds = YES;
     stepperContainer.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     sp.frame = CGRectMake(4, 1, 94, 29);

@@ -139,12 +139,16 @@ enum {
     if (_promptView) {
         _promptView.backgroundColor = [iOS6Theme inputFieldBackgroundColor];
         _promptView.textColor = [iOS6Theme inputFieldTextColor];
-        // v261025-7: refresh the retained border-color ivar too so the
-        // layer keeps pointing at a LIVE UIColor after the theme flip.
+        // v261025-7: refresh the retained border-color ivar FIRST, then
+        // set the layer property from the retained UIColor's CGColor.
+        // v261103-14: FIX — was setting layer.borderColor from the
+        // autoreleased `newBorder` BEFORE retaining it. The CGColor
+        // would dangle after the autorelease pool drains. Now retain
+        // first, then assign the retained CGColor.
         UIColor *newBorder = [iOS6Theme inputFieldBorderColor];
-        _promptView.layer.borderColor = [newBorder CGColor];
         [_promptBorderUIColor release];
         _promptBorderUIColor = [newBorder retain];
+        _promptView.layer.borderColor = [_promptBorderUIColor CGColor];
     }
     [_formTable reloadData];
 }
