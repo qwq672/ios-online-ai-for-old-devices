@@ -831,13 +831,20 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     }
 
     // === Deep thinking block ===
-    // If the message has a non-empty `thinking` string, show a collapsible
-    // block at the top of the bubble with the reasoning content.
-    if (displayedThinking.length > 0 && !message.isUser) {
+    // v261103-14: FIX new/old coexistence — the collapsible card was only
+    // showing for the FIRST thinking segment (from _thinkingAccumulated
+    // stored on the message). Subsequent thinking segments (from :::thinking
+    // blocks inserted into _accumulated during tool-call relaunches) were
+    // rendered as inline text but NOT as collapsible cards.
+    //
+    // Fix: show the collapsible card ONLY if the message has a non-empty
+    // `thinking` property AND there are no :::thinking blocks already in
+    // the content (meaning the thinking hasn't been segmented yet). If
+    // :::thinking blocks exist in the content, they're already rendered
+    // as inline gray boxes by MarkdownParser — don't double-show.
+    BOOL hasInlineThinking = [displayedContent rangeOfString:@":::thinking"].location != NSNotFound;
+    if (displayedThinking.length > 0 && !message.isUser && !hasInlineThinking) {
         _thinkingBlock.hidden = NO;
-        // Restore the per-message expanded state from the static dict.
-        // While the AI is still mid-reasoning (thinking live) force-expand
-        // so the streaming reasoning is visible in real time.
         BOOL thinkingLive = [ChatMessageCell _isThinkingLive:message];
         _thinkingCollapsed = !([ChatMessageCell _isThinkingExpanded:message.messageID]
                                 || thinkingLive);
@@ -853,10 +860,10 @@ static NSMutableSet *gStreamingMessageIDs = nil;
             headerTitle = @"💭 深度思考 (点击收起)";
         }
         [_thinkingToggle setTitle:headerTitle forState:UIControlStateNormal];
-
-        // Render thinking content as plain text.
         _thinkingLabel.text = displayedThinking;
     } else {
+        // v261103-14: hide the collapsible card when thinking is already
+        // shown inline as :::thinking blocks (segmented reasoning mode).
         _thinkingBlock.hidden = YES;
     }
 
