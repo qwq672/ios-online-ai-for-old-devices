@@ -1,26 +1,21 @@
 package com.awa.aichat.adapter;
 
 import android.content.Context;
-import android.graphics.Color;
-import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import com.awa.aichat.markdown.MarkdownParser;
 import com.awa.aichat.model.Message;
+import com.awa.aichat.util.ThemeManager;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * ListView adapter for chat messages. User messages right-aligned with
- * green background; AI messages left-aligned with default background.
- * v261103-14: CRITICAL FIX — was creating new TextView for EVERY getView
- * call with NO recycling → OutOfMemoryError on Android 2.3 (5MB heap).
- * Now uses convertView + ViewHolder pattern like a proper ListAdapter.
+ * ListView adapter for chat messages with theme support.
+ * Uses ViewHolder + convertView recycling (fixes OOM crash on Android 2.3).
  */
 public class ChatAdapter extends BaseAdapter {
 
@@ -66,7 +61,7 @@ public class ChatAdapter extends BaseAdapter {
     public long getItemId(int position) { return position; }
 
     @Override
-    public int getItemViewTypeCount() { return 2; }  // user + AI
+    public int getItemViewTypeCount() { return 2; }
 
     @Override
     public int getItemViewType(int position) {
@@ -79,9 +74,7 @@ public class ChatAdapter extends BaseAdapter {
         ViewHolder holder;
 
         if (convertView == null) {
-            // Create new view only when there's no recyclable one.
             TextView tv = new TextView(context);
-            tv.setTextSize(15);
             tv.setPadding(24, 16, 24, 16);
             holder = new ViewHolder();
             holder.tv = tv;
@@ -92,20 +85,20 @@ public class ChatAdapter extends BaseAdapter {
         }
 
         TextView tv = holder.tv;
+        tv.setTextSize(ThemeManager.baseFontSize());
 
         if (msg.isUser()) {
-            tv.setBackgroundColor(Color.parseColor("#DCF8C6"));
-            tv.setTextColor(Color.parseColor("#000000"));
+            tv.setBackgroundColor(ThemeManager.userBubbleColor());
+            tv.setTextColor(ThemeManager.userBubbleTextColor());
             tv.setText(msg.content);
         } else {
-            tv.setBackgroundColor(Color.parseColor("#FFFFFF"));
-            tv.setTextColor(Color.parseColor("#1A1A1A"));
-            // Only parse markdown for non-placeholder messages.
+            tv.setBackgroundColor(ThemeManager.aiBubbleColor());
+            tv.setTextColor(ThemeManager.textColor());
             if (msg.content != null && !msg.content.equals("…") && msg.content.length() > 0) {
                 try {
                     tv.setText(MarkdownParser.parse(msg.content));
                 } catch (Exception e) {
-                    tv.setText(msg.content);  // fallback to plain text
+                    tv.setText(msg.content);
                 }
             } else {
                 tv.setText(msg.content);
