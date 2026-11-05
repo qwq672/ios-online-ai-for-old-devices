@@ -15,7 +15,8 @@
 @interface CharacterManagementViewController : UIViewController
                               <UITableViewDataSource,
                                UITableViewDelegate,
-                               UIAlertViewDelegate>
+                               UIAlertViewDelegate,
+                               UITextFieldDelegate>
 
 @property (nonatomic, retain) UITableView *tableView;
 
@@ -34,5 +35,11 @@
 // call without "class method not found".
 + (NSString *)activeCharacterName;
 + (void)setActiveCharacterName:(NSString *)name;
+
+// v261103-13: 「让角色知道我的信息」
++ (BOOL)myInfoEnabled;
++ (void)setMyInfoEnabled:(BOOL)on;
++ (NSString *)myInfoName;
++ (NSString *)myInfoBio;
 
 @end

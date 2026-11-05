@@ -24,6 +24,10 @@
 NSString *const SettingsKeyCharacterList = @"characterList";
 NSString *const SettingsKeyActiveCharacter = @"activeCharacter";
 NSString *const SettingsKeyInjectUserIdentity = @"injectUserIdentity";
+// v261103-13: 「让角色知道我的信息」
+NSString *const SettingsKeyMyInfoEnabled = @"myInfoEnabled";
+NSString *const SettingsKeyMyInfoName = @"myInfoName";
+NSString *const SettingsKeyMyInfoBio = @"myInfoBio";
 
 static NSString *const kCellReuseID = @"CharMgmtCell";
 
@@ -40,6 +44,7 @@ enum {
     kCharSectionList,
     kCharSectionActive,
     kCharSectionIdentity,
+    kCharSectionMyInfo,   // v261103-13: 「让角色知道我的信息」
     kCharSectionCount
 };
 
@@ -153,17 +158,36 @@ enum {
 + (NSString *)effectiveSystemPromptWithBase:(NSString *)base
 {
     // Compose the final system prompt:
-    //   1) If active character exists, prepend its prompt.
-    //   2) If injectUserIdentity is ON, prepend "User identity: <device-name>"
-    //      as the very first line.
-    //   3) Append the user's base system prompt.
+    //   1) If injectUserIdentity is ON, prepend "User identity: <device-name>"
+    //   2) If active character exists, prepend its prompt + tell AI its name.
+    //   3) If myInfoEnabled is ON, prepend user's name + bio.
+    //   4) Append the user's base system prompt.
     NSMutableString *out = [NSMutableString string];
     if ([self injectUserIdentity]) {
         NSString *devName = [[UIDevice currentDevice] name] ?: @"(unknown device)";
         [out appendFormat:@"User identity: %@\n", devName];
     }
+    // v261103-13: 「让角色知道我的信息」
+    if ([self myInfoEnabled]) {
+        NSString *myName = [self myInfoName];
+        NSString *myBio = [self myInfoBio];
+        if (myName.length > 0) {
+            [out appendFormat:@"The user's name is %@. ", myName];
+        }
+        if (myBio.length > 0) {
+            [out appendFormat:@"About the user: %@. ", myBio];
+        }
+        if (myName.length > 0 || myBio.length > 0) {
+            [out appendString:@"\n"];
+        }
+    }
+    NSString *activeName = [self activeCharacterName];
     NSString *charPrompt = [self activeCharacterPrompt];
     if (charPrompt.length > 0) {
+        // v261103-13: tell the AI its own character name.
+        if (activeName.length > 0) {
+            [out appendFormat:@"You are playing the role of \"%@\". ", activeName];
+        }
         [out appendFormat:@"%@\n", charPrompt];
     }
     if (base.length > 0) {
@@ -256,6 +280,7 @@ enum {
         case kCharSectionList:    return (NSInteger)[_characters count];
         case kCharSectionActive:  return 1;
         case kCharSectionIdentity: return 1;
+        case kCharSectionMyInfo:  return 3;  // toggle + name field + bio field
         default: return 0;
     }
 }
@@ -267,6 +292,7 @@ enum {
         case kCharSectionList:     return NSLocalizedString(@"已保存角色", nil);
         case kCharSectionActive:   return NSLocalizedString(@"当前激活", nil);
         case kCharSectionIdentity: return NSLocalizedString(@"用户身份", nil);
+        case kCharSectionMyInfo:   return NSLocalizedString(@"让角色知道我的信息", nil);
         default: return @"";
     }
 }
@@ -282,6 +308,8 @@ enum {
             return NSLocalizedString(@"激活的角色会以 system prompt 形式注入每次对话。空字符串 = 不注入任何角色。", nil);
         case kCharSectionIdentity:
             return NSLocalizedString(@"把设备名作为「User identity: <name>」注入到 system prompt 第一行。", nil);
+        case kCharSectionMyInfo:
+            return NSLocalizedString(@"开启后，你填的名字和简介会注入到 system prompt，让 AI 角色了解你。AI 角色自己的名字也会被告知。", nil);
         default: return @"";
     }
 }
@@ -411,6 +439,66 @@ enum {
             [cell.contentView addSubview:sw];
             break;
         }
+        case kCharSectionMyInfo: {
+            // v261103-13: 「让角色知道我的信息」
+            // Row 0: toggle (ON/OFF)
+            // Row 1: 我的名字 (text field)
+            // Row 2: 我的简介 (text field)
+            BOOL myInfoOn = [CharacterManagementViewController myInfoEnabled];
+            if (indexPath.row == 0) {
+                UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(12, 0, 200, 44)];
+                l.text = NSLocalizedString(@"让角色知道我的信息", nil);
+                l.backgroundColor = [UIColor clearColor];
+                l.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:16]];
+                l.textColor = [iOS6Theme textColor];
+                l.autoresizingMask = UIViewAutoresizingFlexibleRightMargin;
+                [cell.contentView addSubview:l];
+                [l release];
+
+                UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+                [sw setOn:myInfoOn animated:NO];
+                [sw addTarget:self action:@selector(_myInfoToggle:)
+                  forControlEvents:UIControlEventValueChanged];
+                sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+                CGRect f = cell.contentView.bounds;
+                sw.frame = CGRectMake(f.size.width - 79 - 12, (44 - 27) / 2, 79, 27);
+                [cell.contentView addSubview:sw];
+            } else if (myInfoOn) {
+                // Show text fields only when toggle is ON.
+                CGFloat labelW = 60;
+                NSString *label = (indexPath.row == 1) ? @"名字" : @"简介";
+                UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(12, 0, labelW, 44)];
+                l.text = label;
+                l.backgroundColor = [UIColor clearColor];
+                l.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
+                l.textColor = [iOS6Theme textColor];
+                [cell.contentView addSubview:l];
+                [l release];
+
+                UITextField *tf = [[[UITextField alloc] initWithFrame:CGRectZero] autorelease];
+                tf.borderStyle = UITextBorderStyleRoundedRect;
+                tf.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:14]];
+                tf.autocorrectionType = UITextAutocorrectionTypeNo;
+                tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+                tf.delegate = self;
+                tf.backgroundColor = [iOS6Theme inputFieldBackgroundColor];
+                tf.textColor = [iOS6Theme inputFieldTextColor];
+                CGRect f = cell.contentView.bounds;
+                tf.frame = CGRectMake(12 + labelW + 4, 7, f.size.width - 12 - labelW - 4 - 12, 30);
+                tf.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+                tf.tag = (indexPath.row == 1) ? 310 : 311;
+                NSString *key = (indexPath.row == 1) ? SettingsKeyMyInfoName : SettingsKeyMyInfoBio;
+                tf.text = [[NSUserDefaults standardUserDefaults] stringForKey:key] ?: @"";
+                tf.placeholder = (indexPath.row == 1) ? @"你的名字" : @"一句话介绍自己";
+                [cell.contentView addSubview:tf];
+            } else {
+                // Toggle OFF — show grayed-out placeholder.
+                cell.textLabel.text = (indexPath.row == 1) ? @"（名字 — 开启后可填）" : @"（简介 — 开启后可填）";
+                cell.textLabel.textColor = [iOS6Theme secondaryTextColor];
+                cell.textLabel.alpha = 0.5f;
+            }
+            break;
+        }
     }
     return cell;
 }
@@ -499,6 +587,53 @@ accessoryButtonTappedForRowWithIndexPath:(NSIndexPath *)indexPath
 {
     [CharacterManagementViewController setInjectUserIdentity:sw.on];
     [[Logger sharedLogger] info:[NSString stringWithFormat:@"Inject user identity = %@", sw.on ? @"ON" : @"OFF"]];
+}
+
+// v261103-13: 「让角色知道我的信息」
++ (BOOL)myInfoEnabled
+{
+    NSNumber *v = [[NSUserDefaults standardUserDefaults] objectForKey:SettingsKeyMyInfoEnabled];
+    return v ? [v boolValue] : NO;  // default OFF
+}
+
++ (void)setMyInfoEnabled:(BOOL)on
+{
+    [[NSUserDefaults standardUserDefaults] setBool:on forKey:SettingsKeyMyInfoEnabled];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
++ (NSString *)myInfoName
+{
+    return [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyMyInfoName] ?: @"";
+}
+
++ (NSString *)myInfoBio
+{
+    return [[NSUserDefaults standardUserDefaults] stringForKey:SettingsKeyMyInfoBio] ?: @"";
+}
+
+- (IBAction)_myInfoToggle:(UISwitch *)sw
+{
+    [CharacterManagementViewController setMyInfoEnabled:sw.on];
+    // Reload to show/hide the text fields.
+    [_tableView reloadData];
+}
+
+// v261103-13: UITextFieldDelegate — save name/bio on end editing.
+- (void)textFieldDidEndEditing:(UITextField *)textField
+{
+    if (textField.tag == 310) {
+        [[NSUserDefaults standardUserDefaults] setObject:textField.text forKey:SettingsKeyMyInfoName];
+    } else if (textField.tag == 311) {
+        [[NSUserDefaults standardUserDefaults] setObject:textField.text forKey:SettingsKeyMyInfoBio];
+    }
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+- (BOOL)textFieldShouldReturn:(UITextField *)textField
+{
+    [textField resignFirstResponder];
+    return YES;
 }
 
 #pragma mark - UIAlertViewDelegate
