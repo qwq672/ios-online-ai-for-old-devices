@@ -253,8 +253,11 @@ static void AppendAttrString(NSMutableAttributedString *out,
 
         // === Table detection =============================================
         // A table row starts with | and ends with |.
-        // v261103-1: skip table parsing in fast mode (rare + complex).
-        if (!fast && [line hasPrefix:@"|"] && [line hasSuffix:@"|"]) {
+        // v261103-11: enable table parsing in fast mode too (user reports
+        // tables not rendering during streaming). Tables are common enough
+        // that skipping them causes visible "raw markdown" during streaming.
+        // The table parser is O(n) where n = number of columns, so it's fast.
+        if ([line hasPrefix:@"|"] && [line hasSuffix:@"|"]) {
             if (!inTable) {
                 inTable = YES;
                 [tableBuffer removeAllObjects];
@@ -912,25 +915,34 @@ static void AppendAttrString(NSMutableAttributedString *out,
 + (void)_appendHorizontalRuleTo:(NSMutableAttributedString *)out
                          baseFont:(UIFont *)baseFont
 {
-    UIFont *mono = [UIFont fontWithName:@"Courier" size:baseFont.pointSize - 1] ?: baseFont;
-    AppendAttrString(out, @"────────────────────────────────\n",
-                     mono, [iOS6Theme codeBorderColor], nil, 0, 0);
+    // v261103-11: no more ──── characters. Use a thin line via
+    // background color on a single space (creates a 1pt tall colored bar).
+    UIColor *lineColor = [iOS6Theme isDarkMode]
+        ? [UIColor colorWithWhite:1.0f alpha:0.15f]
+        : [UIColor colorWithWhite:0.0f alpha:0.10f];
+    AppendAttrString(out, @"\n", baseFont, lineColor, nil, 0, 0);
+    AppendAttrString(out, @" \n", baseFont, lineColor, lineColor, 0, 0);
+    AppendAttrString(out, @"\n", baseFont, lineColor, nil, 0, 0);
 }
 
 + (void)_appendTable:(NSArray *)rows
                   to:(NSMutableAttributedString *)out
             baseFont:(UIFont *)baseFont
 {
+    // v261103-11: COMPLETE REWRITE — no more box-drawing characters
+    // (│ ├ ─ ┼ ┤). User said "别用字符代替了UI好吧，会污染的".
+    // New approach: clean column layout using padding + background colors.
+    // Header row: bold + tinted background. Body rows: alternating bg.
+    // No border characters at all — visually distinct without pollution.
+
     // Parse rows into cells.
     NSMutableArray *table = [NSMutableArray arrayWithCapacity:[rows count]];
     NSUInteger maxCols = 0;
     for (NSString *row in rows) {
-        // Strip leading | and trailing |.
         NSString *body = row;
         if ([body hasPrefix:@"|"]) body = [body substringFromIndex:1];
         if ([body hasSuffix:@"|"]) body = [body substringToIndex:body.length - 1];
         NSArray *cells = [body componentsSeparatedByString:@"|"];
-        // Trim each cell.
         NSMutableArray *trimmed = [NSMutableArray arrayWithCapacity:[cells count]];
         for (NSString *c in cells) {
             [trimmed addObject:[c stringByTrimmingCharactersInSet:
@@ -939,12 +951,43 @@ static void AppendAttrString(NSMutableAttributedString *out,
         [table addObject:trimmed];
         if ([trimmed count] > maxCols) maxCols = [trimmed count];
     }
+    if (maxCols == 0 || [table count] == 0) return;
 
-    // Find column widths.
+    // Find column widths (skip separator rows).
     NSMutableArray *colWidths = [NSMutableArray arrayWithCapacity:maxCols];
-    for (NSUInteger c = 0; c < maxCols; c++) {
-        [colWidths addObject:@(0)];
+    for (NSUInteger c = 0; c < maxCols; c++) [colWidths addObject:@(0)];
+    for (NSUInteger r = 0; r < [table count]; r++) {
+        NSArray *row = [table objectAtIndex:r];
+        BOOL isSeparator = YES;
+        for (NSString *c in row) {
+            if (![c hasPrefix:@"-"] && c.length > 0) { isSeparator = NO; break; }
+        }
+        if (isSeparator) continue;
+        for (NSUInteger c = 0; c < [row count]; c++) {
+            NSString *cell = [row objectAtIndex:c];
+            NSUInteger w = cell.length;
+            if (w > [[colWidths objectAtIndex:c] unsignedIntegerValue]) {
+                [colWidths replaceObjectAtIndex:c withObject:@(w)];
+            }
+        }
     }
+
+    // Colors.
+    UIColor *headerBg = [iOS6Theme isDarkMode]
+        ? [UIColor colorWithRed:0.15f green:0.18f blue:0.25f alpha:1.0f]
+        : [UIColor colorWithRed:0.90f green:0.93f blue:0.97f alpha:1.0f];
+    UIColor *bodyBg1 = [iOS6Theme isDarkMode]
+        ? [UIColor colorWithRed:0.10f green:0.10f blue:0.12f alpha:1.0f]
+        : [UIColor colorWithRed:0.97f green:0.97f blue:0.97f alpha:1.0f];
+    UIColor *bodyBg2 = [iOS6Theme codeBackgroundColor];
+    UIColor *textColor = [iOS6Theme textColor];
+    UIColor *headerColor = [iOS6Theme isDarkMode]
+        ? [UIColor colorWithRed:0.85f green:0.88f blue:0.95f alpha:1.0f]
+        : [UIColor colorWithRed:0.15f green:0.20f blue:0.35f alpha:1.0f];
+    UIFont *headerFont = [UIFont boldSystemFontOfSize:baseFont.pointSize];
+    UIFont *bodyFont = baseFont;
+
+    NSUInteger dataRowIdx = 0;
     for (NSUInteger r = 0; r < [table count]; r++) {
         NSArray *row = [table objectAtIndex:r];
         // Skip separator row (---).
@@ -953,51 +996,35 @@ static void AppendAttrString(NSMutableAttributedString *out,
             if (![c hasPrefix:@"-"] && c.length > 0) { isSeparator = NO; break; }
         }
         if (isSeparator) continue;
-        for (NSUInteger c = 0; c < [row count]; c++) {
-            NSString *cell = [row objectAtIndex:c];
-            NSUInteger w = [cell lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
-            // Use char count instead of byte count for display width approx.
-            w = cell.length;
-            if (w > [[colWidths objectAtIndex:c] unsignedIntegerValue]) {
-                [colWidths replaceObjectAtIndex:c withObject:@(w)];
-            }
-        }
-    }
 
-    UIFont *mono = [UIFont fontWithName:@"Courier" size:baseFont.pointSize - 1] ?: baseFont;
-    UIColor *border = [iOS6Theme codeBorderColor];
+        BOOL isHeader = (dataRowIdx == 0);
+        UIColor *rowBg = isHeader ? headerBg : (dataRowIdx % 2 == 1 ? bodyBg1 : bodyBg2);
+        UIFont *rowFont = isHeader ? headerFont : bodyFont;
+        UIColor *rowColor = isHeader ? headerColor : textColor;
 
-    for (NSUInteger r = 0; r < [table count]; r++) {
-        NSArray *row = [table objectAtIndex:r];
-        NSMutableString *lineStr = [NSMutableString stringWithString:@"│ "];
+        // Build the row string with proper column padding.
+        NSMutableString *rowStr = [NSMutableString string];
         for (NSUInteger c = 0; c < maxCols; c++) {
             NSString *cell = c < [row count] ? [row objectAtIndex:c] : @"";
             NSUInteger targetW = [[colWidths objectAtIndex:c] unsignedIntegerValue];
+            // Pad with spaces to align columns.
             NSString *padded = cell;
-            // Right-pad with spaces to targetW.
             while (padded.length < targetW) {
                 padded = [padded stringByAppendingString:@" "];
             }
-            [lineStr appendString:padded];
-            if (c < maxCols - 1) [lineStr appendString:@" │ "];
+            // Add cell + separator space.
+            [rowStr appendFormat:@"%@  ", padded];
         }
-        [lineStr appendString:@" │"];
-        AppendAttrString(out, lineStr, mono, [iOS6Theme textColor], [iOS6Theme codeBackgroundColor], 0, 0);
-        AppendAttrString(out, @"\n", mono, [iOS6Theme textColor], [iOS6Theme codeBackgroundColor], 0, 0);
+        // Trim trailing spaces.
+        NSString *trimmedRow = [rowStr stringByTrimmingCharactersInSet:
+                               [NSCharacterSet whitespaceCharacterSet]];
 
-        // If this is the first row, draw a separator after it.
-        if (r == 0) {
-            NSMutableString *sep = [NSMutableString stringWithString:@"├─"];
-            for (NSUInteger c = 0; c < maxCols; c++) {
-                NSUInteger w = [[colWidths objectAtIndex:c] unsignedIntegerValue];
-                for (NSUInteger k = 0; k < w; k++) [sep appendString:@"─"];
-                if (c < maxCols - 1) [sep appendString:@"─┼─"];
-            }
-            [sep appendString:@"─┤"];
-            AppendAttrString(out, sep, mono, border, nil, 0, 0);
-            AppendAttrString(out, @"\n", mono, border, nil, 0, 0);
-        }
+        // Render with background color.
+        AppendAttrString(out, trimmedRow, rowFont, rowColor, rowBg, 0, 0);
+        AppendAttrString(out, @"\n", rowFont, rowColor, rowBg, 0, 0);
+        dataRowIdx++;
     }
+    AppendAttrString(out, @"\n", baseFont, textColor, nil, 0, 0);
 }
 
 // v261025-30: apply AppleColorEmoji font to emoji character ranges.
