@@ -62,7 +62,7 @@
             <TextView android:layout_width="0dp" android:layout_height="wrap_content"
                 android:layout_weight="1" android:text="深色模式"
                 android:textSize="16sp" android:textColor="#1A1A1A" />
-            <Switch android:id="@+id/darkModeSwitch"
+            <CheckBox android:id="@+id/darkModeSwitch"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content" />
         </LinearLayout>
@@ -99,7 +99,7 @@
             <TextView android:layout_width="0dp" android:layout_height="wrap_content"
                 android:layout_weight="1" android:text="流式输出"
                 android:textSize="16sp" android:textColor="#1A1A1A" />
-            <Switch android:id="@+id/streamingSwitch"
+            <CheckBox android:id="@+id/streamingSwitch"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content" />
         </LinearLayout>
@@ -113,7 +113,7 @@
             <TextView android:layout_width="0dp" android:layout_height="wrap_content"
                 android:layout_weight="1" android:text="深度思考"
                 android:textSize="16sp" android:textColor="#1A1A1A" />
-            <Switch android:id="@+id/deepThinkingSwitch"
+            <CheckBox android:id="@+id/deepThinkingSwitch"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content" />
         </LinearLayout>

@@ -6,9 +6,9 @@ import android.os.Bundle;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.Spinner;
-import android.widget.Switch;
 import android.widget.Toast;
 
 import com.awa.aichat.R;
@@ -29,7 +29,7 @@ public class SettingsActivity extends Activity {
     private static final String KEY_DEEP_THINKING = "deep_thinking";
 
     private EditText apiKeyField, baseURLField, modelField, promptField;
-    private Switch darkModeSwitch, streamingSwitch, deepThinkingSwitch;
+    private CheckBox darkModeSwitch, streamingSwitch, deepThinkingSwitch;
     private Spinner fontSizeSpinner;
     private Button saveButton;
 
@@ -46,9 +46,9 @@ public class SettingsActivity extends Activity {
         baseURLField = (EditText) findViewById(R.id.baseURLField);
         modelField = (EditText) findViewById(R.id.modelField);
         promptField = (EditText) findViewById(R.id.promptField);
-        darkModeSwitch = (Switch) findViewById(R.id.darkModeSwitch);
-        streamingSwitch = (Switch) findViewById(R.id.streamingSwitch);
-        deepThinkingSwitch = (Switch) findViewById(R.id.deepThinkingSwitch);
+        darkModeSwitch = (CheckBox) findViewById(R.id.darkModeSwitch);
+        streamingSwitch = (CheckBox) findViewById(R.id.streamingSwitch);
+        deepThinkingSwitch = (CheckBox) findViewById(R.id.deepThinkingSwitch);
         fontSizeSpinner = (Spinner) findViewById(R.id.fontSizeSpinner);
         saveButton = (Button) findViewById(R.id.saveButton);
 
@@ -60,7 +60,6 @@ public class SettingsActivity extends Activity {
         darkModeSwitch.setChecked(prefs.getBoolean("dark_mode", false));
         streamingSwitch.setChecked(prefs.getBoolean(KEY_STREAMING, true));
         deepThinkingSwitch.setChecked(prefs.getBoolean(KEY_DEEP_THINKING, true));
-
         // Font size spinner
         ArrayAdapter<CharSequence> adapter = ArrayAdapter.createFromResource(this,
             R.array.font_sizes, android.R.layout.simple_spinner_item);
