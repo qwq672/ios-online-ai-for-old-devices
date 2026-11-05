@@ -10,7 +10,6 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
-        <!-- API Settings -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -19,104 +18,65 @@
             android:textStyle="bold"
             android:paddingBottom="8dp" />
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="API Key" android:textSize="14sp" android:paddingTop="8dp" />
-        <EditText android:id="@+id/apiKeyField" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:hint="sk-..."
-            android:inputType="textPassword" android:background="@android:drawable/edit_text" />
-
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="Base URL" android:textSize="14sp" android:paddingTop="12dp" />
-        <EditText android:id="@+id/baseURLField" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:hint="https://api.openai.com/v1"
-            android:inputType="textUri" android:background="@android:drawable/edit_text" />
-
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="Model" android:textSize="14sp" android:paddingTop="12dp" />
-        <EditText android:id="@+id/modelField" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:hint="gpt-3.5-turbo"
-            android:background="@android:drawable/edit_text" />
-
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="System Prompt" android:textSize="14sp" android:paddingTop="12dp" />
-        <EditText android:id="@+id/promptField" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:hint="You are a helpful assistant."
-            android:inputType="textMultiLine" android:minLines="2"
-            android:background="@android:drawable/edit_text" />
-
-        <!-- Theme Settings -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="主题"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:paddingTop="20dp"
-            android:paddingBottom="8dp" />
+            android:text="API Key"
+            android:textSize="14sp"
+            android:paddingTop="8dp" />
 
-        <LinearLayout
+        <EditText
+            android:id="@+id/apiKeyField"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
-            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_weight="1" android:text="深色模式"
-                android:textSize="16sp" android:textColor="#1A1A1A" />
-            <CheckBox android:id="@+id/darkModeSwitch"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
-        </LinearLayout>
+            android:hint="sk-..."
+            android:inputType="textPassword"
+            android:background="@android:drawable/edit_text" />
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingTop="12dp">
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:text="字号" android:textSize="16sp" android:textColor="#1A1A1A"
-                android:paddingRight="12dp" />
-            <Spinner android:id="@+id/fontSizeSpinner"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
-        </LinearLayout>
-
-        <!-- Advanced Settings -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="高级"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:paddingTop="20dp"
-            android:paddingBottom="8dp" />
+            android:text="Base URL"
+            android:textSize="14sp"
+            android:paddingTop="12dp" />
 
-        <LinearLayout
+        <EditText
+            android:id="@+id/baseURLField"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
-            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_weight="1" android:text="流式输出"
-                android:textSize="16sp" android:textColor="#1A1A1A" />
-            <CheckBox android:id="@+id/streamingSwitch"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
-        </LinearLayout>
+            android:hint="https://api.openai.com/v1"
+            android:inputType="textUri"
+            android:background="@android:drawable/edit_text" />
 
-        <LinearLayout
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Model"
+            android:textSize="14sp"
+            android:paddingTop="12dp" />
+
+        <EditText
+            android:id="@+id/modelField"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingTop="12dp">
-            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_weight="1" android:text="深度思考"
-                android:textSize="16sp" android:textColor="#1A1A1A" />
-            <CheckBox android:id="@+id/deepThinkingSwitch"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
-        </LinearLayout>
+            android:hint="gpt-3.5-turbo"
+            android:background="@android:drawable/edit_text" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="System Prompt"
+            android:textSize="14sp"
+            android:paddingTop="12dp" />
+
+        <EditText
+            android:id="@+id/promptField"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="You are a helpful assistant."
+            android:inputType="textMultiLine"
+            android:minLines="2"
+            android:background="@android:drawable/edit_text" />
 
         <Button
             android:id="@+id/saveButton"

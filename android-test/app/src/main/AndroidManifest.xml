@@ -5,14 +5,14 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
-        android:label="AIAnyWhere"
+        android:label="AIChat"
         android:icon="@drawable/ic_launcher"
         android:theme="@style/AppTheme"
         android:allowBackup="true">
         
         <activity
             android:name=".ui.ChatActivity"
-            android:label="AIAnyWhere"
+            android:label="AIChat"
             android:exported="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

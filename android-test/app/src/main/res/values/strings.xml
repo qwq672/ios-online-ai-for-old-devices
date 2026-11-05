@@ -1,10 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">AIAnyWhere</string>
-    <string-array name="font_sizes">
-        <item>S</item>
-        <item>M</item>
-        <item>L</item>
-        <item>XL</item>
-    </string-array>
+    <string name="app_name">AIChat</string>
 </resources>

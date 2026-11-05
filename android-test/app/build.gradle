@@ -1,4 +1,6 @@
-apply plugin: 'com.android.application'
+plugins {
+    id 'com.android.application' version '7.4.2'
+}
 
 android {
     namespace 'com.awa.aichat'
@@ -6,8 +8,8 @@ android {
 
     defaultConfig {
         applicationId "com.awa.aichat"
-        minSdk 9
-        targetSdk 22
+        minSdk 9       // Android 2.3 Gingerbread
+        targetSdk 22   // Android 5.1
         versionCode 1
         versionName "0.1.0"
     }
