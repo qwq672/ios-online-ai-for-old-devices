@@ -40,13 +40,7 @@ jobs:
       - name: Build debug APK
         working-directory: android-test
         run: |
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
-          GRADLE_EXIT=${PIPESTATUS[0]}
-          echo "Gradle exit code: $GRADLE_EXIT"
-          if [ $GRADLE_EXIT -ne 0 ]; then
-            echo "BUILD FAILED — exit code $GRADLE_EXIT"
-            exit 1
-          fi
+          ./gradlew assembleDebug --no-daemon --stacktrace
           echo "=== APK search ==="
           find . -name "*.apk" -type f
           ls -la app/build/outputs/apk/debug/ 2>/dev/null || echo "no debug dir"
@@ -56,7 +50,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-log
-          path: /tmp/build.log
+          path: |
+            /tmp/build.log
+            android-test/build.log
+            android-test/app/build/reports/
+          if-no-files-found: ignore
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
