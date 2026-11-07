@@ -341,10 +341,22 @@
 
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
                                                           cachePolicy:NSURLRequestReloadIgnoringCacheData
-                                                      timeoutInterval:120.0];
+                                                      timeoutInterval:240.0];
     [req setHTTPMethod:@"POST"];
     [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
     [req setValue:@"text/event-stream" forHTTPHeaderField:@"Accept"];
+    // v261103-15: per DeepSeek's iOS 6 NSURLConnection analysis, the
+    // framework ignores "Connection: close" and forces Keep-Alive, but
+    // we set it anyway as a defensive measure (some servers respect it
+    // and close the socket promptly, avoiding the "dead connection"
+    // scenario where iOS 6 keeps writing to a socket the server has
+    // already torn down — which manifests as -1200 on large bodies).
+    [req setValue:@"close" forHTTPHeaderField:@"Connection"];
+    // v261103-15: timeout bumped 120s→240s. iOS 6 changed the default
+    // timeout for HTTPBody-bearing requests from 240s (pre-iOS6) to 60s.
+    // 120s was sometimes too short for large image uploads combined
+    // with slow mobile networks; 240s restores the historical behavior
+    // and gives the adaptive re-compression + retry path time to work.
     if (self.apiKey.length > 0) {
         [req setValue:[NSString stringWithFormat:@"Bearer %@", self.apiKey]
         forHTTPHeaderField:@"Authorization"];

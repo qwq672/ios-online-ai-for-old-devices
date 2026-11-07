@@ -10,6 +10,7 @@
 #import "iOS6Theme.h"
 #import "IconDrawing.h"
 #import "NSDataBase64.h"
+#import "Logger.h"
 // v261025-11: SettingsKeyImageGenFeatureEnabled (global image-gen switch).
 #import "SettingsViewController.h"
 #import <QuartzCore/QuartzCore.h>
@@ -508,14 +509,95 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     UIImage *capturedImage = [image retain];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         @autoreleasepool {
-            // v261103-10: quality 0.7→0.5 for smaller base64 payload.
-            NSData *jpegData = UIImageJPEGRepresentation(capturedImage, 0.5);
-            NSString *base64 = jpegData ? [jpegData base64String] : nil;
+            // v261103-15: adaptive re-compression to avoid iOS 6's
+            // NSURLConnection "death zone" (196,609–196,868 bytes HTTPS
+            // POST body — connection silently hangs ~5min then -1200).
+            // Base64 inflates by ~33%, so we keep base64 < 180KB to leave
+            // headroom for the JSON wrapper + headers. Strategy: at the
+            // current dimension, try 0.5 → 0.35 → 0.25 → 0.15 quality;
+            // if still over 180KB and dim > 384, halve the dimensions
+            // and restart the quality ladder. This guarantees we exit
+            // either small enough or at the floor (384px / 0.15).
+            UIImage *workImg = [capturedImage retain];
+            NSInteger curMaxDim = maxDim;
+            NSData *jpegData = nil;
+            NSString *base64 = nil;
+            const CGFloat kQualities[] = {0.5f, 0.35f, 0.25f, 0.15f};
+            const NSInteger kNumQualities = 4;
+            NSInteger qIdx = 0;
+            while (YES) {
+                if (qIdx < kNumQualities) {
+                    NSData *d = UIImageJPEGRepresentation(workImg, kQualities[qIdx]);
+                    if (d) {
+                        NSString *b64 = [d base64String];
+                        if (b64.length <= 180000 || qIdx == kNumQualities - 1) {
+                            // Good enough, or we're at the floor for this size.
+                            jpegData = [d retain];
+                            base64 = [b64 retain];
+                            break;
+                        }
+                        // Still too big — try next quality.
+                    }
+                    qIdx++;
+                } else {
+                    // Exhausted quality ladder at this size — halve
+                    // dimensions and restart the ladder from 0.5.
+                    if (curMaxDim <= 384) {
+                        // Already at the floor — accept whatever we
+                        // last produced. Re-encode at 0.15 as a last
+                        // resort so we have *something*.
+                        NSData *d = UIImageJPEGRepresentation(workImg, 0.15f);
+                        if (d) {
+                            jpegData = [d retain];
+                            NSString *b64 = [d base64String];
+                            base64 = [b64 retain];
+                        }
+                        break;
+                    }
+                    curMaxDim /= 2;
+                    CGFloat w = workImg.size.width, h = workImg.size.height;
+                    CGFloat sc = (CGFloat)curMaxDim / MAX(w, h);
+                    if (sc < 1.0f) {
+                        NSInteger nw = (NSInteger)(w * sc);
+                        NSInteger nh = (NSInteger)(h * sc);
+                        if (nw < 1) nw = 1;
+                        if (nh < 1) nh = 1;
+                        UIGraphicsBeginImageContextWithOptions(CGSizeMake(nw, nh), NO, 0.0);
+                        [workImg drawInRect:CGRectMake(0, 0, nw, nh)];
+                        UIImage *smaller = UIGraphicsGetImageFromCurrentImageContext();
+                        UIGraphicsEndImageContext();
+                        if (smaller) {
+                            [workImg release];
+                            workImg = [smaller retain];
+                        }
+                    }
+                    qIdx = 0;  // restart ladder
+                }
+            }
+            NSInteger finalBase64Len = base64.length;
+            NSInteger finalJpegLen = [jpegData length];
+            NSInteger finalW = (NSInteger)workImg.size.width;
+            NSInteger finalH = (NSInteger)workImg.size.height;
+            [[Logger sharedLogger] info:[NSString stringWithFormat:
+                @"IMG-COMPRESS final %ldx%ld jpeg=%ldB base64=%ldB (maxDim=%ld origMaxDim=%ld)",
+                (long)finalW, (long)finalH, (long)finalJpegLen,
+                (long)finalBase64Len, (long)curMaxDim, (long)maxDim]];
+            NSString *finalDataUrl = nil;
+            if (base64 && base64.length > 0) {
+                finalDataUrl = [NSString stringWithFormat:@"data:image/jpeg;base64,%@", base64];
+            }
+            [workImg release];
+            [jpegData release];
+            [base64 release];
+            NSString *capturedDataUrl = [finalDataUrl retain];
             dispatch_async(dispatch_get_main_queue(), ^{
                 [capturedImage release];
-                if (!base64 || base64.length == 0) return;
-                NSString *dataUrl = [NSString stringWithFormat:@"data:image/jpeg;base64,%@", base64];
-                [_pendingImages addObject:dataUrl];
+                if (!capturedDataUrl || capturedDataUrl.length == 0) {
+                    [capturedDataUrl release];
+                    return;
+                }
+                [_pendingImages addObject:capturedDataUrl];
+                [capturedDataUrl release];
                 // Refresh badge count on the plus button (image-upload
                 // is one of the things the badge tracks; we now show
                 // pending image count as a temporary override).
