@@ -35,6 +35,18 @@
 #import <UIKit/UIKit.h>
 #import <sys/sysctl.h>
 #import <CFNetwork/CFNetwork.h>   // v261103-20: CFReadStreamCreateForStreamedHTTPRequest
+#import <dlfcn.h>                  // v261103-20: dlsym 动态加载 CFHTTPMessageSetHeaderField (iOS 6 SDK stub)
+
+// v261103-20: iOS 6 SDK 的 CFNetwork.framework 可能是 stub，CFHTTPMessageSetHeaderField
+// 符号链接时找不到。用 dlsym 动态加载，运行时从系统 dylib 解析。
+typedef void (*CFHTTPMessageSetHeaderFieldFunc)(CFHTTPMessageRef, CFStringRef, CFStringRef);
+static CFHTTPMessageSetHeaderFieldFunc _pCFHTTPMessageSetHeaderField = NULL;
+static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
+    if (!_pCFHTTPMessageSetHeaderField) {
+        _pCFHTTPMessageSetHeaderField = (CFHTTPMessageSetHeaderFieldFunc)dlsym(RTLD_DEFAULT, "CFHTTPMessageSetHeaderField");
+    }
+    return _pCFHTTPMessageSetHeaderField;
+}
 
 // v261025-12: SyncHTTPDelegate — async NSURLConnection transport wrapped
 // with a semaphore so callers keep synchronous semantics while the TLS
@@ -1174,19 +1186,22 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
     if (!request) return NO;
 
     // 设请求头 — 从 NSMutableURLRequest 复制所有 headers
+    // v261103-20: CFHTTPMessageSetHeaderField 用 dlsym 动态加载（SDK stub 链接不到）
+    CFHTTPMessageSetHeaderFieldFunc _setHeader = _getCFHTTPMessageSetHeaderField();
     NSDictionary *headers = [req allHTTPHeaderFields];
     for (NSString *key in headers) {
         NSString *val = [headers objectForKey:key];
         if ([key isKindOfClass:[NSString class]] && [val isKindOfClass:[NSString class]]) {
-            CFHTTPMessageSetHeaderField(request,
-                                        (__bridge CFStringRef)key,
-                                        (__bridge CFStringRef)val);
+            if (_setHeader) {
+                _setHeader(request, (__bridge CFStringRef)key, (__bridge CFStringRef)val);
+            }
         }
     }
     // 设 Content-Length（CFNetwork 用 Content-Length 模式，不用 chunked）
     NSString *contentLength = [NSString stringWithFormat:@"%lu", (unsigned long)[bodyData length]];
-    CFHTTPMessageSetHeaderField(request, CFSTR("Content-Length"),
-                                (__bridge CFStringRef)contentLength);
+    if (_setHeader) {
+        _setHeader(request, CFSTR("Content-Length"), (__bridge CFStringRef)contentLength);
+    }
 
     // 2. 创建 body 的 NSInputStream
     // 注意: inputStreamWithData 是一次性 stream。AI API 用 Bearer token
