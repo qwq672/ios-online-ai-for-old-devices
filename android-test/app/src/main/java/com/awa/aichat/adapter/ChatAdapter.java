@@ -227,6 +227,7 @@ public class ChatAdapter extends BaseAdapter {
 
     private static class Holder {
         LinearLayout root;
+        View spacer;
         LinearLayout bubble;
         TextView thinking;
         TextView content;
