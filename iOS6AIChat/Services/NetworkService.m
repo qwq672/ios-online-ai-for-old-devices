@@ -82,6 +82,10 @@
 
 @interface NetworkService ()
 @property (nonatomic, retain) NSURLConnection *connection;
+// v261103-19: NSURLSession (iOS 7+) 用于突破 NSURLConnection 的 ~130KB body 限制。
+// SDK 7.1 有定义，deployment target 6.0 — 编译 OK，运行时用 NSClassFromString 检测。
+@property (nonatomic, retain) NSURLSession *urlSession;
+@property (nonatomic, retain) NSURLSessionDataTask *dataTask;
 @property (nonatomic, retain) NSMutableData   *rawBuffer;
 @property (nonatomic, retain) NSMutableString *accumulated;
 @property (nonatomic, retain) NSMutableString *thinkingAccumulated;
@@ -374,14 +378,11 @@
     }
     // v261103-2: removed X-Target-URL header — chat no longer goes through
     // a transit proxy. The request goes directly to the provider's endpoint.
-    // v261103-17: 尝试用 HTTPBodyStream 突破 iOS 6 NSURLConnection 的
-    // ~130KB body 大小限制。setHTTPBody 会让 NSURLConnection 预先分配
-    // 整个 body 的发送缓冲区，body > ~130KB 时缓冲分配失败 → TLS 握手
-    // 无法开始 → -1200。setHTTPBodyStream 用流式提供 body，可能改变
-    // 内部缓冲策略，分块发送而不预分配整个缓冲。
-    // 用系统自带的 inputStreamWithData（不需要自己写 NSInputStream 子类）。
-    NSInputStream *bodyStream = [NSInputStream inputStreamWithData:bodyData];
-    [req setHTTPBodyStream:bodyStream];
+    // v261103-19: revert setHTTPBodyStream → setHTTPBody。setHTTPBodyStream
+    // 在 iOS 6 上是"假流式"(先读全到内存)，没突破 130KB 限制，反而引入 -1021
+    // (stream 耗尽后无法重试)。用 setHTTPBody (NSData 可重放)。
+    // iOS 7+ 改用 NSURLSession (无 body 限制)，iOS 6 fallback 到这里。
+    [req setHTTPBody:bodyData];
 
     // Reset accumulators for this turn.
     // v261025-13: segmented thinking — when re-launching after a tool
@@ -399,6 +400,8 @@
     // both connections will dispatch into the same accumulators / delegate,
     // corrupting state. This was audit finding #8.
     [_connection cancel];
+    // v261103-19: 也取消 NSURLSession task (iOS 7+)
+    if (_dataTask) { @try { [_dataTask cancel]; } @catch (id e) {} }
 
     self.streamStartTs = [NSDate timeIntervalSinceReferenceDate];
     [[Logger sharedLogger] info:[NSString stringWithFormat:
@@ -410,11 +413,20 @@
         anthropic ? @"anthropic" : @"openai",
         (unsigned long)[messages count], (unsigned long)[bodyData length]]];
 
-    // v261103-18: 用 startImmediately:NO + scheduleInRunLoop:forMode:NSRunLoopCommonModes
-    // 替代 startImmediately:YES。原版在 default mode 跑，UI 滑动 (流式渲染时
-    // ListView 频繁刷新) 会打断 TLS 握手 → 大请求 TLS 握手时间长更容易被打断
-    // → -1200。NSRunLoopCommonModes 让连接在 UI 滑动时也能继续跑。
-    // 其他同类型 iOS 6 软件可能就是用 common modes 或 CFNetwork，不受 UI 影响。
+    // v261103-19: iOS 7+ 用 NSURLSession 突破 NSURLConnection 的 ~130KB body 限制。
+    // NSURLConnection 有已知 body 大小 bug (>~130KB 时 TLS 失败 -1200)，
+    // Stack Overflow 有 64KB 报告。NSURLSession 是 iOS 7 全新实现，
+    // uploadTask 能处理 GB 级 body，无此限制。
+    // iPhone 4S (iOS 7+) 走 NSURLSession 路径；iPhone 3GS (iOS 6) fallback。
+    Class sessionClass = NSClassFromString(@"NSURLSession");
+    if (sessionClass) {
+        // iOS 7+ — 用 NSURLSession 突破 body 限制
+        [self _launchStreamWithNSURLSession:req bodyBytes:[bodyData length]];
+        return YES;
+    }
+
+    // v261103-18: iOS 6 fallback — startImmediately:NO + common modes
+    // 让连接在 UI 滑动时也能继续跑 (流式渲染 ListView 刷新不打断 TLS 握手)。
     self.connection = [[[NSURLConnection alloc] initWithRequest:req delegate:self
                                              startImmediately:NO] autorelease];
     if (self.connection) {
@@ -987,6 +999,95 @@
               didFailForConversationID:_conversationID
                               error:error];
     }
+}
+
+#pragma mark - NSURLSession path (iOS 7+) — v261103-19
+// NSURLSession 突破 NSURLConnection 的 ~130KB body 限制。
+// iPhone 4S (iOS 7+) 走这条路。方法名跟 NSURLConnection delegate 不同，共存。
+// 用 NSClassFromString + performSelector 动态调用，避免 iOS 6 运行时崩溃。
+
+- (void)_launchStreamWithNSURLSession:(NSMutableURLRequest *)req bodyBytes:(NSUInteger)bodyBytes
+{
+    // 取消旧的 session/task
+    if (_dataTask) { @try { [_dataTask cancel]; } @catch (id e) {} }
+    if (_urlSession) { @try { [_urlSession invalidateAndCancel]; } @catch (id e) {} }
+
+    NSURLSessionConfiguration *config = [NSURLSessionConfiguration defaultSessionConfiguration];
+    config.timeoutIntervalForRequest = 240.0;
+    config.timeoutIntervalForResource = 300.0;
+    // 不让 session 在后台跑（避免 iOS 6 设备上的奇怪行为）
+    config.HTTPShouldUsePipelining = YES;
+
+    self.urlSession = [NSURLSession sessionWithConfiguration:config
+                                                    delegate:self
+                                               delegateQueue:nil];
+    if (!self.urlSession) {
+        [[Logger sharedLogger] error:@"NSURLSession 创建失败，fallback 到 NSURLConnection"];
+        self.connection = [[[NSURLConnection alloc] initWithRequest:req delegate:self
+                                                startImmediately:NO] autorelease];
+        if (self.connection) {
+            [self.connection scheduleInRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+            [self.connection start];
+        }
+        return;
+    }
+
+    self.dataTask = [self.urlSession dataTaskWithRequest:req];
+    if (!self.dataTask) {
+        [[Logger sharedLogger] error:@"NSURLSessionDataTask 创建失败，fallback"];
+        [_urlSession invalidateAndCancel];
+        self.urlSession = nil;
+        self.connection = [[[NSURLConnection alloc] initWithRequest:req delegate:self
+                                                startImmediately:NO] autorelease];
+        if (self.connection) {
+            [self.connection scheduleInRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+            [self.connection start];
+        }
+        return;
+    }
+
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"NET → (NSURLSession) body=%luB", (unsigned long)bodyBytes]];
+
+    [self.dataTask resume];
+}
+
+#pragma mark - NSURLSessionDataDelegate (iOS 7+)
+// 方法名跟 NSURLConnection delegate 不同，能共存。
+// iOS 6 设备走 NSURLConnection 路径，这些方法不会被调用。
+
+- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask
+    didReceiveResponse:(NSURLResponse *)response
+    completionHandler:(void (^)(NSURLSessionResponseDisposition))completionHandler
+{
+    [_rawBuffer setData:nil];
+    self.httpStatus = 0;
+    if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+        self.httpStatus = [(NSHTTPURLResponse *)response statusCode];
+    }
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"NET ← HTTP %ld (NSURLSession)", (long)self.httpStatus]];
+    if (completionHandler) completionHandler(NSURLSessionResponseAllow);
+}
+
+- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveData:(NSData *)data
+{
+    if (!data) return;
+    if (!_rawBuffer) return;
+    [_rawBuffer appendData:data];
+    [self _parseBufferedChunks];
+}
+
+- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error
+{
+    if (error) {
+        [self connection:nil didFailWithError:error];
+    } else {
+        [self connectionDidFinishLoading:nil];
+    }
+    @try { [_urlSession finishTasksAndInvalidate]; } @catch (id e) {}
+    self.urlSession = nil;
+    self.dataTask = nil;
 }
 
 #pragma mark - Tool call execution
@@ -1799,6 +1900,9 @@
 
 - (void)dealloc
 {
+    // v261103-19: 清理 NSURLSession (iOS 7+)
+    if (_urlSession) { @try { [_urlSession invalidateAndCancel]; } @catch (id e) {} [_urlSession release]; }
+    if (_dataTask) { [_dataTask release]; }
     [_connection release];
     [_rawBuffer release];
     [_accumulated release];
