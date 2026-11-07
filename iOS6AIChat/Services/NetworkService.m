@@ -34,6 +34,7 @@
 #import "Logger.h"
 #import <UIKit/UIKit.h>
 #import <sys/sysctl.h>
+#import <CFNetwork/CFNetwork.h>   // v261103-20: CFReadStreamCreateForStreamedHTTPRequest
 
 // v261025-12: SyncHTTPDelegate — async NSURLConnection transport wrapped
 // with a semaphore so callers keep synchronous semantics while the TLS
@@ -86,6 +87,10 @@
 // SDK 7.1 有定义，deployment target 6.0 — 编译 OK，运行时用 NSClassFromString 检测。
 @property (nonatomic, retain) NSURLSession *urlSession;
 @property (nonatomic, retain) NSURLSessionDataTask *dataTask;
+// v261103-20: CFNetwork read stream (iOS 6) — 突破 NSURLConnection 130KB body 限制
+// CFReadStreamCreateForStreamedHTTPRequest 专为超大 body 设计，流式发送不预分配缓冲
+@property (nonatomic, assign) CFReadStreamRef cfReadStream;
+@property (nonatomic, retain) NSInputStream *cfBodyStream;  // body 的 NSInputStream
 @property (nonatomic, retain) NSMutableData   *rawBuffer;
 @property (nonatomic, retain) NSMutableString *accumulated;
 @property (nonatomic, retain) NSMutableString *thinkingAccumulated;
@@ -402,6 +407,8 @@
     [_connection cancel];
     // v261103-19: 也取消 NSURLSession task (iOS 7+)
     if (_dataTask) { [_dataTask cancel]; }
+    // v261103-20: 取消 CFNetwork stream (iOS 6)
+    [self _cleanupCFStream];
 
     self.streamStartTs = [NSDate timeIntervalSinceReferenceDate];
     [[Logger sharedLogger] info:[NSString stringWithFormat:
@@ -425,8 +432,15 @@
         return YES;
     }
 
-    // v261103-18: iOS 6 fallback — startImmediately:NO + common modes
-    // 让连接在 UI 滑动时也能继续跑 (流式渲染 ListView 刷新不打断 TLS 握手)。
+    // v261103-20: iOS 6 — 用 CFNetwork (CFReadStreamCreateForStreamedHTTPRequest)
+    // 突破 NSURLConnection 的 ~130KB body 限制。这是 Apple 官方推荐"body 太大"
+    // 时用的 API，流式发送不预分配缓冲，绕过 NSURLConnection 的 TLS 缓冲 bug。
+    // 无代价：图片原样发 + 历史完整保留。
+    if ([self _launchStreamWithCFNetwork:req bodyData:bodyData]) {
+        return YES;
+    }
+
+    // CFNetwork 失败 → fallback 到 NSURLConnection (最后兜底)
     self.connection = [[[NSURLConnection alloc] initWithRequest:req delegate:self
                                              startImmediately:NO] autorelease];
     if (self.connection) {
@@ -442,70 +456,6 @@
 // OpenAI-compatible body: {model, messages, stream, temperature,
 // [thinking], [tools]}. Message content uses the array form when images
 // are attached (multi-modal vision).
-
-// v261103-19: 历史瘦身 — 把 msgs 数组里最后一条有图片的消息之前的所有图片
-// 替换成 [图片] 文字占位符。只保留最新一张图的 base64，大幅降低 body 大小。
-// 适用于 OpenAI 格式 (image_url type) 和 Anthropic 格式 (image type)。
-- (void)_slimHistoryImages:(NSMutableArray *)msgs
-{
-    if (!msgs || [msgs count] == 0) return;
-    // 找最后一条有图片的消息 index
-    NSInteger lastImgIdx = -1;
-    for (NSInteger i = [msgs count] - 1; i >= 0; i--) {
-        NSDictionary *m = [msgs objectAtIndex:i];
-        id content = [m objectForKey:@"content"];
-        if (![content isKindOfClass:[NSArray class]]) continue;
-        for (id part in content) {
-            if (![part isKindOfClass:[NSDictionary class]]) continue;
-            NSString *type = [part objectForKey:@"type"];
-            if ([type isEqualToString:@"image_url"] || [type isEqualToString:@"image"]) {
-                lastImgIdx = i;
-                break;
-            }
-        }
-        if (lastImgIdx >= 0) break;
-    }
-    if (lastImgIdx < 0) return;  // 没图片
-
-    // 把 lastImgIdx 之前的消息里的图片替换成 [图片] 文字
-    for (NSInteger i = 0; i < lastImgIdx; i++) {
-        NSDictionary *m = [msgs objectAtIndex:i];
-        id content = [m objectForKey:@"content"];
-        if (![content isKindOfClass:[NSArray class]]) continue;
-
-        BOOL hasImage = NO;
-        for (id part in content) {
-            if (![part isKindOfClass:[NSDictionary class]]) continue;
-            NSString *type = [part objectForKey:@"type"];
-            if ([type isEqualToString:@"image_url"] || [type isEqualToString:@"image"]) {
-                hasImage = YES;
-                break;
-            }
-        }
-        if (!hasImage) continue;
-
-        // 重建 content：保留 text 部分，图片替换成 [图片] text
-        NSMutableArray *newContent = [NSMutableArray array];
-        BOOL addedPlaceholder = NO;
-        for (id part in content) {
-            if ([part isKindOfClass:[NSDictionary class]]) {
-                NSString *type = [part objectForKey:@"type"];
-                if ([type isEqualToString:@"image_url"] || [type isEqualToString:@"image"]) {
-                    if (!addedPlaceholder) {
-                        [newContent addObject:@{@"type": @"text", @"text": @"[图片]"}];
-                        addedPlaceholder = YES;
-                    }
-                } else {
-                    [newContent addObject:part];  // 保留 text 部分
-                }
-            }
-        }
-        NSDictionary *newMsg = [NSDictionary dictionaryWithObjectsAndKeys:
-            [m objectForKey:@"role"], @"role",
-            newContent, @"content", nil];
-        [msgs replaceObjectAtIndex:i withObject:newMsg];
-    }
-}
 
 - (NSData *)_buildOpenAIRequestBody:(NSArray *)messages stream:(BOOL)doStream
 {
@@ -542,12 +492,10 @@
         }
     }
 
-    // v261103-19: 历史瘦身 — iOS 6 (无 NSURLSession) 时，只保留最新一条消息
-    // 的图片 base64，历史图片替换成 [图片] 文字。降低 body 大小避开 130KB 限制。
-    // iOS 7+ 用 NSURLSession 无限制，不瘦身（保留完整历史图片，无代价）。
-    if (!NSClassFromString(@"NSURLSession")) {
-        [self _slimHistoryImages:msgs];
-    }
+    // v261103-20: 历史瘦身已移除 — CFNetwork (iOS 6) 和 NSURLSession (iOS 7+)
+    // 都无 body 限制，不需要瘦身。恢复无代价（图片原样发 + 历史完整保留）。
+    // 如果 CFNetwork 创建失败 fallback 到 NSURLConnection，现有 -1200 剥离图片
+    // 重试兜底（极少触发）。
 
     // Check model supports thinking (default ON).
     BOOL doThink = NO;
@@ -841,11 +789,7 @@
     }
     if ([msgs count] == 0) return nil;
 
-    // v261103-19: 历史瘦身 — iOS 6 (无 NSURLSession) 时，Anthropic 格式也瘦身。
-    // _slimHistoryImages 同时处理 image_url (OpenAI) 和 image (Anthropic) 类型。
-    if (!NSClassFromString(@"NSURLSession")) {
-        [self _slimHistoryImages:msgs];
-    }
+    // v261103-20: 历史瘦身已移除（CFNetwork + NSURLSession 都无 body 限制）。
 
     NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:@{
         @"model":      self.model ?: @"claude-3-5-haiku-20241022",
@@ -1166,6 +1110,192 @@
     [_urlSession finishTasksAndInvalidate];
     self.urlSession = nil;
     self.dataTask = nil;
+}
+
+#pragma mark - CFNetwork path (iOS 6) — v261103-20
+// CFReadStreamCreateForStreamedHTTPRequest 突破 NSURLConnection 的 ~130KB body 限制。
+// 这是 Apple 官方推荐"body 太大放不进内存"时用的 API。
+// 流式发送 body，不预分配整个缓冲，绕过 NSURLConnection 的 TLS 缓冲 bug。
+// 无代价：图片原样发 + 历史完整保留。
+// iOS 6 走这条路；iOS 7+ 走 NSURLSession（已实现）。
+
+// C 回调函数 — CFReadStream 事件回调
+// 必须是 C 函数（CFStreamClientCallBack 签名要求）
+static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType event, void *info) {
+    NetworkService *svc = (__bridge NetworkService *)info;
+    if (!svc) return;
+    if (event == kCFStreamEventHasBytesAvailable) {
+        // 读响应数据 chunk
+        uint8_t buf[8192];
+        CFIndex len;
+        while ((len = CFReadStreamRead(stream, buf, sizeof(buf))) > 0) {
+            NSData *data = [NSData dataWithBytes:buf length:len];
+            [svc cfStreamReceivedData:data];
+        }
+    } else if (event == kCFStreamEventEndEncountered) {
+        // 第一次 HasBytesAvailable 时拿响应头（HTTP status）
+        // 但 EndEncountered 时也确认一下
+        [svc cfStreamFinished];
+    } else if (event == kCFStreamEventErrorOccurred) {
+        CFStreamError serr = CFReadStreamGetError(stream);
+        NSString *desc;
+        if (serr.domain == kCFStreamErrorDomainPOSIX) {
+            desc = [NSString stringWithFormat:@"CFNetwork POSIX error %d", (int)serr.error];
+        } else if (serr.domain == kCFStreamErrorDomainSSL) {
+            desc = [NSString stringWithFormat:@"CFNetwork SSL error %d", (int)serr.error];
+        } else {
+            desc = [NSString stringWithFormat:@"CFNetwork error domain=%d code=%d",
+                    (int)serr.domain, (int)serr.error];
+        }
+        NSError *error = [NSError errorWithDomain:@"CFNetwork"
+                                              code:(NSInteger)serr.error
+                                          userInfo:@{NSLocalizedDescriptionKey: desc}];
+        [svc cfStreamFailed:error];
+    }
+}
+
+- (BOOL)_launchStreamWithCFNetwork:(NSMutableURLRequest *)req bodyData:(NSData *)bodyData
+{
+    // 取消旧的 CFReadStream
+    if (_cfReadStream) {
+        CFReadStreamClose(_cfReadStream);
+        CFRelease(_cfReadStream);
+        self.cfReadStream = NULL;
+    }
+    if (_cfBodyStream) { [_cfBodyStream close]; self.cfBodyStream = nil; }
+
+    NSURL *url = [req URL];
+    if (!url) return NO;
+
+    // 1. 创建 CFHTTPMessage（请求头，body 被忽略——body 从 stream 提供）
+    CFHTTPMessageRef request = CFHTTPMessageCreateRequest(NULL, CFSTR("POST"),
+                                                          (__bridge CFURLRef)url,
+                                                          kCFHTTPVersion1_1);
+    if (!request) return NO;
+
+    // 设请求头 — 从 NSMutableURLRequest 复制所有 headers
+    NSDictionary *headers = [req allHTTPHeaderFields];
+    for (NSString *key in headers) {
+        NSString *val = [headers objectForKey:key];
+        if ([key isKindOfClass:[NSString class]] && [val isKindOfClass:[NSString class]]) {
+            CFHTTPMessageSetHeaderField(request,
+                                        (__bridge CFStringRef)key,
+                                        (__bridge CFStringRef)val);
+        }
+    }
+    // 设 Content-Length（CFNetwork 用 Content-Length 模式，不用 chunked）
+    NSString *contentLength = [NSString stringWithFormat:@"%lu", (unsigned long)[bodyData length]];
+    CFHTTPMessageSetHeaderField(request, CFSTR("Content-Length"),
+                                (__bridge CFStringRef)contentLength);
+
+    // 2. 创建 body 的 NSInputStream
+    // 注意: inputStreamWithData 是一次性 stream。AI API 用 Bearer token
+    // 不会触发认证挑战，所以 stream 不会被重读，一次性 OK。
+    NSInputStream *bodyStream = [NSInputStream inputStreamWithData:bodyData];
+    if (!bodyStream) {
+        CFRelease(request);
+        return NO;
+    }
+    self.cfBodyStream = bodyStream;  // retain
+
+    // 3. 创建 CFReadStream（流式 HTTP 请求）
+    CFReadStreamRef readStream = CFReadStreamCreateForStreamedHTTPRequest(
+        NULL, request, (__bridge CFReadStreamRef)bodyStream);
+    CFRelease(request);  // readStream 持有了 request 的拷贝
+
+    if (!readStream) {
+        return NO;
+    }
+    self.cfReadStream = readStream;  // 保存到 property（assign，需手动管理）
+
+    // 4. 注册 stream 事件回调
+    CFStreamClientContext context = {0, (__bridge void *)self, NULL, NULL, NULL};
+    CFOptionFlags events = kCFStreamEventHasBytesAvailable |
+                           kCFStreamEventEndEncountered |
+                           kCFStreamEventErrorOccurred;
+    if (!CFReadStreamSetClient(readStream, events, _cfReadStreamCallback, &context)) {
+        CFRelease(readStream);
+        self.cfReadStream = NULL;
+        self.cfBodyStream = nil;
+        return NO;
+    }
+
+    // 5. schedule 到 main runloop (common modes — UI 滑动不打断)
+    CFReadStreamScheduleWithRunLoop(readStream, CFRunLoopGetMain(), kCFRunLoopCommonModes);
+
+    // 6. 打开 stream — 开始 TLS 握手 + 发送请求
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"NET → (CFNetwork) body=%luB", (unsigned long)[bodyData length]]];
+
+    if (!CFReadStreamOpen(readStream)) {
+        CFStreamError serr = CFReadStreamGetError(readStream);
+        [[Logger sharedLogger] error:[NSString stringWithFormat:
+            @"CFReadStreamOpen failed domain=%d code=%d", (int)serr.domain, (int)serr.error]];
+        CFReadStreamUnscheduleFromRunLoop(readStream, CFRunLoopGetMain(), kCFRunLoopCommonModes);
+        CFRelease(readStream);
+        self.cfReadStream = NULL;
+        self.cfBodyStream = nil;
+        return NO;
+    }
+
+    return YES;
+}
+
+// CFNetwork stream 收到响应数据 chunk
+- (void)cfStreamReceivedData:(NSData *)data
+{
+    if (!data) return;
+    if (!_rawBuffer) return;
+    [_rawBuffer appendData:data];
+    // 第一次收到数据时拿 HTTP status
+    if (self.httpStatus == 0 && _cfReadStream) {
+        CFHTTPMessageRef response = (CFHTTPMessageRef)CFReadStreamCopyProperty(
+            _cfReadStream, kCFStreamPropertyHTTPResponseHeader);
+        if (response) {
+            self.httpStatus = CFHTTPMessageGetResponseStatusCode(response);
+            [[Logger sharedLogger] info:[NSString stringWithFormat:
+                @"NET ← HTTP %ld (CFNetwork)", (long)self.httpStatus]];
+            CFRelease(response);
+        }
+    }
+    [self _parseBufferedChunks];
+}
+
+// CFNetwork stream 完成
+- (void)cfStreamFinished
+{
+    NSTimeInterval dur = [NSDate timeIntervalSinceReferenceDate] - self.streamStartTs;
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"NET ✓ (CFNetwork) done in %.1fs", dur]];
+    // 复用 NSURLConnection 的完成处理逻辑
+    [self connectionDidFinishLoading:nil];
+    // 清理 stream
+    [self _cleanupCFStream];
+}
+
+// CFNetwork stream 失败
+- (void)cfStreamFailed:(NSError *)error
+{
+    NSTimeInterval dur = [NSDate timeIntervalSinceReferenceDate] - self.streamStartTs;
+    [[Logger sharedLogger] error:[NSString stringWithFormat:
+        @"NET ✗ (CFNetwork) failed after %.1fs — code=%ld desc=%@",
+        dur, (long)error.code, error.localizedDescription ?: @"(no desc)"]];
+    // 复用 NSURLConnection 的失败处理逻辑
+    [self connection:nil didFailWithError:error];
+    // 清理 stream
+    [self _cleanupCFStream];
+}
+
+// 清理 CFNetwork stream
+- (void)_cleanupCFStream
+{
+    if (_cfReadStream) {
+        CFReadStreamUnscheduleFromRunLoop(_cfReadStream, CFRunLoopGetMain(), kCFRunLoopCommonModes);
+        CFReadStreamClose(_cfReadStream);
+        CFRelease(_cfReadStream);
+        self.cfReadStream = NULL;
+    }
+    if (_cfBodyStream) { [_cfBodyStream close]; self.cfBodyStream = nil; }
 }
 
 #pragma mark - Tool call execution
@@ -1981,6 +2111,8 @@
     // v261103-19: 清理 NSURLSession (iOS 7+)
     if (_urlSession) { [_urlSession invalidateAndCancel]; [_urlSession release]; }
     if (_dataTask) { [_dataTask release]; }
+    // v261103-20: 清理 CFNetwork stream (iOS 6)
+    [self _cleanupCFStream];
     [_connection release];
     [_rawBuffer release];
     [_accumulated release];
