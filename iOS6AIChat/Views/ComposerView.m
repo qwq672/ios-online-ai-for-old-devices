@@ -485,12 +485,19 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     [picker dismissViewControllerAnimated:YES completion:nil];
     if (!image || image.size.width <= 0 || image.size.height <= 0) return;
 
-    NSInteger maxDim = [[NSUserDefaults standardUserDefaults] integerForKey:@"imageMaxDim"];
-    // v261103-10: default 1024→768 + quality 0.7→0.5. The -1200 SSL error
-    // on image upload is caused by the request body being too large for
-    // iOS 6's NSURLConnection TLS negotiation. Smaller images = smaller
-    // base64 = smaller JSON body = TLS handshake succeeds.
-    if (maxDim <= 0) maxDim = 768;
+    // v261103-16: fix 原图选项无效的 bug。
+    // 旧代码 `if (maxDim <= 0) maxDim = 768` 把"原图"(0)当"未设置"强制 768。
+    // integerForKey 返回 0 有两种情况:① key 不存在(真未设置) ② key=0(用户选了原图)。
+    // 用 objectForKey 区分:nil=未设置(默认 1024), 0=原图(不 resize)。
+    id rawMaxDim = [[NSUserDefaults standardUserDefaults] objectForKey:@"imageMaxDim"];
+    NSInteger maxDim;
+    BOOL isOriginal = NO;
+    if (rawMaxDim == nil) {
+        maxDim = 1024;  // 未设置 → 默认 1024
+    } else {
+        maxDim = [rawMaxDim integerValue];  // 用户显式设置（含 0=原图）
+        if (maxDim <= 0) isOriginal = YES;  // 0 = 原图模式
+    }
     if (maxDim > 0) {
         CGFloat w = image.size.width, h = image.size.height;
         if (w > maxDim || h > maxDim) {
@@ -509,69 +516,72 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     UIImage *capturedImage = [image retain];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         @autoreleasepool {
-            // v261103-15: adaptive re-compression to avoid iOS 6's
-            // NSURLConnection "death zone" (196,609–196,868 bytes HTTPS
-            // POST body — connection silently hangs ~5min then -1200).
-            // Base64 inflates by ~33%, so we keep base64 < 180KB to leave
-            // headroom for the JSON wrapper + headers. Strategy: at the
-            // current dimension, try 0.5 → 0.35 → 0.25 → 0.15 quality;
-            // if still over 180KB and dim > 384, halve the dimensions
-            // and restart the quality ladder. This guarantees we exit
-            // either small enough or at the floor (384px / 0.15).
             UIImage *workImg = [capturedImage retain];
             NSInteger curMaxDim = maxDim;
             NSData *jpegData = nil;
             NSString *base64 = nil;
-            const CGFloat kQualities[] = {0.5f, 0.35f, 0.25f, 0.15f};
-            const NSInteger kNumQualities = 4;
-            NSInteger qIdx = 0;
-            while (YES) {
-                if (qIdx < kNumQualities) {
-                    NSData *d = UIImageJPEGRepresentation(workImg, kQualities[qIdx]);
-                    if (d) {
-                        NSString *b64 = [d base64String];
-                        if (b64.length <= 180000 || qIdx == kNumQualities - 1) {
-                            // Good enough, or we're at the floor for this size.
-                            jpegData = [d retain];
-                            base64 = [b64 retain];
+            if (isOriginal) {
+                // v261103-16: 原图模式 — 不 resize、不自适应重压，
+                // 直接 JPEG 0.5 编码。用户明确选了原图，尊重选择。
+                // 注意:原图 base64 可能很大(相机照片 500KB+),
+                // 大概率超 130KB 阈值导致 -1200。真正的解决方案
+                // 是 CF Worker 中转(绕过 iOS 6 TLS body 大小限制)。
+                NSData *d = UIImageJPEGRepresentation(workImg, 0.5f);
+                if (d) {
+                    jpegData = [d retain];
+                    NSString *b64 = [d base64String];
+                    base64 = [b64 retain];
+                }
+            } else {
+                // v261103-15: adaptive re-compression to avoid iOS 6's
+                // NSURLConnection "death zone". Strategy: at the
+                // current dimension, try 0.5 → 0.35 → 0.25 → 0.15 quality;
+                // if still over 180KB and dim > 384, halve the dimensions
+                // and restart the quality ladder.
+                const CGFloat kQualities[] = {0.5f, 0.35f, 0.25f, 0.15f};
+                const NSInteger kNumQualities = 4;
+                NSInteger qIdx = 0;
+                while (YES) {
+                    if (qIdx < kNumQualities) {
+                        NSData *d = UIImageJPEGRepresentation(workImg, kQualities[qIdx]);
+                        if (d) {
+                            NSString *b64 = [d base64String];
+                            if (b64.length <= 180000 || qIdx == kNumQualities - 1) {
+                                jpegData = [d retain];
+                                base64 = [b64 retain];
+                                break;
+                            }
+                        }
+                        qIdx++;
+                    } else {
+                        if (curMaxDim <= 384) {
+                            NSData *d = UIImageJPEGRepresentation(workImg, 0.15f);
+                            if (d) {
+                                jpegData = [d retain];
+                                NSString *b64 = [d base64String];
+                                base64 = [b64 retain];
+                            }
                             break;
                         }
-                        // Still too big — try next quality.
-                    }
-                    qIdx++;
-                } else {
-                    // Exhausted quality ladder at this size — halve
-                    // dimensions and restart the ladder from 0.5.
-                    if (curMaxDim <= 384) {
-                        // Already at the floor — accept whatever we
-                        // last produced. Re-encode at 0.15 as a last
-                        // resort so we have *something*.
-                        NSData *d = UIImageJPEGRepresentation(workImg, 0.15f);
-                        if (d) {
-                            jpegData = [d retain];
-                            NSString *b64 = [d base64String];
-                            base64 = [b64 retain];
+                        curMaxDim /= 2;
+                        CGFloat w = workImg.size.width, h = workImg.size.height;
+                        CGFloat sc = (CGFloat)curMaxDim / MAX(w, h);
+                        if (sc < 1.0f) {
+                            NSInteger nw = (NSInteger)(w * sc);
+                            NSInteger nh = (NSInteger)(h * sc);
+                            if (nw < 1) nw = 1;
+                            if (nh < 1) nh = 1;
+                            UIGraphicsBeginImageContextWithOptions(CGSizeMake(nw, nh), NO, 0.0);
+                            [workImg drawInRect:CGRectMake(0, 0, nw, nh)];
+                            UIImage *smaller = UIGraphicsGetImageFromCurrentImageContext();
+                            UIGraphicsEndImageContext();
+                            if (smaller) {
+                                [workImg release];
+                                workImg = [smaller retain];
+                            }
                         }
-                        break;
+                        qIdx = 0;
                     }
-                    curMaxDim /= 2;
-                    CGFloat w = workImg.size.width, h = workImg.size.height;
-                    CGFloat sc = (CGFloat)curMaxDim / MAX(w, h);
-                    if (sc < 1.0f) {
-                        NSInteger nw = (NSInteger)(w * sc);
-                        NSInteger nh = (NSInteger)(h * sc);
-                        if (nw < 1) nw = 1;
-                        if (nh < 1) nh = 1;
-                        UIGraphicsBeginImageContextWithOptions(CGSizeMake(nw, nh), NO, 0.0);
-                        [workImg drawInRect:CGRectMake(0, 0, nw, nh)];
-                        UIImage *smaller = UIGraphicsGetImageFromCurrentImageContext();
-                        UIGraphicsEndImageContext();
-                        if (smaller) {
-                            [workImg release];
-                            workImg = [smaller retain];
-                        }
-                    }
-                    qIdx = 0;  // restart ladder
                 }
             }
             NSInteger finalBase64Len = base64.length;
