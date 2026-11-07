@@ -1607,15 +1607,22 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
             // v261103-21: IP 定位 (同步请求 ip-api.com, 免费, 无需 key)。
             // 返回 city/country/lat/lon 给 AI。精度城市级（IP 定位）。
             // CoreLocation GPS 太复杂（异步 + 权限弹窗），IP 定位简单可靠。
+            // v261103-21 bug fix: 加 10s 超时（stringWithContentsOfURL 默认 60s 太长）
             if ([fnName isEqualToString:@"get_location"]) {
                 NSString *locStr = @"Location unavailable (IP lookup failed)";
                 NSURL *locURL = [NSURL URLWithString:@"http://ip-api.com/json/?lang=zh-CN&fields=status,city,country,lat,lon,regionName,query"];
                 if (locURL) {
-                    NSString *resp = [NSString stringWithContentsOfURL:locURL
-                                                              encoding:NSUTF8StringEncoding
-                                                                 error:nil];
-                    if (resp && resp.length > 0) {
-                        NSData *respData = [resp dataUsingEncoding:NSUTF8StringEncoding];
+                    // v261103-21: 用 NSMutableURLRequest + 显式超时替代 stringWithContentsOfURL
+                    NSMutableURLRequest *locReq = [NSMutableURLRequest requestWithURL:locURL
+                                                                      cachePolicy:NSURLRequestReloadIgnoringCacheData
+                                                                  timeoutInterval:10.0];
+                    [locReq setHTTPMethod:@"GET"];
+                    NSError *reqErr = nil;
+                    NSURLResponse *locResp = nil;
+                    NSData *respData = [NSURLConnection sendSynchronousRequest:locReq
+                                                              returningResponse:&locResp
+                                                                          error:&reqErr];
+                    if (respData && !reqErr) {
                         NSDictionary *loc = [NSJSONSerialization JSONObjectWithData:respData
                                                                             options:0
                                                                               error:nil];
@@ -1631,6 +1638,9 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
                                 region.length > 0 ? [NSString stringWithFormat:@", %@", region] : @"",
                                 lat ?: @"?", lon ?: @"?"];
                         }
+                    } else if (reqErr) {
+                        [[Logger sharedLogger] error:[NSString stringWithFormat:
+                            @"get_location 请求失败: %@", reqErr.localizedDescription]];
                     }
                 }
                 @synchronized(toolResults) {
