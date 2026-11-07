@@ -735,6 +735,34 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
         }];
     }
 
+    // v261103-21: Tool 5 — get_location (默认关闭). 获取用户位置用于天气/
+    // 附近搜索等。CoreLocation (GPS) + IP 定位 fallback. 隐私可控——只有
+    // AI 需要时才调用，不是自动发送。
+    BOOL locationToolOn = NO;  // 默认关闭
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"settings.enableLocationTool"]) {
+        locationToolOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"settings.enableLocationTool"];
+    }
+    if (locationToolOn) {
+        [toolsArray addObject:@{
+            @"type": @"function",
+            @"function": @{
+                @"name": @"get_location",
+                @"description": @"Get the user's current location (latitude, longitude, city, country). Use this when the user asks about weather, nearby places, local time, or anything location-related. Returns coordinates and a city name.",
+                @"parameters": @{
+                    @"type": @"object",
+                    @"properties": @{
+                        @"accuracy": @{
+                            @"type": @"string",
+                            @"description": @"Location accuracy: 'high' for GPS (precise, may take a few seconds), 'city' for IP-based (fast, city-level only). Default 'high'.",
+                            @"default": @"high"
+                        }
+                    },
+                    @"required": @[]
+                }
+            }
+        }];
+    }
+
     } // end if (segmentedReasoning)
 
     if ([toolsArray count] > 0) {
@@ -1431,6 +1459,8 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
                 marker = @"\n\n:::tool\n获取时间中…\n:::\n\n";
             } else if ([fnName isEqualToString:@"get_device_info"]) {
                 marker = @"\n\n:::tool\n获取设备简单信息中…\n:::\n\n";
+            } else if ([fnName isEqualToString:@"get_location"]) {
+                marker = @"\n\n:::tool\n获取位置中…\n:::\n\n";
             } else if ([fnName isEqualToString:@"generate_image"]) {
                 id p = [argsDict objectForKey:@"prompt"];
                 NSString *ps = [p isKindOfClass:[NSString class]] ? p : @"?";
@@ -1548,6 +1578,46 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
                         @"role": @"tool",
                         @"tool_call_id": callId ?: @"",
                         @"content": contentStr
+                    }];
+                }
+                continue;
+            }
+
+            // === get_location =============================================
+            // v261103-21: IP 定位 (同步请求 ip-api.com, 免费, 无需 key)。
+            // 返回 city/country/lat/lon 给 AI。精度城市级（IP 定位）。
+            // CoreLocation GPS 太复杂（异步 + 权限弹窗），IP 定位简单可靠。
+            if ([fnName isEqualToString:@"get_location"]) {
+                NSString *locStr = @"Location unavailable (IP lookup failed)";
+                NSURL *locURL = [NSURL URLWithString:@"http://ip-api.com/json/?lang=zh-CN&fields=status,city,country,lat,lon,regionName,query"];
+                if (locURL) {
+                    NSString *resp = [NSString stringWithContentsOfURL:locURL
+                                                              encoding:NSUTF8StringEncoding
+                                                                 error:nil];
+                    if (resp && resp.length > 0) {
+                        NSData *respData = [resp dataUsingEncoding:NSUTF8StringEncoding];
+                        NSDictionary *loc = [NSJSONSerialization JSONObjectWithData:respData
+                                                                            options:0
+                                                                              error:nil];
+                        if (loc && [[loc objectForKey:@"status"] isEqualToString:@"success"]) {
+                            NSString *city = [loc objectForKey:@"city"] ?: @"unknown";
+                            NSString *country = [loc objectForKey:@"country"] ?: @"unknown";
+                            NSString *region = [loc objectForKey:@"regionName"] ?: @"";
+                            id lat = [loc objectForKey:@"lat"];
+                            id lon = [loc objectForKey:@"lon"];
+                            locStr = [NSString stringWithFormat:
+                                @"Location: %@, %@%@. Coordinates: %@, %@. (IP-based, city-level accuracy)",
+                                city, country,
+                                region.length > 0 ? [NSString stringWithFormat:@", %@", region] : @"",
+                                lat ?: @"?", lon ?: @"?"];
+                        }
+                    }
+                }
+                @synchronized(toolResults) {
+                    [toolResults addObject:@{
+                        @"role": @"tool",
+                        @"tool_call_id": callId ?: @"",
+                        @"content": locStr
                     }];
                 }
                 continue;
