@@ -375,7 +375,14 @@
     }
     // v261103-2: removed X-Target-URL header — chat no longer goes through
     // a transit proxy. The request goes directly to the provider's endpoint.
-    [req setHTTPBody:bodyData];
+    // v261103-17: 尝试用 HTTPBodyStream 突破 iOS 6 NSURLConnection 的
+    // ~130KB body 大小限制。setHTTPBody 会让 NSURLConnection 预先分配
+    // 整个 body 的发送缓冲区，body > ~130KB 时缓冲分配失败 → TLS 握手
+    // 无法开始 → -1200。setHTTPBodyStream 用流式提供 body，可能改变
+    // 内部缓冲策略，分块发送而不预分配整个缓冲。
+    // 用系统自带的 inputStreamWithData（不需要自己写 NSInputStream 子类）。
+    NSInputStream *bodyStream = [NSInputStream inputStreamWithData:bodyData];
+    [req setHTTPBodyStream:bodyStream];
 
     // Reset accumulators for this turn.
     // v261025-13: segmented thinking — when re-launching after a tool
