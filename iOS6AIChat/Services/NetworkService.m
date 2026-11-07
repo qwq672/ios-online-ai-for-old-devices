@@ -859,6 +859,19 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
     // dying connection don't dispatch into a freed VC (audit #2, #3).
     _delegate = nil;
     [_connection cancel];
+    // v261103-21 bug fix: 也取消 NSURLSession (iOS 7+) 和 CFNetwork (iOS 6)
+    [self _cancelAllTransports];
+}
+
+// v261103-21 bug fix: 统一取消所有三种传输方式。
+// 之前 cancel/cancelStream/stopGenerating 只取消 _connection (NSURLConnection),
+// 不取消 _dataTask (NSURLSession) / _cfReadStream (CFNetwork) →
+// iOS 7+ session task 继续跑最多 240s, iOS 6 CFReadStream 继续在 runloop 上跑。
+- (void)_cancelAllTransports
+{
+    if (_dataTask) { [_dataTask cancel]; }
+    if (_urlSession) { [_urlSession invalidateAndCancel]; }
+    [self _cleanupCFStream];
 }
 
 // v261025-1: cancel the stream, keep the delegate. Also mark the service
@@ -871,6 +884,7 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
 {
     [_connection cancel];
     self.connection = nil;
+    [self _cancelAllTransports];  // v261103-21 bug fix
     [_rawBuffer setData:nil];
     self.conversationID = nil;   // invalidates all late callbacks (ID guards)
     [_accumulated setString:@""];
@@ -901,7 +915,10 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
 // caller's (main) thread is the only safe path.
 - (void)stopGenerating
 {
-    if (!_connection) {
+    // v261103-21 bug fix: 检查所有三种传输方式，不只 _connection。
+    // 之前 iOS 7+ (NSURLSession) / iOS 6 (CFNetwork) 路径 _connection 为 nil,
+    // 用户点停止直接 return → 不取消流、composer 卡在 streaming 状态。
+    if (!_connection && !_dataTask && !_cfReadStream) {
         // Nothing in flight — no-op (defensive; UI shouldn't allow this).
         return;
     }
@@ -911,6 +928,7 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
 
     [_connection cancel];
     self.connection = nil;
+    [self _cancelAllTransports];  // v261103-21 bug fix: 取消 NSURLSession + CFNetwork
     [_rawBuffer setData:nil];
     self.toolCallPending = NO;
     [_toolCallAccumulators removeAllObjects];
@@ -1196,13 +1214,9 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
 
 - (BOOL)_launchStreamWithCFNetwork:(NSMutableURLRequest *)req bodyData:(NSData *)bodyData
 {
-    // 取消旧的 CFReadStream
-    if (_cfReadStream) {
-        CFReadStreamClose(_cfReadStream);
-        CFRelease(_cfReadStream);
-        self.cfReadStream = NULL;
-    }
-    if (_cfBodyStream) { [_cfBodyStream close]; self.cfBodyStream = nil; }
+    // 取消旧的 CFReadStream — v261103-21 bug fix: 用 _cleanupCFStream
+    // 替代内联清理（内联清理漏了 CFReadStreamUnscheduleFromRunLoop）
+    [self _cleanupCFStream];
 
     NSURL *url = [req URL];
     if (!url) return NO;
@@ -1216,6 +1230,12 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
     // 设请求头 — 从 NSMutableURLRequest 复制所有 headers
     // v261103-20: CFHTTPMessageSetHeaderField 用 dlsym 动态加载（SDK stub 链接不到）
     CFHTTPMessageSetHeaderFieldFunc _setHeader = _getCFHTTPMessageSetHeaderField();
+    // v261103-21 bug fix: dlsym 失败时 fallback 到 NSURLConnection，不静默发无头请求
+    if (!_setHeader) {
+        [[Logger sharedLogger] error:@"CFHTTPMessageSetHeaderField dlsym 失败，fallback 到 NSURLConnection"];
+        CFRelease(request);
+        return NO;
+    }
     NSDictionary *headers = [req allHTTPHeaderFields];
     for (NSString *key in headers) {
         NSString *val = [headers objectForKey:key];

@@ -893,17 +893,21 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 {
     CGFloat composerH = _composer.frame.size.height;
     CGFloat statusH = _searchStatusView.hidden ? 0 : _searchStatusView.frame.size.height;
+    // v261103-21 bug fix: 感知键盘高度。之前 _adjustForComposerHeight 漏减 kbH,
+    // 导致多行输入时 tableView 延伸到键盘底下，最后一条消息被键盘盖住。
+    CGFloat kbH = self.lastKeyboardHeight;
     CGRect tableFrame = _tableView.frame;
     tableFrame.origin.y = 0;
-    tableFrame.size.height = self.view.bounds.size.height - composerH - statusH;
+    tableFrame.size.height = self.view.bounds.size.height - kbH - composerH - statusH;
     [UIView animateWithDuration:0.2 animations:^{
         _tableView.frame = tableFrame;
+        // v261103-21: composer + status 也要考虑 kbH（键盘弹出时在键盘上方）
         _composer.frame = CGRectMake(0,
-                                      self.view.bounds.size.height - composerH,
+                                      self.view.bounds.size.height - kbH - composerH,
                                       self.view.bounds.size.width,
                                       composerH);
         _searchStatusView.frame = CGRectMake(0,
-                                             self.view.bounds.size.height - composerH - statusH,
+                                             self.view.bounds.size.height - kbH - composerH - statusH,
                                              self.view.bounds.size.width, statusH);
     }];
     [self _scrollToBottomAnimated:YES];
@@ -1959,6 +1963,9 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 
 - (void)_keyboardWillHide:(NSNotification *)note
 {
+    // v261103-21 bug fix: 重置 lastKeyboardHeight，否则下次 _adjustForComposerHeight
+    // 会用旧值（键盘已收起但 kbH 还是之前的高度）。
+    self.lastKeyboardHeight = 0;
     // v261025-1: keep the status banner above the composer on hide too.
     CGFloat statusH = _searchStatusView.hidden ? 0 : _searchStatusView.frame.size.height;
     [UIView animateWithDuration:0.25 animations:^{
