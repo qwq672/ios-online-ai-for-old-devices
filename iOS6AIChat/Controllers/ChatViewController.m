@@ -266,8 +266,7 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     _tableView.rowHeight = 80;
     [self.view addSubview:_tableView];
 
-    // v261025-33: reduced from 48→44 — less wasted vertical space.
-    CGFloat composerInitH = 44.0f;  // single-row composer
+    // v261103-21: composerInitH 已在 L239 定义（tableView frame 复用）。
     _composer = [[ComposerView alloc] initWithFrame:CGRectMake(0,
                                                                  self.view.bounds.size.height - composerInitH,
                                                                  self.view.bounds.size.width,
