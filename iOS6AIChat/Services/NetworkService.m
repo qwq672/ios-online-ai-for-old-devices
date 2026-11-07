@@ -345,13 +345,12 @@
     [req setHTTPMethod:@"POST"];
     [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
     [req setValue:@"text/event-stream" forHTTPHeaderField:@"Accept"];
-    // v261103-15: per DeepSeek's iOS 6 NSURLConnection analysis, the
-    // framework ignores "Connection: close" and forces Keep-Alive, but
-    // we set it anyway as a defensive measure (some servers respect it
-    // and close the socket promptly, avoiding the "dead connection"
-    // scenario where iOS 6 keeps writing to a socket the server has
-    // already torn down — which manifests as -1200 on large bodies).
-    [req setValue:@"close" forHTTPHeaderField:@"Connection"];
+    // v261103-18: revert Connection: close. v261103-15 加的 Connection: close
+    // 基于 DeepSeek "死连接" 假说，但该假说未被证实。更糟的是: iOS 6 无视
+    // Connection: close (DeepSeek 自己说的)，加了可能让每次请求后关闭连接，
+    // 下次请求要新建 TLS 握手。大请求新建 TLS 时更容易失败 — 这可能就是
+    // 大请求失败率高的部分原因。revert 后连接复用，小请求建立的 TLS
+    // 连接可能被大请求复用，绕过新建握手的失败。
     // v261103-15: timeout bumped 120s→240s. iOS 6 changed the default
     // timeout for HTTPBody-bearing requests from 240s (pre-iOS6) to 60s.
     // 120s was sometimes too short for large image uploads combined
@@ -411,8 +410,18 @@
         anthropic ? @"anthropic" : @"openai",
         (unsigned long)[messages count], (unsigned long)[bodyData length]]];
 
+    // v261103-18: 用 startImmediately:NO + scheduleInRunLoop:forMode:NSRunLoopCommonModes
+    // 替代 startImmediately:YES。原版在 default mode 跑，UI 滑动 (流式渲染时
+    // ListView 频繁刷新) 会打断 TLS 握手 → 大请求 TLS 握手时间长更容易被打断
+    // → -1200。NSRunLoopCommonModes 让连接在 UI 滑动时也能继续跑。
+    // 其他同类型 iOS 6 软件可能就是用 common modes 或 CFNetwork，不受 UI 影响。
     self.connection = [[[NSURLConnection alloc] initWithRequest:req delegate:self
-                                             startImmediately:YES] autorelease];
+                                             startImmediately:NO] autorelease];
+    if (self.connection) {
+        [self.connection scheduleInRunLoop:[NSRunLoop mainRunLoop]
+                                   forMode:NSRunLoopCommonModes];
+        [self.connection start];
+    }
     return (self.connection != nil);
 }
 
