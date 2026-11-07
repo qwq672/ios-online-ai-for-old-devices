@@ -442,6 +442,71 @@
 // OpenAI-compatible body: {model, messages, stream, temperature,
 // [thinking], [tools]}. Message content uses the array form when images
 // are attached (multi-modal vision).
+
+// v261103-19: 历史瘦身 — 把 msgs 数组里最后一条有图片的消息之前的所有图片
+// 替换成 [图片] 文字占位符。只保留最新一张图的 base64，大幅降低 body 大小。
+// 适用于 OpenAI 格式 (image_url type) 和 Anthropic 格式 (image type)。
+- (void)_slimHistoryImages:(NSMutableArray *)msgs
+{
+    if (!msgs || [msgs count] == 0) return;
+    // 找最后一条有图片的消息 index
+    NSInteger lastImgIdx = -1;
+    for (NSInteger i = [msgs count] - 1; i >= 0; i--) {
+        NSDictionary *m = [msgs objectAtIndex:i];
+        id content = [m objectForKey:@"content"];
+        if (![content isKindOfClass:[NSArray class]]) continue;
+        for (id part in content) {
+            if (![part isKindOfClass:[NSDictionary class]]) continue;
+            NSString *type = [part objectForKey:@"type"];
+            if ([type isEqualToString:@"image_url"] || [type isEqualToString:@"image"]) {
+                lastImgIdx = i;
+                break;
+            }
+        }
+        if (lastImgIdx >= 0) break;
+    }
+    if (lastImgIdx < 0) return;  // 没图片
+
+    // 把 lastImgIdx 之前的消息里的图片替换成 [图片] 文字
+    for (NSInteger i = 0; i < lastImgIdx; i++) {
+        NSDictionary *m = [msgs objectAtIndex:i];
+        id content = [m objectForKey:@"content"];
+        if (![content isKindOfClass:[NSArray class]]) continue;
+
+        BOOL hasImage = NO;
+        for (id part in content) {
+            if (![part isKindOfClass:[NSDictionary class]]) continue;
+            NSString *type = [part objectForKey:@"type"];
+            if ([type isEqualToString:@"image_url"] || [type isEqualToString:@"image"]) {
+                hasImage = YES;
+                break;
+            }
+        }
+        if (!hasImage) continue;
+
+        // 重建 content：保留 text 部分，图片替换成 [图片] text
+        NSMutableArray *newContent = [NSMutableArray array];
+        BOOL addedPlaceholder = NO;
+        for (id part in content) {
+            if ([part isKindOfClass:[NSDictionary class]]) {
+                NSString *type = [part objectForKey:@"type"];
+                if ([type isEqualToString:@"image_url"] || [type isEqualToString:@"image"]) {
+                    if (!addedPlaceholder) {
+                        [newContent addObject:@{@"type": @"text", @"text": @"[图片]"}];
+                        addedPlaceholder = YES;
+                    }
+                } else {
+                    [newContent addObject:part];  // 保留 text 部分
+                }
+            }
+        }
+        NSDictionary *newMsg = [NSDictionary dictionaryWithObjectsAndKeys:
+            [m objectForKey:@"role"], @"role",
+            newContent, @"content", nil];
+        [msgs replaceObjectAtIndex:i withObject:newMsg];
+    }
+}
+
 - (NSData *)_buildOpenAIRequestBody:(NSArray *)messages stream:(BOOL)doStream
 {
     // Build the messages payload in OpenAI format.
@@ -475,6 +540,13 @@
             // Pass through unchanged.
             [msgs addObject:obj];
         }
+    }
+
+    // v261103-19: 历史瘦身 — iOS 6 (无 NSURLSession) 时，只保留最新一条消息
+    // 的图片 base64，历史图片替换成 [图片] 文字。降低 body 大小避开 130KB 限制。
+    // iOS 7+ 用 NSURLSession 无限制，不瘦身（保留完整历史图片，无代价）。
+    if (!NSClassFromString(@"NSURLSession")) {
+        [self _slimHistoryImages:msgs];
     }
 
     // Check model supports thinking (default ON).
@@ -768,6 +840,12 @@
         [msgs addObject:@{@"role": role, @"content": content}];
     }
     if ([msgs count] == 0) return nil;
+
+    // v261103-19: 历史瘦身 — iOS 6 (无 NSURLSession) 时，Anthropic 格式也瘦身。
+    // _slimHistoryImages 同时处理 image_url (OpenAI) 和 image (Anthropic) 类型。
+    if (!NSClassFromString(@"NSURLSession")) {
+        [self _slimHistoryImages:msgs];
+    }
 
     NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:@{
         @"model":      self.model ?: @"claude-3-5-haiku-20241022",
