@@ -80,7 +80,7 @@
 }
 @end
 
-@interface NetworkService ()
+@interface NetworkService () <NSURLSessionDelegate, NSURLSessionTaskDelegate, NSURLSessionDataDelegate>
 @property (nonatomic, retain) NSURLConnection *connection;
 // v261103-19: NSURLSession (iOS 7+) 用于突破 NSURLConnection 的 ~130KB body 限制。
 // SDK 7.1 有定义，deployment target 6.0 — 编译 OK，运行时用 NSClassFromString 检测。
@@ -401,7 +401,7 @@
     // corrupting state. This was audit finding #8.
     [_connection cancel];
     // v261103-19: 也取消 NSURLSession task (iOS 7+)
-    if (_dataTask) { @try { [_dataTask cancel]; } @catch (id e) {} }
+    if (_dataTask) { [_dataTask cancel]; }
 
     self.streamStartTs = [NSDate timeIntervalSinceReferenceDate];
     [[Logger sharedLogger] info:[NSString stringWithFormat:
@@ -1009,8 +1009,8 @@
 - (void)_launchStreamWithNSURLSession:(NSMutableURLRequest *)req bodyBytes:(NSUInteger)bodyBytes
 {
     // 取消旧的 session/task
-    if (_dataTask) { @try { [_dataTask cancel]; } @catch (id e) {} }
-    if (_urlSession) { @try { [_urlSession invalidateAndCancel]; } @catch (id e) {} }
+    if (_dataTask) { [_dataTask cancel]; }
+    if (_urlSession) { [_urlSession invalidateAndCancel]; }
 
     NSURLSessionConfiguration *config = [NSURLSessionConfiguration defaultSessionConfiguration];
     config.timeoutIntervalForRequest = 240.0;
@@ -1085,7 +1085,7 @@
     } else {
         [self connectionDidFinishLoading:nil];
     }
-    @try { [_urlSession finishTasksAndInvalidate]; } @catch (id e) {}
+    [_urlSession finishTasksAndInvalidate];
     self.urlSession = nil;
     self.dataTask = nil;
 }
@@ -1901,7 +1901,7 @@
 - (void)dealloc
 {
     // v261103-19: 清理 NSURLSession (iOS 7+)
-    if (_urlSession) { @try { [_urlSession invalidateAndCancel]; } @catch (id e) {} [_urlSession release]; }
+    if (_urlSession) { [_urlSession invalidateAndCancel]; [_urlSession release]; }
     if (_dataTask) { [_dataTask release]; }
     [_connection release];
     [_rawBuffer release];
