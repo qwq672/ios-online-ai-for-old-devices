@@ -1385,20 +1385,14 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
     if ([[NSUserDefaults standardUserDefaults] objectForKey:@"showToolCalls"]) {
         showToolCalls = [[NSUserDefaults standardUserDefaults] boolForKey:@"showToolCalls"];
     }
-    // v261103-8: 分段推理 UI — before showing tool markers, insert the
-    // accumulated thinking as an inline :::thinking block so the user
-    // sees the reasoning flow: think → tool call → think → answer.
-    // This is what "分段推理" means visually — each segment is a
-    // distinct block, not crammed together.
+    // v261103-21: 统一思考用可折叠卡片 — 不插入 :::thinking 内联块到 content，
+    // 而是给 _thinkingAccumulated 追加分隔符，让所有思考累积到 message.thinking，
+    // 用可折叠卡片显示（统一风格，不用蓝色文字+省略号）。
+    // 分段推理的视觉分段通过分隔符 ────────── 保留，用户展开卡片能看到分段。
     if (showToolCalls && _thinkingAccumulated.length > 0) {
-        NSString *thinkSnippet = _thinkingAccumulated.length > 200 ?
-            [_thinkingAccumulated substringToIndex:200] : [NSString stringWithString:_thinkingAccumulated];
-        NSString *thinkMarker = [NSString stringWithFormat:
-            @"\n:::thinking\n💭 %@…\n:::\n", thinkSnippet];
-        [_accumulated appendString:thinkMarker];
-        // Clear thinking accumulator — the next turn's thinking will be
-        // a separate :::thinking block (visually segmented from this one).
-        [_thinkingAccumulated setString:@""];
+        // 追加分隔符标记新一轮思考（不清空，让后续思考追加）
+        [_thinkingAccumulated appendString:@"\n\n──────────\n\n"];
+        // 不插入 :::thinking 到 _accumulated — 思考统一走 message.thinking 可折叠卡片
     }
     if (showToolCalls) {
         for (NSDictionary *tc in toolCallAcc) {

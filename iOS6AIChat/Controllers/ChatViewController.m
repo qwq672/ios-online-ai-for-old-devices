@@ -96,6 +96,9 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 @interface ChatViewController ()
 @property (nonatomic, retain) ComposerView *composer;
 @property (nonatomic, assign) CGFloat lastKeyboardHeight;
+// v261103-19: -1200 带图重试标志。第一次 -1200 时带图重试一次（应对
+// keep-alive 竞态），第二次 -1200 才剥离图片纯文本重试。
+@property (nonatomic, assign) BOOL imageRetryTried;
 @property (nonatomic, retain) UIView *searchStatusView;
 @property (nonatomic, retain) UILabel *searchStatusLabel;
 // v261025-1: instance-level refresh throttle. It used to be a `static`
@@ -233,9 +236,14 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     // pinstripe so the chat reads as a skeuomorphic "page".
     self.view.backgroundColor = [iOS6Theme chatBackgroundPatternColor];
 
+    CGFloat composerInitH = 44.0f;  // single-row composer
+    // v261103-21: 修复底部消息被遮挡/只看一半的 bug。
+    // 原来用硬编码 48，跟 composer 实际高度 44 不匹配（4pt 偏差）。
+    // 改用 composerInitH，并在 tableView 底部加 12pt contentInset，
+    // 确保最后一条消息完全可见（scrollToBottom 后不被边缘切掉）。
     CGRect tableFrame = CGRectMake(0, 0,
                                     self.view.bounds.size.width,
-                                    self.view.bounds.size.height - 48);
+                                    self.view.bounds.size.height - composerInitH);
     _tableView = [[UITableView alloc] initWithFrame:tableFrame style:UITableViewStylePlain];
     _tableView.dataSource = self;
     _tableView.delegate = self;
@@ -244,6 +252,10 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     _tableView.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
                                     UIViewAutoresizingFlexibleHeight);
     _tableView.allowsSelectionDuringEditing = NO;
+    // v261103-21: 底部 contentInset 确保最后一条消息不被遮挡
+    _tableView.contentInset = UIEdgeInsetsMake(0, 0, 12, 0);
+    // 顶部也加一点，让第一条消息不紧贴顶部
+    _tableView.scrollIndicatorInsets = UIEdgeInsetsMake(0, 0, 12, 0);
     // estimatedRowHeight is iOS 7+; on iOS 6 we just rely on the explicit
     // height-for-row delegate method.
     if ([_tableView respondsToSelector:@selector(setEstimatedRowHeight:)]) {
