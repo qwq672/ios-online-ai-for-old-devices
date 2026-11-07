@@ -1,18 +1,19 @@
-// Top-level build file.
+// Top-level build file — configures Gradle plugins for all subprojects.
 buildscript {
     repositories {
         google()
-        mavenCentral()
+        jcenter()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:7.4.2'
+        // AGP 4.0.x — works with Java 8, supports minSdk 9.
+        classpath 'com.android.tools.build:gradle:4.0.2'
     }
 }
 
 allprojects {
     repositories {
         google()
-        mavenCentral()
+        jcenter()
     }
 }
 

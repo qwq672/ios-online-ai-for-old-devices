@@ -2,63 +2,95 @@ package com.awa.aichat.util;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
+import android.os.Build;
 
 /**
- * Theme manager — handles dark mode toggle + color access.
- * Mirrors the iOS app's iOS6Theme approach.
+ * ThemeManager — manual light/dark theme switching for Android 2.3+.
+ *
+ * WHY: Android 2.3-5.x has NO system-wide dark mode API. The framework's
+ * `android:configChanges="uiMode"` and `values-night/` resource qualifier
+ * only kick in on Android 6+ (API 23) when the user enables dark mode in
+ * system settings. On our target devices (Android 2.3 Gingerbread,
+ * Android 4.x Ice Cream Sandwich / Jelly Bean), `values-night/` is
+ * IGNORED — the app would always render in the light theme regardless of
+ * the user's preference.
+ *
+ * Solution: store the user's theme choice in SharedPreferences and apply
+ * it programmatically in each Activity's onCreate BEFORE setContentView.
+ * ChatAdapter and MarkdownParser read the same flag to pick colors.
+ *
+ * Three modes:
+ *   THEME_AUTO  — follow system (resolves to LIGHT on < API 23,
+ *                 follows uiMode on >= API 23)
+ *   THEME_LIGHT — always light
+ *   THEME_DARK  — always dark
  */
-public class ThemeManager {
+public final class ThemeManager {
+
+    public static final int THEME_AUTO  = 0;
+    public static final int THEME_LIGHT = 1;
+    public static final int THEME_DARK  = 2;
 
     private static final String PREFS = "aichat_prefs";
-    private static final String KEY_DARK_MODE = "dark_mode";
-    private static final String KEY_FONT_SIZE = "font_size"; // 0=S, 1=M, 2=L, 3=XL
+    private static final String KEY_THEME = "theme_mode";
 
-    private static boolean darkMode = false;
-    private static int fontSize = 1; // default M
-    private static boolean initialized = false;
+    private ThemeManager() {} // no instances
 
-    public static void init(Context ctx) {
-        if (initialized) return;
-        SharedPreferences prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        darkMode = prefs.getBoolean(KEY_DARK_MODE, false);
-        fontSize = prefs.getInt(KEY_FONT_SIZE, 1);
-        initialized = true;
+    public static int getThemeMode(Context ctx) {
+        if (ctx == null) return THEME_AUTO;
+        SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        return p.getInt(KEY_THEME, THEME_AUTO);
     }
 
-    public static boolean isDarkMode() { return darkMode; }
-
-    public static void setDarkMode(boolean on, Context ctx) {
-        darkMode = on;
-        SharedPreferences prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        prefs.edit().putBoolean(KEY_DARK_MODE, on).commit();
+    public static void setThemeMode(Context ctx, int mode) {
+        if (ctx == null) return;
+        SharedPreferences.Editor ed = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit();
+        ed.putInt(KEY_THEME, mode);
+        ed.commit();
     }
 
-    public static int getFontSize() { return fontSize; }
-
-    public static void setFontSize(int size, Context ctx) {
-        fontSize = size;
-        SharedPreferences prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        prefs.edit().putInt(KEY_FONT_SIZE, size).commit();
+    /** True if the effective theme (after resolving AUTO) is dark. */
+    public static boolean isDark(Context ctx) {
+        int mode = getThemeMode(ctx);
+        if (mode == THEME_DARK) return true;
+        if (mode == THEME_LIGHT) return false;
+        // THEME_AUTO: follow system on API 8+, default to light below.
+        // Configuration.UI_MODE_NIGHT_* bits were added in API 8 (Froyo);
+        // our minSdk is 9 (Gingerbread), so this is always safe.
+        int nightMode = ctx.getResources().getConfiguration().uiMode
+                        & Configuration.UI_MODE_NIGHT_MASK;
+        return nightMode == Configuration.UI_MODE_NIGHT_YES;
     }
 
-    public static float baseFontSize() {
-        switch (fontSize) {
-            case 0: return 13f; case 1: return 15f;
-            case 2: return 17f; case 3: return 19f;
-            default: return 15f;
+    /**
+     * Apply the theme to an Activity. Call this in onCreate BEFORE
+     * setContentView. Chooses between AppThemeLight and AppThemeDark.
+     * THEME_AUTO delegates to the system on API 23+ (where values-night
+     * works) and otherwise resolves to LIGHT.
+     */
+    public static void applyTheme(Context ctx) {
+        int mode = getThemeMode(ctx);
+        if (mode == THEME_DARK) {
+            ctx.setTheme(com.awa.aichat.R.style.AppThemeDark);
+        } else if (mode == THEME_LIGHT) {
+            ctx.setTheme(com.awa.aichat.R.style.AppThemeLight);
+        } else {
+            // AUTO — let the system decide (on API 23+ this honors
+            // values-night; on older devices it falls back to light).
+            if (isDark(ctx)) {
+                ctx.setTheme(com.awa.aichat.R.style.AppThemeDark);
+            } else {
+                ctx.setTheme(com.awa.aichat.R.style.AppThemeLight);
+            }
         }
     }
 
-    public static int backgroundColor() { return darkMode ? 0xFF070707 : 0xFFEDEDED; }
-    public static int topBarColor() { return darkMode ? 0xFF111111 : 0xFFF5F5F5; }
-    public static int inputBarColor() { return darkMode ? 0xFF151515 : 0xFFFFFFFF; }
-    public static int textColor() { return darkMode ? 0xFFD8D8E0 : 0xFF1A1A1A; }
-    public static int secondaryTextColor() { return darkMode ? 0xFF7A8298 : 0xFF666666; }
-    public static int userBubbleColor() { return darkMode ? 0xFF151515 : 0xFFDCF8C6; }
-    public static int userBubbleTextColor() { return darkMode ? 0xFFD8D8E0 : 0xFF000000; }
-    public static int aiBubbleColor() { return darkMode ? 0xFF0F0F0F : 0xFFFFFFFF; }
-    public static int tintColor() { return 0xFF1E3A8A; }
-    public static int codeBgColor() { return darkMode ? 0xFF111111 : 0xFFF5F5F5; }
-    public static int toolTextColor() { return darkMode ? 0xFF7A8298 : 0xFF666666; }
-    public static int toolBgColor() { return darkMode ? 0xFF111111 : 0xFFF5F5F5; }
+    public static String modeLabel(int mode) {
+        switch (mode) {
+            case THEME_DARK:  return "深色";
+            case THEME_LIGHT: return "浅色";
+            default:          return "跟随系统";
+        }
+    }
 }

@@ -3,6 +3,9 @@ name: Build Android APK
 on:
   push:
     branches: [ main, master ]
+    paths:
+      - 'android-test/**'
+      - '.github/workflows/build-android.yml'
     tags: [ 'v*' ]
   workflow_dispatch:
 
@@ -22,18 +25,22 @@ jobs:
       - name: Setup Android SDK
         run: |
           yes | sdkmanager --licenses || true
-          sdkmanager --install "platforms;android-33" "build-tools;33.0.2" "platform-tools" 2>&1 | tail -5
+          # v0.2: android-test uses AGP 4.0.2 + compileSdkVersion 28.
+          # Install android-28 platform + build-tools 28.0.3 (matching).
+          sdkmanager --install "platforms;android-28" "build-tools;28.0.3" "platform-tools" 2>&1 | tail -5
 
-      - name: Install Gradle 7.5
+      - name: Install Gradle 6.1.1
         run: |
-          wget -q https://services.gradle.org/distributions/gradle-7.5-bin.zip -O /tmp/gradle.zip
+          # v0.2: AGP 4.0.2 requires Gradle 6.1.1 (the android-test project's
+          # gradle-wrapper.properties pins this version). Install matching.
+          wget -q https://services.gradle.org/distributions/gradle-6.1.1-bin.zip -O /tmp/gradle.zip
           unzip -q /tmp/gradle.zip -d /tmp/
-          /tmp/gradle-7.5/bin/gradle --version
+          /tmp/gradle-6.1.1/bin/gradle --version
 
       - name: Generate wrapper + local.properties
         working-directory: android-test
         run: |
-          /tmp/gradle-7.5/bin/gradle wrapper --gradle-version 7.5
+          /tmp/gradle-6.1.1/bin/gradle wrapper --gradle-version 6.1.1
           echo "sdk.dir=$ANDROID_HOME" > local.properties
 
       - name: Build debug APK
@@ -47,7 +54,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AIChat-android-debug
+          name: AIAnyWhere-android-debug
           path: android-test/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 

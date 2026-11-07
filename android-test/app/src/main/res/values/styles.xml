@@ -1,6 +1,74 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="@android:style/Theme.Light.NoTitleBar">
-        <item name="android:windowBackground">#EDEDED</item>
+    <!-- v0.2: split into AppThemeLight + AppThemeDark so we can switch
+         manually via ThemeManager. The old single AppTheme relying on
+         values-night/ was broken on Android 2.3-5.x (the system has no
+         dark-mode API, so values-night was never selected). -->
+
+    <!-- Light theme -->
+    <style name="AppThemeLight" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@color/bg_window_light</item>
+        <item name="android:textColor">@color/text_primary_light</item>
     </style>
+
+    <!-- Dark theme -->
+    <style name="AppThemeDark" parent="@android:style/Theme.NoTitleBar">
+        <item name="android:windowBackground">@color/bg_window_dark</item>
+        <item name="android:textColor">@color/text_primary_dark</item>
+    </style>
+
+    <!-- Backward-compat alias: the manifest still references AppTheme.
+         We default to light here; ThemeManager.applyTheme() overrides
+         it at runtime to AppThemeLight or AppThemeDark as needed. -->
+    <style name="AppTheme" parent="AppThemeLight" />
+
+    <!-- Color palette — light -->
+    <color name="bg_window_light">#EDEDED</color>
+    <color name="bg_input_bar_light">#FFFFFF</color>
+    <color name="bg_list_light">#EDEDED</color>
+
+    <color name="bg_bubble_user_light">#DCF8C6</color>
+    <color name="bg_bubble_ai_light">#FFFFFF</color>
+    <color name="bg_bubble_error_light">#FFE0E0</color>
+    <color name="bg_bubble_thinking_light">#F0F0F5</color>
+
+    <color name="text_primary_light">#1A1A1A</color>
+    <color name="text_secondary_light">#666666</color>
+    <color name="text_user_light">#000000</color>
+    <color name="text_ai_light">#1A1A1A</color>
+    <color name="text_error_light">#B00020</color>
+    <color name="text_thinking_light">#444466</color>
+    <color name="text_hint_light">#999999</color>
+
+    <color name="bg_code_light">#F4F4F8</color>
+    <color name="bg_code_block_light">#1A1A1A</color>
+    <color name="text_code_block_light">#E8E8E8</color>
+
+    <color name="divider_light">#D8D8D8</color>
+    <color name="accent_light">#3B82F6</color>
+
+    <!-- Color palette — dark -->
+    <color name="bg_window_dark">#0A0A0F</color>
+    <color name="bg_input_bar_dark">#15151C</color>
+    <color name="bg_list_dark">#0A0A0F</color>
+
+    <color name="bg_bubble_user_dark">#1F3D1A</color>
+    <color name="bg_bubble_ai_dark">#1A1A22</color>
+    <color name="bg_bubble_error_dark">#3D1515</color>
+    <color name="bg_bubble_thinking_dark">#222232</color>
+
+    <color name="text_primary_dark">#D8D8E0</color>
+    <color name="text_secondary_dark">#9090A0</color>
+    <color name="text_user_dark">#E8F4D0</color>
+    <color name="text_ai_dark">#D8D8E0</color>
+    <color name="text_error_dark">#FF6B6B</color>
+    <color name="text_thinking_dark">#A0A0C0</color>
+    <color name="text_hint_dark">#666670</color>
+
+    <color name="bg_code_dark">#2A2A35</color>
+    <color name="bg_code_block_dark">#000000</color>
+    <color name="text_code_block_dark">#E8E8E8</color>
+
+    <color name="divider_dark">#2A2A35</color>
+    <color name="accent_dark">#5B9BFF</color>
 </resources>
