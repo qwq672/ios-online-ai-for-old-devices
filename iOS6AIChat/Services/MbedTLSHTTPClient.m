@@ -110,14 +110,23 @@
         return;
     }
 
-    // 找 "://" 分隔 scheme 和 host
-    NSRange schemeEnd = [urlStr rangeOfString:@"://"];
-    if (schemeEnd.location == NSNotFound) {
-        [self _failWithError:@"no scheme:// in URL"];
+    // v261103-27: iOS 6 的 NSURL 可能 normalize URL（https:// → https:/）
+    // 不找 "://"，改找第一个 ":" 然后跳过所有 /
+    NSRange colonRange = [urlStr rangeOfString:@":"];
+    if (colonRange.location == NSNotFound) {
+        [self _failWithError:@"no scheme: in URL"];
         return;
     }
-    NSUInteger hostStart = schemeEnd.location + schemeEnd.length;
+    NSUInteger hostStart = colonRange.location + 1;
     NSUInteger urlLen = [urlStr length];
+    // 跳过 ":" 后的所有 /（兼容 https:// https:/ https: 三种格式）
+    while (hostStart < urlLen && [urlStr characterAtIndex:hostStart] == '/') {
+        hostStart++;
+    }
+    if (hostStart >= urlLen) {
+        [self _failWithError:@"no host after scheme"];
+        return;
+    }
 
     // host 结束于: 第一个 "/" 或 ":" (port) 或字符串末尾
     NSUInteger hostEnd = urlLen;
