@@ -760,6 +760,33 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
         }];
     }
 
+    // v261103-29: Tool 6 — get_image (AI 自主视觉). AI 调用此工具获取图片 URL
+    // 的内容，返回 base64 data URL。如果 AI 模型支持 vision，能直接看图。
+    // 不依赖 Sub Agent 或额外 VLM — 用模型自己的视觉能力。
+    BOOL visionToolOn = NO;
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"settings.enableVisionTool"]) {
+        visionToolOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"settings.enableVisionTool"];
+    }
+    if (visionToolOn) {
+        [toolsArray addObject:@{
+            @"type": @"function",
+            @"function": @{
+                @"name": @"get_image",
+                @"description": @"Fetch an image from a URL and return it as base64 data URL. Use this when you need to see/analyze an image (from web search results, web pages, etc). The returned data URL can be viewed directly if you have vision capability.",
+                @"parameters": @{
+                    @"type": @"object",
+                    @"properties": @{
+                        @"url": @{
+                            @"type": @"string",
+                            @"description": @"The full URL of the image to fetch (including https://)."
+                        }
+                    },
+                    @"required": @[@"url"]
+                }
+            }
+        }];
+    }
+
     } // end if (segmentedReasoning)
 
     if ([toolsArray count] > 0) {
@@ -1516,6 +1543,11 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
                 marker = @"\n\n:::tool\n获取设备简单信息中…\n:::\n\n";
             } else if ([fnName isEqualToString:@"get_location"]) {
                 marker = @"\n\n:::tool\n获取位置中…\n:::\n\n";
+            } else if ([fnName isEqualToString:@"get_image"]) {
+                id u = [argsDict objectForKey:@"url"];
+                NSString *us = [u isKindOfClass:[NSString class]] ? u : @"?";
+                NSString *displayURL = us.length > 60 ? [NSString stringWithFormat:@"%@…", [us substringToIndex:60]] : us;
+                marker = [NSString stringWithFormat:@"\n\n:::tool\n正在获取图片 %@…\n:::\n\n", displayURL];
             } else if ([fnName isEqualToString:@"generate_image"]) {
                 id p = [argsDict objectForKey:@"prompt"];
                 NSString *ps = [p isKindOfClass:[NSString class]] ? p : @"?";
@@ -1683,6 +1715,76 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
                         @"role": @"tool",
                         @"tool_call_id": callId ?: @"",
                         @"content": locStr
+                    }];
+                }
+                continue;
+            }
+
+            // === get_image ================================================
+            // v261103-29: AI 自主视觉工具 — 下载图片 URL，返回 base64 data URL
+            // AI 模型如果有 vision 能力，能直接看到图片内容
+            if ([fnName isEqualToString:@"get_image"]) {
+                NSString *imgURL = [argsDict objectForKey:@"url"];
+                if (![imgURL isKindOfClass:[NSString class]] || imgURL.length == 0) {
+                    @synchronized(toolResults) {
+                        [toolResults addObject:@{
+                            @"role": @"tool", @"tool_call_id": callId ?: @"",
+                            @"content": @"Error: missing 'url' argument"
+                        }];
+                    }
+                    continue;
+                }
+                // 用同步请求下载图片（GET 请求，body 小，不会 -1200）
+                NSURL *fetchURL = [NSURL URLWithString:imgURL];
+                NSString *resultStr;
+                if (fetchURL) {
+                    NSMutableURLRequest *imgReq = [NSMutableURLRequest requestWithURL:fetchURL
+                                                                    cachePolicy:NSURLRequestReloadIgnoringCacheData
+                                                                timeoutInterval:15.0];
+                    [imgReq setHTTPMethod:@"GET"];
+                    NSError *imgErr = nil;
+                    NSURLResponse *imgResp = nil;
+                    NSData *imgData = [NSURLConnection sendSynchronousRequest:imgReq
+                                                          returningResponse:&imgResp
+                                                                      error:&imgErr];
+                    if (imgData && !imgErr && [imgData length] > 0) {
+                        // 检测 MIME 类型
+                        NSString *mimeType = @"image/jpeg";
+                        if ([imgResp isKindOfClass:[NSHTTPURLResponse class]]) {
+                            NSString *ct = [(NSHTTPURLResponse *)imgResp valueForHTTPHeaderField:@"Content-Type"];
+                            if (ct && ct.length > 0) {
+                                // 取 "image/xxx" 部分
+                                NSRange semi = [ct rangeOfString:@";"];
+                                if (semi.location != NSNotFound) ct = [ct substringToIndex:semi.location];
+                                ct = [ct stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+                                if ([ct hasPrefix:@"image/"]) mimeType = ct;
+                            }
+                        }
+                        // 限制图片大小（base64 后不超过 500KB，避免 body 过大）
+                        if ([imgData length] > 375000) {
+                            resultStr = [NSString stringWithFormat:
+                                @"Image too large (%lu bytes, max 375000). URL: %@",
+                                (unsigned long)[imgData length], imgURL];
+                        } else {
+                            NSString *b64 = [imgData base64String]; // NSDataBase64 category (iOS 6 兼容)
+                            if (b64 && b64.length > 0) {
+                                resultStr = [NSString stringWithFormat:
+                                    @"data:%@;base64,%@", mimeType, b64];
+                            } else {
+                                resultStr = @"Error: base64 encoding failed";
+                            }
+                        }
+                    } else {
+                        resultStr = [NSString stringWithFormat:@"Error fetching image: %@",
+                                    imgErr ? imgErr.localizedDescription : @"(no data)"];
+                    }
+                } else {
+                    resultStr = @"Error: invalid image URL";
+                }
+                @synchronized(toolResults) {
+                    [toolResults addObject:@{
+                        @"role": @"tool", @"tool_call_id": callId ?: @"",
+                        @"content": resultStr
                     }];
                 }
                 continue;
