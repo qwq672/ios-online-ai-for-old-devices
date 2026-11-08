@@ -32,6 +32,7 @@
 #import "SettingsViewController.h"
 #import "NSDataBase64.h"
 #import "Logger.h"
+#import "MbedTLSHTTPClient.h"   // v261103-25: mbedTLS 自带 TLS 栈
 #import <UIKit/UIKit.h>
 #import <sys/sysctl.h>
 #import <CFNetwork/CFNetwork.h>   // v261103-20: CFReadStreamCreateForStreamedHTTPRequest
@@ -104,8 +105,10 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
 }
 @end
 
-@interface NetworkService () <NSURLSessionDelegate, NSURLSessionTaskDelegate, NSURLSessionDataDelegate>
+@interface NetworkService () <NSURLSessionDelegate, NSURLSessionTaskDelegate, NSURLSessionDataDelegate, MbedTLSHTTPDelegate>
 @property (nonatomic, retain) NSURLConnection *connection;
+// v261103-25: mbedTLS HTTP 客户端（自带 TLS 1.2 栈，绕过 iOS 6 SecureTransport）
+@property (nonatomic, retain) MbedTLSHTTPClient *mbedtlsClient;
 // v261103-19: NSURLSession (iOS 7+) 用于突破 NSURLConnection 的 ~130KB body 限制。
 // SDK 7.1 有定义，deployment target 6.0 — 编译 OK，运行时用 NSClassFromString 检测。
 @property (nonatomic, retain) NSURLSession *urlSession;
@@ -443,31 +446,18 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
         anthropic ? @"anthropic" : @"openai",
         (unsigned long)[messages count], (unsigned long)[bodyData length]]];
 
-    // v261103-23: CFNetwork 作为首选（全版本可用 + 无 body 限制）。
-    // 之前 iOS 7+ 优先 NSURLSession，但日志显示 NSURLSession 创建失败
-    // (返回 nil) → fallback 到 NSURLConnection（不是 CFNetwork）→ -1200。
-    // 现在 CFNetwork 放在最前面，全版本都走 CFNetwork，无 body 限制。
-    // NSURLSession 作为 CFNetwork 失败时的备选（iOS 7+）。
-    if ([self _launchStreamWithCFNetwork:req bodyData:bodyData]) {
-        return YES;
-    }
-
-    // CFNetwork 失败 → iOS 7+ 试 NSURLSession（现代 TLS，可能握手成功）
-    Class sessionClass = NSClassFromString(@"NSURLSession");
-    if (sessionClass) {
-        [self _launchStreamWithNSURLSession:req bodyBytes:[bodyData length]];
-        return YES;
-    }
-
-    // 都失败 → NSURLConnection 兜底
-    self.connection = [[[NSURLConnection alloc] initWithRequest:req delegate:self
-                                             startImmediately:NO] autorelease];
-    if (self.connection) {
-        [self.connection scheduleInRunLoop:[NSRunLoop mainRunLoop]
-                                   forMode:NSRunLoopCommonModes];
-        [self.connection start];
-    }
-    return (self.connection != nil);
+    // v261103-25: mbedTLS 作为首选传输（自带 TLS 1.2 栈，绕过 iOS 6 SecureTransport）。
+    // CFNetwork 的 CFHTTPMessageSetHeaderField dlsym 失败（dlopen 也找不到），
+    // NSURLSession 创建失败，NSURLConnection 有 130KB body bug。
+    // mbedTLS 自带 TLS 栈，不依赖系统，无 body 限制，全版本可用。
+    NSDictionary *allHeaders = [req allHTTPHeaderFields];
+    NSString *httpMethod = [req HTTPMethod] ?: @"POST";
+    self.mbedtlsClient = [[[MbedTLSHTTPClient alloc] init] autorelease];
+    self.mbedtlsClient.delegate = self;
+    [self.mbedtlsClient startRequest:url method:httpMethod headers:allHeaders body:bodyData];
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"NET → (mbedTLS) body=%luB", (unsigned long)[bodyData length]]];
+    return YES;
 }
 
 #pragma mark - Request body builders (v261025-8)
@@ -876,6 +866,8 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
 // iOS 7+ session task 继续跑最多 240s, iOS 6 CFReadStream 继续在 runloop 上跑。
 - (void)_cancelAllTransports
 {
+    // v261103-25: 也取消 mbedTLS 客户端
+    if (_mbedtlsClient) { [_mbedtlsClient cancel]; }
     if (_dataTask) { [_dataTask cancel]; }
     if (_urlSession) { [_urlSession invalidateAndCancel]; }
     [self _cleanupCFStream];
@@ -1366,6 +1358,42 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
         self.cfReadStream = NULL;
     }
     if (_cfBodyStream) { [_cfBodyStream close]; self.cfBodyStream = nil; }
+}
+
+#pragma mark - MbedTLSHTTPDelegate (v261103-25)
+// mbedTLS HTTP 客户端回调 — 复用现有 SSE 解析 + 错误处理
+
+- (void)httpClient:(MbedTLSHTTPClient *)client didReceiveStatusCode:(NSInteger)statusCode
+{
+    self.httpStatus = statusCode;
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"NET ← HTTP %ld (mbedTLS)", (long)statusCode]];
+}
+
+- (void)httpClient:(MbedTLSHTTPClient *)client didReceiveData:(NSData *)data
+{
+    if (!data || !_rawBuffer) return;
+    [_rawBuffer appendData:data];
+    [self _parseBufferedChunks];
+}
+
+- (void)httpClientDidFinish:(MbedTLSHTTPClient *)client
+{
+    NSTimeInterval dur = [NSDate timeIntervalSinceReferenceDate] - self.streamStartTs;
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"NET ✓ (mbedTLS) done in %.1fs", dur]];
+    [self connectionDidFinishLoading:nil];
+    self.mbedtlsClient = nil;
+}
+
+- (void)httpClient:(MbedTLSHTTPClient *)client didFailWithError:(NSError *)error
+{
+    NSTimeInterval dur = [NSDate timeIntervalSinceReferenceDate] - self.streamStartTs;
+    [[Logger sharedLogger] error:[NSString stringWithFormat:
+        @"NET ✗ (mbedTLS) failed after %.1fs — %@",
+        dur, error.localizedDescription ?: @"(no desc)"]];
+    [self connection:nil didFailWithError:error];
+    self.mbedtlsClient = nil;
 }
 
 #pragma mark - Tool call execution
@@ -2224,6 +2252,8 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
 
 - (void)dealloc
 {
+    // v261103-25: 清理 mbedTLS 客户端
+    if (_mbedtlsClient) { [_mbedtlsClient cancel]; [_mbedtlsClient release]; }
     // v261103-19: 清理 NSURLSession (iOS 7+)
     if (_urlSession) { [_urlSession invalidateAndCancel]; [_urlSession release]; }
     if (_dataTask) { [_dataTask release]; }
