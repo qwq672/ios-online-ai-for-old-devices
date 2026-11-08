@@ -1724,6 +1724,8 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
             // v261103-29: AI 自主视觉工具 — 下载图片 URL，返回 base64 data URL
             // AI 模型如果有 vision 能力，能直接看到图片内容
             if ([fnName isEqualToString:@"get_image"]) {
+                NSData *argsData = [args dataUsingEncoding:NSUTF8StringEncoding];
+                NSDictionary *argsDict = [NSJSONSerialization JSONObjectWithData:argsData options:0 error:NULL] ?: @{};
                 NSString *imgURL = [argsDict objectForKey:@"url"];
                 if (![imgURL isKindOfClass:[NSString class]] || imgURL.length == 0) {
                     @synchronized(toolResults) {
