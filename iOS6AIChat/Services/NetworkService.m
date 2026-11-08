@@ -1753,7 +1753,7 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
                         // 检测 MIME 类型
                         NSString *mimeType = @"image/jpeg";
                         if ([imgResp isKindOfClass:[NSHTTPURLResponse class]]) {
-                            NSString *ct = [(NSHTTPURLResponse *)imgResp valueForHTTPHeaderField:@"Content-Type"];
+                            NSString *ct = [[(NSHTTPURLResponse *)imgResp allHeaderFields] objectForKey:@"Content-Type"];
                             if (ct && ct.length > 0) {
                                 // 取 "image/xxx" 部分
                                 NSRange semi = [ct rangeOfString:@";"];
