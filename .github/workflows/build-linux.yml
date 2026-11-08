@@ -79,7 +79,7 @@ jobs:
         run: |
           # v261103-25: 下载 + 交叉编译 mbedTLS 静态库
           # mbedTLS 自带 TLS 1.2 栈，绕过 iOS 6 SecureTransport 的所有 bug
-          git clone --depth=1 --branch v3.6.2 https://github.com/Mbed-TLS/mbedtls.git /tmp/mbedtls
+          git clone --depth=1 --branch v2.28.9 https://github.com/Mbed-TLS/mbedtls.git /tmp/mbedtls
           cd /tmp/mbedtls
           
           # Theos 交叉编译器
