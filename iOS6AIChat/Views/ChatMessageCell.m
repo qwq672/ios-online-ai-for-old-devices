@@ -1387,27 +1387,40 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     NSString *dispThinkingForCalc = [Message displayedThinkingForMessage:message];
     CGFloat thinkingH = 0;
     if (dispThinkingForCalc.length > 0 && !message.isUser) {
+        // v261103-28: 多段思考卡片高度计算 — 按分隔符拆分，每段独立计算
+        BOOL thinkingLive = [self _isThinkingLive:message];
+        NSArray *segments = [dispThinkingForCalc componentsSeparatedByString:@"\n\n──────────\n\n"];
         CGFloat thinkingToggleH = 22;
-        CGFloat thinkingLabelH = 0;
-        if ([self _isThinkingExpanded:message.messageID] ||
-            [self _isThinkingLive:message]) {
-            // Compute full thinking label height by wrapping the text
-            // at availTextWidth - 4 (the label's actual content width).
-            UIFont *thinkFont = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
-            NSAttributedString *thinkAttr = [[[NSAttributedString alloc]
-                initWithString:dispThinkingForCalc
-                    attributes:@{NSFontAttributeName: thinkFont}] autorelease];
-            CGFloat availW = availTextWidth - 4;
-            if (availW < 50) availW = 50;
-            // boundingRectWithSize:options:context: is the iOS 6+ method
-            // (without attributes parameter — that's iOS 7+ only).
-            CGRect thinkRect = [thinkAttr boundingRectWithSize:CGSizeMake(availW, CGFLOAT_MAX)
+        CGFloat yPos = 3;
+        UIFont *thinkFont = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
+        CGFloat availW = availTextWidth - 4;
+        if (availW < 50) availW = 50;
+
+        NSInteger segIdx = 0;
+        for (NSString *segText in segments) {
+            NSString *trimmed = [segText stringByTrimmingCharactersInSet:
+                                 [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            if (trimmed.length == 0) { segIdx++; continue; }
+            // toggle 高度
+            yPos += thinkingToggleH;
+            // 检查这个 segment 是否展开
+            NSString *segKey = [NSString stringWithFormat:@"%@_%ld", message.messageID, (long)segIdx];
+            BOOL segExpanded = [self _isThinkingExpanded:segKey] || thinkingLive;
+            if (segExpanded) {
+                NSAttributedString *segAttr = [[[NSAttributedString alloc]
+                    initWithString:trimmed
+                        attributes:@{NSFontAttributeName: thinkFont}] autorelease];
+                CGRect segRect = [segAttr boundingRectWithSize:CGSizeMake(availW, CGFLOAT_MAX)
                                                         options:(NSStringDrawingUsesLineFragmentOrigin |
                                                                  NSStringDrawingUsesFontLeading)
                                                         context:nil];
-            thinkingLabelH = ceilf(thinkRect.size.height) + 6;
+                yPos += ceilf(segRect.size.height) + 6 + 4;
+            } else {
+                yPos += 4;  // 折叠时空隙
+            }
+            segIdx++;
         }
-        thinkingH = thinkingToggleH + thinkingLabelH + 6;
+        thinkingH = yPos + 3;
     }
 
     // Images section.
