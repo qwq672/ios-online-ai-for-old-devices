@@ -1495,14 +1495,18 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
     if ([[NSUserDefaults standardUserDefaults] objectForKey:@"showToolCalls"]) {
         showToolCalls = [[NSUserDefaults standardUserDefaults] boolForKey:@"showToolCalls"];
     }
-    // v261103-21: 统一思考用可折叠卡片 — 不插入 :::thinking 内联块到 content，
-    // 而是给 _thinkingAccumulated 追加分隔符，让所有思考累积到 message.thinking，
-    // 用可折叠卡片显示（统一风格，不用蓝色文字+省略号）。
-    // 分段推理的视觉分段通过分隔符 ────────── 保留，用户展开卡片能看到分段。
+    // v261103-30: 思考卡片交错布局 — 把思考用 :::thinking 标记插回 _accumulated，
+    // 在工具调用之前插入，让思考卡片在内容流中穿插（不堆在顶部）。
+    // ChatMessageCell 解析 :::thinking 标记，在对应位置渲染可折叠卡片。
+    // 同时保留 _thinkingAccumulated 给 message.thinking（兼容旧逻辑）。
     if (showToolCalls && _thinkingAccumulated.length > 0) {
-        // 追加分隔符标记新一轮思考（不清空，让后续思考追加）
+        NSString *thinkText = [NSString stringWithString:_thinkingAccumulated];
+        // 插入 :::thinking 标记到 _accumulated（在工具标记之前）
+        NSString *thinkMarker = [NSString stringWithFormat:
+            @"\n:::thinking\n%@\n:::\n", thinkText];
+        [_accumulated appendString:thinkMarker];
+        // 追加分隔符到 _thinkingAccumulated（兼容旧 message.thinking 逻辑）
         [_thinkingAccumulated appendString:@"\n\n──────────\n\n"];
-        // 不插入 :::thinking 到 _accumulated — 思考统一走 message.thinking 可折叠卡片
     }
     if (showToolCalls) {
         for (NSDictionary *tc in toolCallAcc) {

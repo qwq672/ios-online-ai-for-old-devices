@@ -863,16 +863,42 @@ static void AppendAttrString(NSMutableAttributedString *out,
     BOOL isThinking = [blockType isEqualToString:@":::thinking"];
     NSArray *contentLines = [lines subarrayWithRange:NSMakeRange(1, [lines count] - 1)];
     if ([contentLines count] == 0) return;
-    NSString *body = [contentLines componentsJoinedByString:@" · "];
-    if (body.length == 0) return;
-    UIFont *toolFont = [UIFont italicSystemFontOfSize:baseFont.pointSize - 1] ?: baseFont;
-    // v261103-8: thinking blocks use tint color, tool blocks use secondary
-    UIColor *fg = isThinking ? [iOS6Theme tintColor] : [iOS6Theme secondaryTextColor];
-    UIColor *bg = [iOS6Theme codeBackgroundColor];
-    AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
-    AppendAttrString(out, body, toolFont, fg, bg, 0, 0);
-    AppendAttrString(out, @"\n", toolFont, fg, bg, 0, 0);
-    AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
+
+    if (isThinking) {
+        // v261103-30: 思考卡片穿插渲染 — 标题行 + 内容行，卡片样式
+        NSString *fullText = [contentLines componentsJoinedByString:@"\n"];
+        NSInteger charCount = [fullText length];
+        // 标题行: 💭 思考 (XXX 字)
+        NSString *title = [NSString stringWithFormat:@"💭 思考 (%ld 字)", (long)charCount];
+        UIFont *titleFont = [UIFont boldSystemFontOfSize:baseFont.pointSize - 1] ?: baseFont;
+        UIColor *titleColor = [iOS6Theme tintColor];
+        UIColor *cardBG = [iOS6Theme thinkingBackgroundColor];
+        UIColor *cardBorder = [iOS6Theme thinkingBorderColor];
+        UIColor *contentColor = [iOS6Theme secondaryTextColor];
+        UIFont *contentFont = [UIFont systemFontOfSize:baseFont.pointSize - 2] ?: baseFont;
+
+        AppendAttrString(out, @"\n", baseFont, [iOS6Theme textColor], nil, 0, 0);
+        // 标题行
+        AppendAttrString(out, title, titleFont, titleColor, cardBG, 0, 0);
+        AppendAttrString(out, @"\n", titleFont, titleColor, cardBG, 0, 0);
+        // 内容行（每行带背景色）
+        for (NSString *line in contentLines) {
+            AppendAttrString(out, line.length > 0 ? line : @" ", contentFont, contentColor, cardBG, 0, 0);
+            AppendAttrString(out, @"\n", contentFont, contentColor, cardBG, 0, 0);
+        }
+        AppendAttrString(out, @"\n", baseFont, [iOS6Theme textColor], nil, 0, 0);
+    } else {
+        // tool 块 — 保持现有渲染
+        NSString *body = [contentLines componentsJoinedByString:@" · "];
+        if (body.length == 0) return;
+        UIFont *toolFont = [UIFont italicSystemFontOfSize:baseFont.pointSize - 1] ?: baseFont;
+        UIColor *fg = [iOS6Theme secondaryTextColor];
+        UIColor *bg = [iOS6Theme codeBackgroundColor];
+        AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
+        AppendAttrString(out, body, toolFont, fg, bg, 0, 0);
+        AppendAttrString(out, @"\n", toolFont, fg, bg, 0, 0);
+        AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
+    }
 }
 
 + (void)_appendFencedCode:(NSArray *)lines
