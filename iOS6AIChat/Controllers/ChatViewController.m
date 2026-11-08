@@ -738,19 +738,28 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
 - (void)_scrollToBottomAnimated:(BOOL)animated
 {
     if ([_conversation.messages count] == 0) return;
-    NSIndexPath *lastIdx = [NSIndexPath indexPathForRow:[_conversation.messages count] - 1
-                                              inSection:0];
-    // v261024-19: NO @try — bounds-check before scrolling instead.
-    if (!lastIdx) return;
-    NSInteger totalRows = (NSInteger)[_tableView numberOfRowsInSection:0];
-    if (lastIdx.row >= totalRows) {
-        // Row count is stale — full reload instead.
-        [_tableView reloadData];
-        return;
+    // v261103-29: 根除底部消息被截 bug
+    // 旧代码用 scrollToRowAtIndexPath:atScrollPosition:Bottom
+    // iOS 6 不正确处理 contentInset.bottom → 最后一行被截
+    // 新代码直接计算 contentOffset，确保滚到最底部
+    [self _scrollToBottomNowAnimated:animated];
+}
+
+- (void)_scrollToBottomNowAnimated:(BOOL)animated
+{
+    CGFloat contentH = _tableView.contentSize.height;
+    CGFloat viewH = _tableView.bounds.size.height;
+    CGFloat insetBottom = _tableView.contentInset.bottom;
+    CGFloat insetTop = _tableView.contentInset.top;
+    // 最大滚动偏移 = contentSize - viewH + insetBottom
+    // 加额外 4pt 余量确保最后一条完全可见
+    CGFloat maxOffset = contentH - viewH + insetBottom + 4;
+    if (maxOffset < -insetTop) maxOffset = -insetTop;  // 不超过顶部
+    if (contentH <= viewH) {
+        // 内容不够填满 — 不滚动
+        maxOffset = -insetTop;
     }
-    [_tableView scrollToRowAtIndexPath:lastIdx
-                      atScrollPosition:UITableViewScrollPositionBottom
-                              animated:animated];
+    [_tableView setContentOffset:CGPointMake(0, maxOffset) animated:animated];
 }
 
 - (void)_dismissKeyboard

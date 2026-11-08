@@ -238,9 +238,10 @@
     // 跟 SSL Kill Switch 类似——接受所有证书
     mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_NONE);
     mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
-    // v261103-28: 设 read timeout 30s — 防止 thinking 模型思考时 mbedtls_ssl_read 无限阻塞
-    // 用户说"停也停不了"就是因为 mbedtls_ssl_read 阻塞在 recv，cancel 的 shutdown 没立即生效
-    mbedtls_ssl_conf_read_timeout(&conf, 30000);
+    // v261103-29: 缩短 timeout 到 10s — 更频繁检查 cancelled，"停不了"概率大幅降低
+    // 30s 太长（thinking 模型思考时用户等 30s 才能停）
+    // 10s 内 timeout 后检查 cancelled，如果用户已点停止就退出
+    mbedtls_ssl_conf_read_timeout(&conf, 10000);
     // 设置 ca cert（即使 VERIFY_NONE 也设上）
     mbedtls_ssl_conf_ca_chain(&conf, &cacert, NULL);
 
@@ -304,8 +305,8 @@
         ret = mbedtls_ssl_read(&ssl, buf, sizeof(buf) - 1);
 
         if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
-            // v261103-28: 防忙等 — sleep 10ms 后重试
-            usleep(10000);
+            // v261103-29: 从 10ms 减到 1ms — 提高响应速度，仍防 CPU 100%
+            usleep(1000);
             continue;
         }
         if (ret == MBEDTLS_ERR_SSL_TIMEOUT) {
