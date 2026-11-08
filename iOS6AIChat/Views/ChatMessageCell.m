@@ -65,6 +65,9 @@ static NSMutableSet *gStreamingMessageIDs = nil;
 @property (nonatomic, retain) UIButton *thinkingToggle;
 @property (nonatomic, retain) UILabel *thinkingLabel;
 @property (nonatomic, retain) UIView *thinkingSep;
+// v261103-22: 多段思考卡片 — 每段思考独立 toggle/label/sep，垂直堆叠在 _thinkingBlock 内
+// 每个元素 = NSMutableDictionary: {toggle, label, sep, collapsed, text}
+@property (nonatomic, retain) NSMutableArray *thinkingSegments;
 // v261025-8: 生图 result image view.
 @property (nonatomic, retain) UIImageView *generatedImageView;
 @end
@@ -730,6 +733,42 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     }
 }
 
+// v261103-22: 多段思考卡片的 toggle — sender.tag = segment index
+- (void)_toggleThinkingSegment:(UIButton *)sender
+{
+    NSInteger idx = sender.tag;
+    if (!_thinkingSegments || idx < 0 || idx >= (NSInteger)[_thinkingSegments count]) return;
+    NSMutableDictionary *seg = [_thinkingSegments objectAtIndex:idx];
+    BOOL collapsed = [[seg objectForKey:@"collapsed"] boolValue];
+    collapsed = !collapsed;
+    [seg setObject:[NSNumber numberWithBool:collapsed] forKey:@"collapsed"];
+    UILabel *label = [seg objectForKey:@"label"];
+    UIView *sep = [seg objectForKey:@"sep"];
+    label.hidden = collapsed;
+    sep.hidden = collapsed;
+    // 更新标题
+    NSString *text = [seg objectForKey:@"text"];
+    NSString *title;
+    if (collapsed) {
+        title = [NSString stringWithFormat:@"💭 思考 #%ld (点击展开) — %lu 字",
+                 (long)(idx + 1), (unsigned long)text.length];
+    } else {
+        title = [NSString stringWithFormat:@"💭 思考 #%ld (点击收起)", (long)(idx + 1)];
+    }
+    [sender setTitle:title forState:UIControlStateNormal];
+    // 记录展开状态（key = messageID_index）
+    NSString *segKey = [NSString stringWithFormat:@"%@_%ld", _currentMessageKey, (long)idx];
+    [self.class _markThinkingExpanded:segKey expanded:!collapsed];
+    [self setNeedsLayout];
+    UIView *v = self.superview;
+    while (v && ![v isKindOfClass:[UITableView class]]) v = v.superview;
+    if ([v isKindOfClass:[UITableView class]]) {
+        UITableView *tv = (UITableView *)v;
+        [tv beginUpdates];
+        [tv endUpdates];
+    }
+}
+
 - (void)applyMessage:(Message *)message
 {
     // v261024-19: NO @try — caller-side nil-guard + the internal func
@@ -846,24 +885,80 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     if (displayedThinking.length > 0 && !message.isUser && !hasInlineThinking) {
         _thinkingBlock.hidden = NO;
         BOOL thinkingLive = [ChatMessageCell _isThinkingLive:message];
-        _thinkingCollapsed = !([ChatMessageCell _isThinkingExpanded:message.messageID]
-                                || thinkingLive);
-        _thinkingLabel.hidden = _thinkingCollapsed;
-        _thinkingSep.hidden = _thinkingCollapsed;
-        NSString *headerTitle;
-        if (thinkingLive) {
-            headerTitle = @"💭 深度思考中…";
-        } else if (_thinkingCollapsed) {
-            headerTitle = [NSString stringWithFormat:@"💭 深度思考 (点击展开) — %lu 字",
-               (unsigned long)displayedThinking.length];
+        // v261103-22: 按 ────────── 分隔符拆分多段思考，每段独立卡片
+        NSArray *segments = [displayedThinking componentsSeparatedByString:@"\n\n──────────\n\n"];
+        // 清理旧 segment views
+        if (_thinkingSegments) {
+            for (NSDictionary *seg in _thinkingSegments) {
+                UIView *toggle = [seg objectForKey:@"toggle"];
+                UIView *label = [seg objectForKey:@"label"];
+                UIView *sep = [seg objectForKey:@"sep"];
+                [toggle removeFromSuperview]; [label removeFromSuperview]; [sep removeFromSuperview];
+            }
+            [_thinkingSegments removeAllObjects];
         } else {
-            headerTitle = @"💭 深度思考 (点击收起)";
+            self.thinkingSegments = [NSMutableArray array];
         }
-        [_thinkingToggle setTitle:headerTitle forState:UIControlStateNormal];
-        _thinkingLabel.text = displayedThinking;
+        // 为每段创建独立 toggle + label + sep
+        NSInteger segIdx = 0;
+        for (NSString *segText in segments) {
+            NSString *trimmed = [segText stringByTrimmingCharactersInSet:
+                                 [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            if (trimmed.length == 0) { segIdx++; continue; }
+            BOOL segCollapsed = !thinkingLive;
+            // 检查这个 segment 的展开状态（key = messageID_index）
+            NSString *segKey = [NSString stringWithFormat:@"%@_%ld", message.messageID, (long)segIdx];
+            if ([ChatMessageCell _isThinkingExpanded:segKey]) {
+                segCollapsed = NO;
+            }
+            UIButton *segToggle = [UIButton buttonWithType:UIButtonTypeCustom];
+            segToggle.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+            segToggle.contentEdgeInsets = UIEdgeInsetsMake(0, 6, 0, 6);
+            segToggle.titleLabel.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
+            [segToggle setTitleColor:[iOS6Theme secondaryTextColor] forState:UIControlStateNormal];
+            segToggle.tag = segIdx;
+            [segToggle addTarget:self action:@selector(_toggleThinkingSegment:)
+                forControlEvents:UIControlEventTouchUpInside];
+            NSString *title;
+            if (thinkingLive && segIdx == [segments count] - 1) {
+                title = @"💭 深度思考中…";
+            } else if (segCollapsed) {
+                title = [NSString stringWithFormat:@"💭 思考 #%ld (点击展开) — %lu 字",
+                         (long)(segIdx + 1), (unsigned long)trimmed.length];
+            } else {
+                title = [NSString stringWithFormat:@"💭 思考 #%ld (点击收起)", (long)(segIdx + 1)];
+            }
+            [segToggle setTitle:title forState:UIControlStateNormal];
+            [_thinkingBlock addSubview:segToggle];
+
+            UILabel *segLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+            segLabel.numberOfLines = 0;
+            segLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
+            segLabel.textColor = [iOS6Theme secondaryTextColor];
+            segLabel.backgroundColor = [UIColor clearColor];
+            segLabel.text = trimmed;
+            segLabel.hidden = segCollapsed;
+            [_thinkingBlock addSubview:segLabel];
+            [segLabel release];
+
+            UIView *segSep = [[UIView alloc] initWithFrame:CGRectZero];
+            segSep.backgroundColor = [iOS6Theme hairlineColor];
+            segSep.hidden = segCollapsed;
+            [_thinkingBlock addSubview:segSep];
+            [segSep release];
+
+            NSDictionary *segDict = [NSDictionary dictionaryWithObjectsAndKeys:
+                segToggle, @"toggle", segLabel, @"label", segSep, @"sep",
+                [NSNumber numberWithBool:segCollapsed], @"collapsed",
+                trimmed, @"text", nil];
+            [_thinkingSegments addObject:segDict];
+            segIdx++;
+        }
+        // 隐藏旧的单一 toggle/label/sep（v261103-22 之前创建的）
+        _thinkingToggle.hidden = YES;
+        _thinkingLabel.hidden = YES;
+        _thinkingSep.hidden = YES;
     } else {
-        // v261103-14: hide the collapsible card when thinking is already
-        // shown inline as :::thinking blocks (segmented reasoning mode).
         _thinkingBlock.hidden = YES;
     }
 
@@ -991,27 +1086,54 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // === Thinking block sizing ===
     CGFloat thinkingH = 0;
     if (!_thinkingBlock.hidden) {
-        CGFloat thinkingToggleH = 22;
-        CGFloat thinkingLabelH = 0;
-        if (!_thinkingLabel.hidden && _thinkingLabel.text.length > 0) {
-            // Wrap the NSString in an NSAttributedString so we can use
-            // boundingRectWithSize:options:context: (iOS 6+ method on
-            // NSAttributedString — the NSString version requires the
-            // attributes: parameter which is iOS 7+).
-            NSAttributedString *thinkAttr = [[[NSAttributedString alloc]
-                initWithString:_thinkingLabel.text
-                    attributes:@{NSFontAttributeName: _thinkingLabel.font}] autorelease];
-            CGSize thinkSize = [thinkAttr
-                boundingRectWithSize:CGSizeMake(availTextWidth - 4, CGFLOAT_MAX)
-                              options:(NSStringDrawingUsesLineFragmentOrigin |
-                                       NSStringDrawingUsesFontLeading)
-                              context:nil].size;
-            thinkingLabelH = ceilf(thinkSize.height) + 6;
+        // v261103-22: 多段思考卡片垂直堆叠布局
+        if (_thinkingSegments && [_thinkingSegments count] > 0) {
+            CGFloat yPos = 3;
+            CGFloat thinkingToggleH = 22;
+            for (NSInteger i = 0; i < (NSInteger)[_thinkingSegments count]; i++) {
+                NSDictionary *seg = [_thinkingSegments objectAtIndex:i];
+                UIButton *toggle = [seg objectForKey:@"toggle"];
+                UILabel *label = [seg objectForKey:@"label"];
+                UIView *sep = [seg objectForKey:@"sep"];
+                BOOL collapsed = [[seg objectForKey:@"collapsed"] boolValue];
+                toggle.frame = CGRectMake(4, yPos, availTextWidth, thinkingToggleH);
+                yPos += thinkingToggleH;
+                CGFloat labelH = 0;
+                if (!collapsed && label.text.length > 0) {
+                    NSAttributedString *attr = [[[NSAttributedString alloc]
+                        initWithString:label.text
+                            attributes:@{NSFontAttributeName: label.font}] autorelease];
+                    CGSize sz = [attr boundingRectWithSize:CGSizeMake(availTextWidth - 4, CGFLOAT_MAX)
+                                                   options:(NSStringDrawingUsesLineFragmentOrigin |
+                                                            NSStringDrawingUsesFontLeading)
+                                                   context:nil].size;
+                    labelH = ceilf(sz.height) + 6;
+                }
+                sep.frame = CGRectMake(6, yPos, availTextWidth - 12, 1);
+                label.frame = CGRectMake(6, yPos + 2, availTextWidth - 4, labelH);
+                yPos += labelH + 4;
+            }
+            thinkingH = yPos + 3;
+        } else {
+            // 旧逻辑（单卡片）— 兼容回退
+            CGFloat thinkingToggleH = 22;
+            CGFloat thinkingLabelH = 0;
+            if (!_thinkingLabel.hidden && _thinkingLabel.text.length > 0) {
+                NSAttributedString *thinkAttr = [[[NSAttributedString alloc]
+                    initWithString:_thinkingLabel.text
+                        attributes:@{NSFontAttributeName: _thinkingLabel.font}] autorelease];
+                CGSize thinkSize = [thinkAttr
+                    boundingRectWithSize:CGSizeMake(availTextWidth - 4, CGFLOAT_MAX)
+                                  options:(NSStringDrawingUsesLineFragmentOrigin |
+                                           NSStringDrawingUsesFontLeading)
+                                  context:nil].size;
+                thinkingLabelH = ceilf(thinkSize.height) + 6;
+            }
+            thinkingH = thinkingToggleH + thinkingLabelH + 6;
+            _thinkingToggle.frame = CGRectMake(4, 3, availTextWidth, thinkingToggleH);
+            _thinkingLabel.frame = CGRectMake(6, thinkingToggleH + 2, availTextWidth - 4, thinkingLabelH);
+            _thinkingSep.frame = CGRectMake(6, thinkingToggleH, availTextWidth - 12, 1);
         }
-        thinkingH = thinkingToggleH + thinkingLabelH + 6;
-        _thinkingToggle.frame = CGRectMake(4, 3, availTextWidth, thinkingToggleH);
-        _thinkingLabel.frame = CGRectMake(6, thinkingToggleH + 2, availTextWidth - 4, thinkingLabelH);
-        _thinkingSep.frame = CGRectMake(6, thinkingToggleH, availTextWidth - 12, 1);
     }
 
     // === Main text sizing ===
@@ -1371,6 +1493,8 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     UIButton *tt = _thinkingToggle;         _thinkingToggle = nil;
     UILabel *tl = _thinkingLabel;           _thinkingLabel = nil;
     UIView *ts = _thinkingSep;              _thinkingSep = nil;
+    // v261103-22: 清理多段思考卡片
+    NSMutableArray *tsegs = _thinkingSegments; _thinkingSegments = nil;
     NSMutableArray *ivs = _imageViews;      _imageViews = nil;
     NSString *cmk = _currentMessageKey;     _currentMessageKey = nil;
     UIButton *rb = _regenerateButton;       _regenerateButton = nil;
@@ -1397,6 +1521,7 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     [tt release];
     [tl release];
     [ts release];
+    [tsegs release];   // v261103-22: 多段思考卡片
     [ivs release];
     [cmk release];
     [rb release];
