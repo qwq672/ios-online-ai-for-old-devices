@@ -335,6 +335,25 @@ static void AppendAttrString(NSMutableAttributedString *out,
             }
         }
 
+        // === Table ========================================================
+        // v261103-30: Markdown 表格渲染 — 检测 | 开头的连续行
+        if ([line hasPrefix:@"|"]) {
+            NSMutableArray *tableLines = [NSMutableArray array];
+            while (i < [lines count] && [[lines objectAtIndex:i] hasPrefix:@"|"]) {
+                [tableLines addObject:[lines objectAtIndex:i]];
+                i++;
+            }
+            i--; // 外层 for 会 i++
+            if ([tableLines count] >= 2) {
+                [self _appendTable:tableLines to:out baseFont:baseFont];
+            } else {
+                // 单行 | — 当普通文字处理
+                [self appendInline:out line:line baseFont:baseFont];
+                AppendAttrString(out, @"\n", baseFont, [iOS6Theme textColor], nil, 0, 0);
+            }
+            continue;
+        }
+
         // === Blockquote ==================================================
         // v261103-7: proper blockquote UI — colored left bar + gray text
         // + indentation. Replaces the old `| ` prefix approach which the
@@ -899,6 +918,41 @@ static void AppendAttrString(NSMutableAttributedString *out,
         AppendAttrString(out, @"\n", toolFont, fg, bg, 0, 0);
         AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
     }
+}
+
+// v261103-30: 表格渲染 — 等宽字体 + 背景色 + 表头加粗
++ (void)_appendTable:(NSArray *)lines
+                  to:(NSMutableAttributedString *)out
+            baseFont:(UIFont *)baseFont
+{
+    UIFont *mono = [UIFont fontWithName:@"Courier" size:baseFont.pointSize - 1] ?: baseFont;
+    UIFont *boldMono = [UIFont boldSystemFontOfSize:baseFont.pointSize - 1] ?: baseFont;
+    UIColor *tableBG = [iOS6Theme codeBackgroundColor];
+    UIColor *headerColor = [iOS6Theme tintColor];
+    UIColor *cellColor = [iOS6Theme textColor];
+
+    AppendAttrString(out, @"\n", baseFont, [iOS6Theme textColor], nil, 0, 0);
+    for (NSUInteger li = 0; li < [lines count]; li++) {
+        NSString *tableLine = [lines objectAtIndex:li];
+        // 检测分隔行 (|---|---|)
+        BOOL isSeparator = YES;
+        for (NSUInteger c = 0; c < [tableLine length]; c++) {
+            unichar ch = [tableLine characterAtIndex:c];
+            if (ch != '|' && ch != '-' && ch != ' ' && ch != ':') {
+                isSeparator = NO;
+                break;
+            }
+        }
+        if (isSeparator && li > 0) {
+            continue;
+        }
+        BOOL isHeader = (li == 0);
+        UIFont *font = isHeader ? boldMono : mono;
+        UIColor *color = isHeader ? headerColor : cellColor;
+        AppendAttrString(out, tableLine, font, color, tableBG, 0, 0);
+        AppendAttrString(out, @"\n", font, color, tableBG, 0, 0);
+    }
+    AppendAttrString(out, @"\n", baseFont, [iOS6Theme textColor], nil, 0, 0);
 }
 
 + (void)_appendFencedCode:(NSArray *)lines
