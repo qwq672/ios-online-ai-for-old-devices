@@ -666,11 +666,13 @@ static NSString * const kHexDarkThinkingBorder   = @"#252525";   // v261103-1: d
 + (UIImage *)glassButtonImageOfSize:(CGSize)size accent:(BOOL)accent
 {
     if (IsIOS7OrLater()) return nil; // iOS 7: system default buttons
-    
+
     if (size.width < 2 || size.height < 2) return nil;
     CGFloat scale = [UIScreen mainScreen].scale;
     if (scale < 1) scale = 1;
-    UIGraphicsBeginImageContextWithOptions(size, NO, scale);
+    // v261103-26: 加 2px 上下边距给外阴影空间
+    CGSize renderSize = CGSizeMake(size.width, size.height + 2);
+    UIGraphicsBeginImageContextWithOptions(renderSize, NO, scale);
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     if (!ctx) {
         UIGraphicsEndImageContext();
@@ -681,56 +683,70 @@ static NSString * const kHexDarkThinkingBorder   = @"#252525";   // v261103-1: d
     CGFloat radius = 5.0f;
     CGRect rect = CGRectMake(0.5f, 0.5f, size.width - 1.0f, size.height - 1.0f);
 
-    // Clip to rounded rect.
+    // v261103-26: 1. 外阴影（drop shadow）— 让按钮浮起来
     CGContextSaveGState(ctx);
+    CGContextSetShadowWithColor(ctx, CGSizeMake(0, 1.5f), 1.5f,
+        [UIColor colorWithWhite:0.0f alpha:0.25f].CGColor);
     UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:rect
                                                      cornerRadius:radius];
+    CGContextSetFillColorWithColor(ctx, [UIColor whiteColor].CGColor);
+    CGContextAddPath(ctx, path.CGPath);
+    CGContextFillPath(ctx);
+    CGContextRestoreGState(ctx);
+
+    // v261103-26: 2. 主体（clip + 3 色标渐变 + gloss + 高光 + 内阴影）
+    CGContextSaveGState(ctx);
     CGContextAddPath(ctx, path.CGPath);
     CGContextClip(ctx);
 
-    // Vertical gradient body.
+    // 3 色标渐变（亮 → 中 → 暗）— 比原来的 2 色标更细腻
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
-    NSString *topHex, *botHex;
+    NSString *topHex, *midHex, *botHex;
     if (accent) {
-        topHex = @"#5BB4F2"; botHex = @"#2E7FD6";   // saturated blue glass
+        topHex = @"#7BC4F5"; midHex = @"#3E8EE0"; botHex = @"#1E6AC8";  // 蓝色玻璃
     } else {
-        topHex = dark ? @"#3A3A3E" : @"#FDFDFD";      // neutral bar glass
-        botHex = dark ? @"#232326" : @"#D8D8DC";
+        topHex = dark ? @"#424248" : @"#FFFFFF";
+        midHex = dark ? @"#333337" : @"#F0F0F2";
+        botHex = dark ? @"#1E1E22" : @"#D0D0D6";
     }
-    // v261025-1: CFArrayCreate pattern — no (id)CGColor casts into NSArray.
     CGColorRef c0 = CGColorRetain([self colorWithHex:topHex].CGColor);
-    CGColorRef c1 = CGColorRetain([self colorWithHex:botHex].CGColor);
-    const void *vals[] = { c0, c1 };
-    CFArrayRef colors = CFArrayCreate(kCFAllocatorDefault, vals, 2,
+    CGColorRef c1 = CGColorRetain([self colorWithHex:midHex].CGColor);
+    CGColorRef c2 = CGColorRetain([self colorWithHex:botHex].CGColor);
+    const void *vals[] = { c0, c1, c2 };
+    CFArrayRef colors = CFArrayCreate(kCFAllocatorDefault, vals, 3,
                                      &kCFTypeArrayCallBacks);
-    CGFloat locations[] = { 0.0f, 1.0f };
-    CGGradientRef grad = CGGradientCreateWithColors(space,
-                                                    colors,
-                                                    locations);
+    CGFloat locations[] = { 0.0f, 0.48f, 1.0f };
+    CGGradientRef grad = CGGradientCreateWithColors(space, colors, locations);
     CGContextDrawLinearGradient(ctx, grad,
                                 CGPointMake(0, 0), CGPointMake(0, size.height), 0);
     if (grad) CGGradientRelease(grad);
     if (colors) CFRelease(colors);
-    if (c1) CGColorRelease(c1);
     if (c0) CGColorRelease(c0);
+    if (c1) CGColorRelease(c1);
+    if (c2) CGColorRelease(c2);
+    CGColorSpaceRelease(space);
 
-    // Glossy top half.
+    // Glossy top half (更亮的上半部高光)
     [self drawGlossInRect:CGRectMake(0, 0, size.width, size.height * 0.5f)
                   context:ctx];
 
-    // Inner top highlight line.
+    // 顶部内高光线 (1px)
     CGContextSetFillColorWithColor(ctx,
-        [UIColor colorWithWhite:1.0f alpha:(accent ? 0.75f : 0.45f)].CGColor);
+        [UIColor colorWithWhite:1.0f alpha:(accent ? 0.8f : 0.5f)].CGColor);
     CGContextFillRect(ctx, CGRectMake(1, 1, size.width - 2, 1.0f));
 
-    CGColorSpaceRelease(space);
+    // v261103-26: 底部内阴影线 (1px) — 增加深度感
+    CGContextSetFillColorWithColor(ctx,
+        [UIColor colorWithWhite:0.0f alpha:0.12f].CGColor);
+    CGContextFillRect(ctx, CGRectMake(1, size.height - 2.5f, size.width - 2, 1.0f));
+
     CGContextRestoreGState(ctx);
 
-    // Outer hairline border.
-    UIColor *border = accent ? [self colorWithHex:@"#1C5AA0"]
-                             : (dark ? [self colorWithHex:@"#55555A"]
-                                     : [self colorWithHex:@"#A0A0A6"]);
-    CGContextSetStrokeColorWithColor(ctx, border.CGColor);
+    // v261103-26: 双层边框 — 外深 + 内亮
+    UIColor *outerBorder = accent ? [self colorWithHex:@"#1755A0"]
+                                  : (dark ? [self colorWithHex:@"#0A0A0E"]
+                                          : [self colorWithHex:@"#98989E"]);
+    CGContextSetStrokeColorWithColor(ctx, outerBorder.CGColor);
     CGContextSetLineWidth(ctx, 1.0f);
     CGContextAddPath(ctx, path.CGPath);
     CGContextStrokePath(ctx);
@@ -1290,11 +1306,13 @@ static const uint8_t kNoiseCells[24] = {
 + (UIImage *)greenGlassButtonImageOfSize:(CGSize)size
 {
     if (IsIOS7OrLater()) return nil; // iOS 7: system default send button
-    
+
     if (size.width < 2 || size.height < 2) return nil;
     CGFloat scale = [UIScreen mainScreen].scale;
     if (scale < 1) scale = 1;
-    UIGraphicsBeginImageContextWithOptions(size, NO, scale);
+    // v261103-26: 加 2px 边距给外阴影
+    CGSize renderSize = CGSizeMake(size.width, size.height + 2);
+    UIGraphicsBeginImageContextWithOptions(renderSize, NO, scale);
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     if (!ctx) {
         UIGraphicsEndImageContext();
@@ -1305,21 +1323,32 @@ static const uint8_t kNoiseCells[24] = {
     UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:rect
                                                      cornerRadius:radius];
 
+    // v261103-26: 1. 外阴影（drop shadow）
+    CGContextSaveGState(ctx);
+    CGContextSetShadowWithColor(ctx, CGSizeMake(0, 1.5f), 1.5f,
+        [UIColor colorWithWhite:0.0f alpha:0.25f].CGColor);
+    CGContextSetFillColorWithColor(ctx, [UIColor whiteColor].CGColor);
+    CGContextAddPath(ctx, path.CGPath);
+    CGContextFillPath(ctx);
+    CGContextRestoreGState(ctx);
+
+    // v261103-26: 2. 主体（clip + 3 色标渐变 + gloss + 高光 + 内阴影）
     CGContextSaveGState(ctx);
     CGContextAddPath(ctx, path.CGPath);
     CGContextClip(ctx);
 
-    // Green gradient body (classic iMessage send).
+    // 3 色标绿色渐变（亮绿 → 中绿 → 深绿）
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
     if (space) {
-        CGColorRef c0 = CGColorRetain([self colorWithHex:@"#9BE858"].CGColor);
-        CGColorRef c1 = CGColorRetain([self colorWithHex:@"#56C130"].CGColor);
-        if (c0 && c1) {
-            const void *vals[] = { c0, c1 };
-            CFArrayRef colors = CFArrayCreate(kCFAllocatorDefault, vals, 2,
+        CGColorRef c0 = CGColorRetain([self colorWithHex:@"#ACF070"].CGColor);
+        CGColorRef c1 = CGColorRetain([self colorWithHex:@"#5AC830"].CGColor);
+        CGColorRef c2 = CGColorRetain([self colorWithHex:@"#3DA51E"].CGColor);
+        if (c0 && c1 && c2) {
+            const void *vals[] = { c0, c1, c2 };
+            CFArrayRef colors = CFArrayCreate(kCFAllocatorDefault, vals, 3,
                                               &kCFTypeArrayCallBacks);
             if (colors) {
-                CGFloat locs[] = { 0.0f, 1.0f };
+                CGFloat locs[] = { 0.0f, 0.48f, 1.0f };
                 CGGradientRef grad = CGGradientCreateWithColors(space, colors, locs);
                 if (grad) {
                     CGContextDrawLinearGradient(ctx, grad,
@@ -1329,8 +1358,9 @@ static const uint8_t kNoiseCells[24] = {
                 CFRelease(colors);
             }
         }
-        if (c1) CGColorRelease(c1);
         if (c0) CGColorRelease(c0);
+        if (c1) CGColorRelease(c1);
+        if (c2) CGColorRelease(c2);
         CGColorSpaceRelease(space);
     }
     // Glossy top half.
@@ -1338,19 +1368,23 @@ static const uint8_t kNoiseCells[24] = {
                   context:ctx];
     // Inner top highlight.
     CGContextSetFillColorWithColor(ctx,
-        [UIColor colorWithWhite:1.0f alpha:0.7f].CGColor);
+        [UIColor colorWithWhite:1.0f alpha:0.75f].CGColor);
     CGContextFillRect(ctx, CGRectMake(1, 1, size.width - 2, 1.0f));
+    // v261103-26: 底部内阴影线
+    CGContextSetFillColorWithColor(ctx,
+        [UIColor colorWithWhite:0.0f alpha:0.12f].CGColor);
+    CGContextFillRect(ctx, CGRectMake(1, size.height - 2.5f, size.width - 2, 1.0f));
     CGContextRestoreGState(ctx);
 
-    // Darker green hairline border.
-    CGContextSetStrokeColorWithColor(ctx, [self colorWithHex:@"#3E8A22"].CGColor);
+    // Darker green border.
+    CGContextSetStrokeColorWithColor(ctx, [self colorWithHex:@"#2E7A18"].CGColor);
     CGContextSetLineWidth(ctx, 1.0f);
     CGContextAddPath(ctx, path.CGPath);
     CGContextStrokePath(ctx);
 
     UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    return img;  // autoreleased (drawn at exact button size, tiny)
+    return img;  // autoreleased
 }
 
 @end
