@@ -85,6 +85,8 @@ iOS6AIChat_PREFIX_HEADER = iOS6AIChat/iOS6AIChat-Prefix.pch
 iOS6AIChat_FRAMEWORKS = UIKit Foundation CoreGraphics CFNetwork
 # v261103-25: mbedTLS 源文件直接编译（不用静态库）
 iOS6AIChat_C_FILES = $(shell ls mbedtls/src/*.c 2>/dev/null)
+# v261103-25: 显式加 MbedTLSHTTPClient.m (C_FILES 可能影响自动扫描)
+iOS6AIChat_OBJC_FILES = iOS6AIChat/Services/MbedTLSHTTPClient.m
 
 # === Compiler flags ======================================================
 # This codebase is MRC (manual reference counting), NOT ARC.
