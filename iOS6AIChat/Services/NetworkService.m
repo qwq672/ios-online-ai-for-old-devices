@@ -1392,6 +1392,8 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
 
 - (void)httpClient:(MbedTLSHTTPClient *)client didReceiveStatusCode:(NSInteger)statusCode
 {
+    // v261103-31: 检查 client 身份 — 旧请求的残留回调不处理
+    if (client != self.mbedtlsClient) return;
     self.httpStatus = statusCode;
     [[Logger sharedLogger] info:[NSString stringWithFormat:
         @"NET ← HTTP %ld (mbedTLS)", (long)statusCode]];
@@ -1399,6 +1401,8 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
 
 - (void)httpClient:(MbedTLSHTTPClient *)client didReceiveData:(NSData *)data
 {
+    // v261103-31: 检查 client 身份 — 防止旧请求残留回调污染新请求
+    if (client != self.mbedtlsClient) return;
     if (!data || !_rawBuffer) return;
     [_rawBuffer appendData:data];
     [self _parseBufferedChunks];
@@ -1406,6 +1410,8 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
 
 - (void)httpClientDidFinish:(MbedTLSHTTPClient *)client
 {
+    // v261103-31: 检查 client 身份
+    if (client != self.mbedtlsClient) return;
     NSTimeInterval dur = [NSDate timeIntervalSinceReferenceDate] - self.streamStartTs;
     [[Logger sharedLogger] info:[NSString stringWithFormat:
         @"NET ✓ (mbedTLS) done in %.1fs", dur]];
@@ -1415,6 +1421,8 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
 
 - (void)httpClient:(MbedTLSHTTPClient *)client didFailWithError:(NSError *)error
 {
+    // v261103-31: 检查 client 身份
+    if (client != self.mbedtlsClient) return;
     NSTimeInterval dur = [NSDate timeIntervalSinceReferenceDate] - self.streamStartTs;
     [[Logger sharedLogger] error:[NSString stringWithFormat:
         @"NET ✗ (mbedTLS) failed after %.1fs — %@",

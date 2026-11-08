@@ -170,7 +170,12 @@
     // 构造 HTTP 请求
     NSMutableString *httpReq = [NSMutableString string];
     [httpReq appendFormat:@"%@ %@ HTTP/1.1\r\n", self.requestMethod ?: @"POST", path];
-    [httpReq appendFormat:@"Host: %@\r\n", host];
+    // v261103-31: Host header 加 port（非标准端口时）
+    if (port != 443) {
+        [httpReq appendFormat:@"Host: %@:%ld\r\n", host, (long)port];
+    } else {
+        [httpReq appendFormat:@"Host: %@\r\n", host];
+    }
     // 添加 headers
     for (NSString *key in self.requestHeaders) {
         NSString *val = [self.requestHeaders objectForKey:key];
@@ -282,9 +287,11 @@
     // 7. 发送 HTTP 请求
     size_t written = 0;
     while (written < [fullRequest length]) {
+        if (self.cancelled) goto cleanup;  // v261103-31: cancel 检查
         ret = mbedtls_ssl_write(&ssl, (const unsigned char *)[fullRequest bytes] + written,
                                  [fullRequest length] - written);
         if (ret == MBEDTLS_ERR_SSL_WANT_WRITE || ret == MBEDTLS_ERR_SSL_WANT_READ) {
+            usleep(1000);  // v261103-31: 防忙等（跟 ssl_read 一致）
             continue;
         }
         if (ret <= 0) {
@@ -333,12 +340,8 @@
         totalRead += ret;
 
         if (!headersParsed) {
-            // 解析 HTTP 响应头（找 \r\n\r\n）
-            [headerBuffer appendData:chunkData];
-            NSRange headerEnd = [[headerBuffer subdataWithRange:NSMakeRange(0, [headerBuffer length])]
-                                  rangeOfData:[NSData dataWithBytes:"\r\n\r\n" length:4]
-                                  options:0 range:NSMakeRange(0, [headerBuffer length])];
             // v261103-30: 兼容 \r\n\r\n 和 \n\n 两种分隔符
+            [headerBuffer appendData:chunkData];
             // 某些服务器/代理用 \n\n（不带 \r），只找 \r\n\r\n 会找不到
             const char *hdr = [headerBuffer bytes];
             NSUInteger hdrLen = [headerBuffer length];

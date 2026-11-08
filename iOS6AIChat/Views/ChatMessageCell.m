@@ -959,6 +959,15 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         _thinkingLabel.hidden = YES;
         _thinkingSep.hidden = YES;
     } else {
+        // v261103-31: 清空 _thinkingSegments（思考在 content 流里，不需要 _thinkingBlock 卡片）
+        if (_thinkingSegments) {
+            for (NSDictionary *seg in _thinkingSegments) {
+                [[seg objectForKey:@"toggle"] removeFromSuperview];
+                [[seg objectForKey:@"label"] removeFromSuperview];
+                [[seg objectForKey:@"sep"] removeFromSuperview];
+            }
+            [_thinkingSegments removeAllObjects];
+        }
         _thinkingBlock.hidden = YES;
     }
 
@@ -1385,8 +1394,12 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // FULL height so the bubble grows with the reasoning text.
     // v261025-6: use displayed thinking (variant-aware).
     NSString *dispThinkingForCalc = [Message displayedThinkingForMessage:message];
+    // v261103-31: 如果 content 里有 :::thinking（交错布局），不计算 _thinkingBlock 高度
+    // （思考已在 content 流里，_thinkingBlock 隐藏）
+    NSString *dispContentForCalc = [Message displayedContentForMessage:message];
+    BOOL hasInlineThinkingForCalc = [dispContentForCalc rangeOfString:@":::thinking"].location != NSNotFound;
     CGFloat thinkingH = 0;
-    if (dispThinkingForCalc.length > 0 && !message.isUser) {
+    if (dispThinkingForCalc.length > 0 && !message.isUser && !hasInlineThinkingForCalc) {
         // v261103-28: 多段思考卡片高度计算 — 按分隔符拆分，每段独立计算
         BOOL thinkingLive = [self _isThinkingLive:message];
         NSArray *segments = [dispThinkingForCalc componentsSeparatedByString:@"\n\n──────────\n\n"];
