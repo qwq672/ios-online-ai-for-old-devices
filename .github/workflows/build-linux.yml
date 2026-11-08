@@ -86,6 +86,8 @@ jobs:
           cp /tmp/mbedtls/include/mbedtls/*.h $GITHUB_WORKSPACE/mbedtls/include/
           cp -R /tmp/mbedtls/include/mbedtls $GITHUB_WORKSPACE/mbedtls/include/ 2>/dev/null || true
           cp /tmp/mbedtls/library/*.c $GITHUB_WORKSPACE/mbedtls/src/
+          # v261103-25: 也复制 library/ 目录的内部头文件（common.h 等）
+          cp /tmp/mbedtls/library/*.h $GITHUB_WORKSPACE/mbedtls/src/ 2>/dev/null || true
           
           # 列出复制的文件
           echo "=== mbedTLS source files ==="
