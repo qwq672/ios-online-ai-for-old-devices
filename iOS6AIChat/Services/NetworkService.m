@@ -43,7 +43,18 @@ typedef void (*CFHTTPMessageSetHeaderFieldFunc)(CFHTTPMessageRef, CFStringRef, C
 static CFHTTPMessageSetHeaderFieldFunc _pCFHTTPMessageSetHeaderField = NULL;
 static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
     if (!_pCFHTTPMessageSetHeaderField) {
-        _pCFHTTPMessageSetHeaderField = (CFHTTPMessageSetHeaderFieldFunc)dlsym(RTLD_DEFAULT, "CFHTTPMessageSetHeaderField");
+        // v261103-24: RTLD_DEFAULT 找不到 → 用 dlopen 显式加载系统 CFNetwork 库
+        void *handle = dlopen("/System/Library/Frameworks/CFNetwork.framework/CFNetwork", RTLD_LAZY);
+        if (handle) {
+            _pCFHTTPMessageSetHeaderField = (CFHTTPMessageSetHeaderFieldFunc)dlsym(handle, "CFHTTPMessageSetHeaderField");
+        }
+        if (!_pCFHTTPMessageSetHeaderField) {
+            // 也试 CoreFoundation（某些 iOS 版本 CFHTTPMessage 在 CoreFoundation 里）
+            void *cfHandle = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_LAZY);
+            if (cfHandle) {
+                _pCFHTTPMessageSetHeaderField = (CFHTTPMessageSetHeaderFieldFunc)dlsym(cfHandle, "CFHTTPMessageSetHeaderField");
+            }
+        }
     }
     return _pCFHTTPMessageSetHeaderField;
 }

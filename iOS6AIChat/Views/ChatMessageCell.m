@@ -947,7 +947,7 @@ static NSMutableSet *gStreamingMessageIDs = nil;
             [_thinkingBlock addSubview:segSep];
             [segSep release];
 
-            NSDictionary *segDict = [NSDictionary dictionaryWithObjectsAndKeys:
+            NSMutableDictionary *segDict = [NSMutableDictionary dictionaryWithObjectsAndKeys:
                 segToggle, @"toggle", segLabel, @"label", segSep, @"sep",
                 [NSNumber numberWithBool:segCollapsed], @"collapsed",
                 trimmed, @"text", nil];
