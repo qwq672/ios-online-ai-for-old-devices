@@ -100,7 +100,7 @@ iOS6AIChat_CFLAGS  = -fno-objc-arc -fobjc-legacy-dispatch -fno-objc-exceptions \
 	-Wno-error=unused-variable -Wno-unused-variable \
 	-std=gnu99 \
 	-IiOS6AIChat -IiOS6AIChat/Models -IiOS6AIChat/Services \
-	-IiOS6AIChat/Views -IiOS6AIChat/Controllers -IiOS6AIChat/Resources -Imbedtls/include
+	-IiOS6AIChat/Views -IiOS6AIChat/Controllers -IiOS6AIChat/Resources -Imbedtls/include -Imbedtls/include/mbedtls -Imbedtls/src
 iOS6AIChat_LDFLAGS = -framework UIKit -framework Foundation -framework CoreGraphics -framework CFNetwork -framework Security
 
 # === Packaging ===========================================================
