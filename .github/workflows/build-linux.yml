@@ -85,20 +85,48 @@ jobs:
           # Theos 交叉编译器
           CC="$THEOS/toolchain/linux/iphone/bin/clang"
           SYSROOT="$THEOS/sdks/iPhoneOS7.1.sdk"
+          # 找交叉编译器的 ar（系统 ar 生成 ELF，交叉 ar 生成 Mach-O）
+          AR=""
+          for cand in "$THEOS/toolchain/linux/iphone/bin/arm-apple-darwin11-ar" \
+                      "$THEOS/toolchain/linux/iphone/bin/llvm-ar" \
+                      "$THEOS/toolchain/linux/iphone/bin/ar"; do
+            if [ -x "$cand" ]; then AR="$cand"; break; fi
+          done
+          if [ -z "$AR" ]; then echo "WARNING: no cross AR found, using system ar"; AR=ar; fi
+          echo "Using CC=$CC AR=$AR"
           
-          # 编译静态库（armv7 + armv7s，fat binary）
-          make CC="$CC" \
-               CFLAGS="-arch armv7 -arch armv7s -isysroot $SYSROOT -miphoneos-version-min=6.0 -fno-objc-arc -fno-stack-protector" \
-               LDFLAGS="" \
-               lib -j$(nproc) 2>&1 | tail -20
+          # 分别编译 armv7 和 armv7s（fat object 有 ar 兼容问题）
+          COMMON_CFLAGS="-isysroot $SYSROOT -miphoneos-version-min=6.0 -fno-objc-arc -fno-stack-protector"
           
-          # 检查静态库
-          ls -la library/libmbedtls.a library/libmbedx509.a library/libmbedcrypto.a
+          # armv7
+          make clean 2>/dev/null || true
+          make CC="$CC" AR="$AR" CFLAGS="-arch armv7 $COMMON_CFLAGS" LDFLAGS="" lib -j$(nproc) 2>&1 | tail -5
+          cp library/libmbedtls.a /tmp/libmbedtls_armv7.a
+          cp library/libmbedx509.a /tmp/libmbedx509_armv7.a
+          cp library/libmbedcrypto.a /tmp/libmbedcrypto_armv7.a
           
-          # 安装到项目目录
+          # armv7s
+          make clean 2>/dev/null || true
+          make CC="$CC" AR="$AR" CFLAGS="-arch armv7s $COMMON_CFLAGS" LDFLAGS="" lib -j$(nproc) 2>&1 | tail -5
+          cp library/libmbedtls.a /tmp/libmbedtls_armv7s.a
+          cp library/libmbedx509.a /tmp/libmbedx509_armv7s.a
+          cp library/libmbedcrypto.a /tmp/libmbedcrypto_armv7s.a
+          
+          # 用 lipo 合并 fat 静态库
+          LIPO=""
+          for cand in "$THEOS/toolchain/linux/iphone/bin/lipo" "$THEOS/toolchain/linux/iphone/bin/arm-apple-darwin11-lipo" "lipo"; do
+            if [ -x "$cand" ]; then LIPO="$cand"; break; fi
+          done
+          echo "Using LIPO=$LIPO"
+          
           mkdir -p $GITHUB_WORKSPACE/mbedtls/lib $GITHUB_WORKSPACE/mbedtls/include
-          cp library/libmbedtls.a library/libmbedx509.a library/libmbedcrypto.a $GITHUB_WORKSPACE/mbedtls/lib/
+          $LIPO -create /tmp/libmbedtls_armv7.a /tmp/libmbedtls_armv7s.a -output $GITHUB_WORKSPACE/mbedtls/lib/libmbedtls.a
+          $LIPO -create /tmp/libmbedx509_armv7.a /tmp/libmbedx509_armv7s.a -output $GITHUB_WORKSPACE/mbedtls/lib/libmbedx509.a
+          $LIPO -create /tmp/libmbedcrypto_armv7.a /tmp/libmbedcrypto_armv7s.a -output $GITHUB_WORKSPACE/mbedtls/lib/libmbedcrypto.a
           cp -R include/mbedtls $GITHUB_WORKSPACE/mbedtls/include/
+          
+          # 验证
+          file $GITHUB_WORKSPACE/mbedtls/lib/libmbedtls.a
           echo "mbedTLS compiled and installed"
       - name: Build
         env:
