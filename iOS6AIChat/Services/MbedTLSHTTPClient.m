@@ -14,6 +14,7 @@
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/x509_crt.h>
 #include <mbedtls/error.h>
+#include <sys/socket.h>   // v261103-26: shutdown() for cancel
 
 // iOS 系统证书（用于验证服务器证书）
 #include <Security/Security.h>
@@ -21,6 +22,7 @@
 @interface MbedTLSHTTPClient ()
 @property (nonatomic, retain) NSThread *networkThread;
 @property (nonatomic, assign) volatile BOOL cancelled;
+@property (nonatomic, assign) volatile int socketFd;  // v261103-26: cancel 时 shutdown
 @property (nonatomic, retain) NSURL *requestURL;
 @property (nonatomic, copy) NSString *requestMethod;
 @property (nonatomic, retain) NSDictionary *requestHeaders;
@@ -49,6 +51,12 @@
 - (void)cancel
 {
     self.cancelled = YES;
+    // v261103-26: shutdown socket 让 mbedtls_ssl_read 立即返回
+    // 否则 mbedtls_ssl_read 会阻塞等待数据，用户点停止后不立即生效
+    int fd = self.socketFd;
+    if (fd > 0) {
+        shutdown(fd, SHUT_RDWR);
+    }
 }
 
 - (void)_runRequest
@@ -199,6 +207,8 @@
         [self _failWithError:[NSString stringWithFormat:@"net_connect failed: %d (host=%@ port=%ld)", ret, host, (long)port]];
         goto cleanup;
     }
+    // v261103-26: 保存 socket fd 用于 cancel 时 shutdown
+    self.socketFd = server_fd.fd;
 
     // 5. 设置 bio
     mbedtls_ssl_set_bio(&ssl, &server_fd, mbedtls_net_send, mbedtls_net_recv, mbedtls_net_recv_timeout);
@@ -321,6 +331,7 @@
     }
 
 cleanup:
+    self.socketFd = 0;  // v261103-26: 重置，避免 cancel shutdown 已关闭的 fd
     mbedtls_ssl_free(&ssl);
     mbedtls_ssl_config_free(&conf);
     mbedtls_entropy_free(&entropy);
