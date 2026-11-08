@@ -102,18 +102,60 @@
         return;
     }
 
-    // 解析 host + port + path
-    NSString *host = [url host];
-    if (!host || host.length == 0) {
+    // v261103-27: iOS 6 的 [url host] 可能返回 nil（已知 bug）
+    // 手动从 URL 字符串解析 host/port/path
+    NSString *urlStr = [url absoluteString];
+    if (!urlStr || urlStr.length == 0) {
+        [self _failWithError:@"no URL string"];
+        return;
+    }
+
+    // 找 "://" 分隔 scheme 和 host
+    NSRange schemeEnd = [urlStr rangeOfString:@"://"];
+    if (schemeEnd.location == NSNotFound) {
+        [self _failWithError:@"no scheme:// in URL"];
+        return;
+    }
+    NSUInteger hostStart = schemeEnd.location + schemeEnd.length;
+    NSUInteger urlLen = [urlStr length];
+
+    // host 结束于: 第一个 "/" 或 ":" (port) 或字符串末尾
+    NSUInteger hostEnd = urlLen;
+    for (NSUInteger i = hostStart; i < urlLen; i++) {
+        unichar c = [urlStr characterAtIndex:i];
+        if (c == '/' || c == ':') {
+            hostEnd = i;
+            break;
+        }
+    }
+    if (hostEnd <= hostStart) {
         [self _failWithError:@"no host in URL"];
         return;
     }
-    NSInteger port = [url port] ? [[url port] integerValue] : 443;
-    NSString *path = [url path];
-    if (!path || path.length == 0) path = @"/";
-    NSString *query = [url query];
-    if (query && query.length > 0) {
-        path = [NSString stringWithFormat:@"%@?%@", path, query];
+    NSString *host = [urlStr substringWithRange:NSMakeRange(hostStart, hostEnd - hostStart)];
+
+    // 解析 port（如果有）
+    NSInteger port = 443;
+    if (hostEnd < urlLen && [urlStr characterAtIndex:hostEnd] == ':') {
+        NSUInteger portStart = hostEnd + 1;
+        NSUInteger portEnd = portStart;
+        for (NSUInteger i = portStart; i < urlLen; i++) {
+            unichar c = [urlStr characterAtIndex:i];
+            if (c == '/' || c == '?') break;
+            portEnd = i + 1;
+        }
+        if (portEnd > portStart) {
+            NSString *portStr = [urlStr substringWithRange:NSMakeRange(portStart, portEnd - portStart)];
+            port = [portStr integerValue];
+        }
+        hostEnd = portEnd;
+    }
+
+    // path + query
+    NSString *path = @"/";
+    if (hostEnd < urlLen) {
+        path = [urlStr substringFromIndex:hostEnd];
+        if (path.length == 0) path = @"/";
     }
 
     // 构造 HTTP 请求
