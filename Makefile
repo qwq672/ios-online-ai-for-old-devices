@@ -98,8 +98,8 @@ iOS6AIChat_CFLAGS  = -fno-objc-arc -fobjc-legacy-dispatch -fno-objc-exceptions \
 	-Wno-error=unused-variable -Wno-unused-variable \
 	-std=gnu99 \
 	-IiOS6AIChat -IiOS6AIChat/Models -IiOS6AIChat/Services \
-	-IiOS6AIChat/Views -IiOS6AIChat/Controllers -IiOS6AIChat/Resources
-iOS6AIChat_LDFLAGS = -framework UIKit -framework Foundation -framework CoreGraphics -framework CFNetwork
+	-IiOS6AIChat/Views -IiOS6AIChat/Controllers -IiOS6AIChat/Resources -Imbedtls/include
+iOS6AIChat_LDFLAGS = -framework UIKit -framework Foundation -framework CoreGraphics -framework CFNetwork -framework Security -Lmbedtls/lib -lmbedtls -lmbedx509 -lmbedcrypto -lmbedtls -lmbedx509 -lmbedcrypto
 
 # === Packaging ===========================================================
 # Theos package scheme — modern Theos master supports 'rootless' for

@@ -75,6 +75,31 @@ jobs:
           else
             echo "WARNING: iOS 7.1 SDK not found — will fallback to iOS 6.0 SDK"
           fi
+      - name: Build mbedTLS (自带 TLS 栈)
+        run: |
+          # v261103-25: 下载 + 交叉编译 mbedTLS 静态库
+          # mbedTLS 自带 TLS 1.2 栈，绕过 iOS 6 SecureTransport 的所有 bug
+          git clone --depth=1 --branch v3.6.2 https://github.com/Mbed-TLS/mbedtls.git /tmp/mbedtls
+          cd /tmp/mbedtls
+          
+          # Theos 交叉编译器
+          CC="$THEOS/toolchain/linux/iphone/bin/clang"
+          SYSROOT="$THEOS/sdks/iPhoneOS7.1.sdk"
+          
+          # 编译静态库（armv7 + armv7s，fat binary）
+          make CC="$CC" \
+               CFLAGS="-arch armv7 -arch armv7s -isysroot $SYSROOT -miphoneos-version-min=6.0 -fno-objc-arc -fno-stack-protector" \
+               LDFLAGS="" \
+               lib -j$(nproc) 2>&1 | tail -20
+          
+          # 检查静态库
+          ls -la library/libmbedtls.a library/libmbedx509.a library/libmbedcrypto.a
+          
+          # 安装到项目目录
+          mkdir -p $GITHUB_WORKSPACE/mbedtls/lib $GITHUB_WORKSPACE/mbedtls/include
+          cp library/libmbedtls.a library/libmbedx509.a library/libmbedcrypto.a $GITHUB_WORKSPACE/mbedtls/lib/
+          cp -R include/mbedtls $GITHUB_WORKSPACE/mbedtls/include/
+          echo "mbedTLS compiled and installed"
       - name: Build
         env:
           THEOS_VERBOSE: "1"
