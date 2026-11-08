@@ -75,59 +75,25 @@ jobs:
           else
             echo "WARNING: iOS 7.1 SDK not found — will fallback to iOS 6.0 SDK"
           fi
-      - name: Build mbedTLS (自带 TLS 栈)
+      - name: Download mbedTLS (自带 TLS 栈源码)
         run: |
-          # v261103-25: 下载 + 交叉编译 mbedTLS 静态库
+          # v261103-25: 下载 mbedTLS 源码（不编译静态库，直接加入项目编译）
           # mbedTLS 自带 TLS 1.2 栈，绕过 iOS 6 SecureTransport 的所有 bug
           git clone --depth=1 --branch v2.28.9 https://github.com/Mbed-TLS/mbedtls.git /tmp/mbedtls
-          cd /tmp/mbedtls
           
-          # Theos 交叉编译器
-          CC="$THEOS/toolchain/linux/iphone/bin/clang"
-          SYSROOT="$THEOS/sdks/iPhoneOS7.1.sdk"
-          # 找交叉编译器的 ar（系统 ar 生成 ELF，交叉 ar 生成 Mach-O）
-          AR=""
-          for cand in "$THEOS/toolchain/linux/iphone/bin/arm-apple-darwin11-ar" \
-                      "$THEOS/toolchain/linux/iphone/bin/llvm-ar" \
-                      "$THEOS/toolchain/linux/iphone/bin/ar"; do
-            if [ -x "$cand" ]; then AR="$cand"; break; fi
-          done
-          if [ -z "$AR" ]; then echo "WARNING: no cross AR found, using system ar"; AR=ar; fi
-          echo "Using CC=$CC AR=$AR"
+          # 只复制需要的文件（library/*.c + include/）
+          mkdir -p $GITHUB_WORKSPACE/mbedtls/src $GITHUB_WORKSPACE/mbedtls/include
+          cp /tmp/mbedtls/include/mbedtls/*.h $GITHUB_WORKSPACE/mbedtls/include/
+          cp -R /tmp/mbedtls/include/mbedtls $GITHUB_WORKSPACE/mbedtls/include/ 2>/dev/null || true
+          cp /tmp/mbedtls/library/*.c $GITHUB_WORKSPACE/mbedtls/src/
           
-          # 分别编译 armv7 和 armv7s（fat object 有 ar 兼容问题）
-          COMMON_CFLAGS="-isysroot $SYSROOT -miphoneos-version-min=6.0 -fno-objc-arc -fno-stack-protector"
-          
-          # armv7
-          make clean 2>/dev/null || true
-          make CC="$CC" AR="$AR" CFLAGS="-arch armv7 $COMMON_CFLAGS" LDFLAGS="" lib -j$(nproc) 2>&1 | tail -5
-          cp library/libmbedtls.a /tmp/libmbedtls_armv7.a
-          cp library/libmbedx509.a /tmp/libmbedx509_armv7.a
-          cp library/libmbedcrypto.a /tmp/libmbedcrypto_armv7.a
-          
-          # armv7s
-          make clean 2>/dev/null || true
-          make CC="$CC" AR="$AR" CFLAGS="-arch armv7s $COMMON_CFLAGS" LDFLAGS="" lib -j$(nproc) 2>&1 | tail -5
-          cp library/libmbedtls.a /tmp/libmbedtls_armv7s.a
-          cp library/libmbedx509.a /tmp/libmbedx509_armv7s.a
-          cp library/libmbedcrypto.a /tmp/libmbedcrypto_armv7s.a
-          
-          # 用 lipo 合并 fat 静态库
-          LIPO=""
-          for cand in "$THEOS/toolchain/linux/iphone/bin/lipo" "$THEOS/toolchain/linux/iphone/bin/arm-apple-darwin11-lipo" "lipo"; do
-            if [ -x "$cand" ]; then LIPO="$cand"; break; fi
-          done
-          echo "Using LIPO=$LIPO"
-          
-          mkdir -p $GITHUB_WORKSPACE/mbedtls/lib $GITHUB_WORKSPACE/mbedtls/include
-          $LIPO -create /tmp/libmbedtls_armv7.a /tmp/libmbedtls_armv7s.a -output $GITHUB_WORKSPACE/mbedtls/lib/libmbedtls.a
-          $LIPO -create /tmp/libmbedx509_armv7.a /tmp/libmbedx509_armv7s.a -output $GITHUB_WORKSPACE/mbedtls/lib/libmbedx509.a
-          $LIPO -create /tmp/libmbedcrypto_armv7.a /tmp/libmbedcrypto_armv7s.a -output $GITHUB_WORKSPACE/mbedtls/lib/libmbedcrypto.a
-          cp -R include/mbedtls $GITHUB_WORKSPACE/mbedtls/include/
-          
-          # 验证
-          file $GITHUB_WORKSPACE/mbedtls/lib/libmbedtls.a
-          echo "mbedTLS compiled and installed"
+          # 列出复制的文件
+          echo "=== mbedTLS source files ==="
+          ls $GITHUB_WORKSPACE/mbedtls/src/*.c | wc -l
+          echo "个 .c 文件"
+          ls $GITHUB_WORKSPACE/mbedtls/include/*.h | wc -l
+          echo "个 .h 文件"
+          echo "mbedTLS source downloaded"
       - name: Build
         env:
           THEOS_VERBOSE: "1"

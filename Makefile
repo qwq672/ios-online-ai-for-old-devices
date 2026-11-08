@@ -83,6 +83,8 @@ iOS6AIChat_PREFIX_HEADER = iOS6AIChat/iOS6AIChat-Prefix.pch
 
 # === Frameworks ==========================================================
 iOS6AIChat_FRAMEWORKS = UIKit Foundation CoreGraphics CFNetwork
+# v261103-25: mbedTLS 源文件直接编译（不用静态库）
+iOS6AIChat_C_FILES = $(shell ls mbedtls/src/*.c 2>/dev/null)
 
 # === Compiler flags ======================================================
 # This codebase is MRC (manual reference counting), NOT ARC.
@@ -99,7 +101,7 @@ iOS6AIChat_CFLAGS  = -fno-objc-arc -fobjc-legacy-dispatch -fno-objc-exceptions \
 	-std=gnu99 \
 	-IiOS6AIChat -IiOS6AIChat/Models -IiOS6AIChat/Services \
 	-IiOS6AIChat/Views -IiOS6AIChat/Controllers -IiOS6AIChat/Resources -Imbedtls/include
-iOS6AIChat_LDFLAGS = -framework UIKit -framework Foundation -framework CoreGraphics -framework CFNetwork -framework Security -Lmbedtls/lib -lmbedtls -lmbedx509 -lmbedcrypto -lmbedtls -lmbedx509 -lmbedcrypto
+iOS6AIChat_LDFLAGS = -framework UIKit -framework Foundation -framework CoreGraphics -framework CFNetwork -framework Security
 
 # === Packaging ===========================================================
 # Theos package scheme — modern Theos master supports 'rootless' for
