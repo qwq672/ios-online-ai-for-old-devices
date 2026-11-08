@@ -338,21 +338,29 @@
             NSRange headerEnd = [[headerBuffer subdataWithRange:NSMakeRange(0, [headerBuffer length])]
                                   rangeOfData:[NSData dataWithBytes:"\r\n\r\n" length:4]
                                   options:0 range:NSMakeRange(0, [headerBuffer length])];
-            // 简单查找 \r\n\r\n
+            // v261103-30: 兼容 \r\n\r\n 和 \n\n 两种分隔符
+            // 某些服务器/代理用 \n\n（不带 \r），只找 \r\n\r\n 会找不到
             const char *hdr = [headerBuffer bytes];
             NSUInteger hdrLen = [headerBuffer length];
             NSUInteger bodyStart = 0;
-            for (NSUInteger i = 0; i + 3 < hdrLen; i++) {
-                if (hdr[i] == '\r' && hdr[i+1] == '\n' && hdr[i+2] == '\r' && hdr[i+3] == '\n') {
+            NSUInteger sepLen = 0;  // v261103-30: 分隔符长度（4 或 2）
+            for (NSUInteger i = 0; i + 1 < hdrLen; i++) {
+                if (i + 3 < hdrLen && hdr[i] == '\r' && hdr[i+1] == '\n' && hdr[i+2] == '\r' && hdr[i+3] == '\n') {
                     bodyStart = i + 4;
+                    sepLen = 4;
+                    headersParsed = YES;
+                    break;
+                }
+                if (hdr[i] == '\n' && hdr[i+1] == '\n') {
+                    bodyStart = i + 2;
+                    sepLen = 2;
                     headersParsed = YES;
                     break;
                 }
             }
             if (headersParsed) {
-                // 解析状态码 "HTTP/1.1 200 OK"
                 NSString *headerStr = [[[NSString alloc] initWithBytes:[headerBuffer bytes]
-                                                                 length:bodyStart - 4
+                                                                 length:bodyStart - sepLen
                                                                encoding:NSUTF8StringEncoding] autorelease];
                 NSInteger statusCode = 0;
                 NSScanner *scanner = [NSScanner scannerWithString:headerStr];
