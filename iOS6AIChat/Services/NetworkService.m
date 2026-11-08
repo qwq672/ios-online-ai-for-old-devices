@@ -432,27 +432,23 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
         anthropic ? @"anthropic" : @"openai",
         (unsigned long)[messages count], (unsigned long)[bodyData length]]];
 
-    // v261103-19: iOS 7+ 用 NSURLSession 突破 NSURLConnection 的 ~130KB body 限制。
-    // NSURLConnection 有已知 body 大小 bug (>~130KB 时 TLS 失败 -1200)，
-    // Stack Overflow 有 64KB 报告。NSURLSession 是 iOS 7 全新实现，
-    // uploadTask 能处理 GB 级 body，无此限制。
-    // iPhone 4S (iOS 7+) 走 NSURLSession 路径；iPhone 3GS (iOS 6) fallback。
-    Class sessionClass = NSClassFromString(@"NSURLSession");
-    if (sessionClass) {
-        // iOS 7+ — 用 NSURLSession 突破 body 限制
-        [self _launchStreamWithNSURLSession:req bodyBytes:[bodyData length]];
-        return YES;
-    }
-
-    // v261103-20: iOS 6 — 用 CFNetwork (CFReadStreamCreateForStreamedHTTPRequest)
-    // 突破 NSURLConnection 的 ~130KB body 限制。这是 Apple 官方推荐"body 太大"
-    // 时用的 API，流式发送不预分配缓冲，绕过 NSURLConnection 的 TLS 缓冲 bug。
-    // 无代价：图片原样发 + 历史完整保留。
+    // v261103-23: CFNetwork 作为首选（全版本可用 + 无 body 限制）。
+    // 之前 iOS 7+ 优先 NSURLSession，但日志显示 NSURLSession 创建失败
+    // (返回 nil) → fallback 到 NSURLConnection（不是 CFNetwork）→ -1200。
+    // 现在 CFNetwork 放在最前面，全版本都走 CFNetwork，无 body 限制。
+    // NSURLSession 作为 CFNetwork 失败时的备选（iOS 7+）。
     if ([self _launchStreamWithCFNetwork:req bodyData:bodyData]) {
         return YES;
     }
 
-    // CFNetwork 失败 → fallback 到 NSURLConnection (最后兜底)
+    // CFNetwork 失败 → iOS 7+ 试 NSURLSession（现代 TLS，可能握手成功）
+    Class sessionClass = NSClassFromString(@"NSURLSession");
+    if (sessionClass) {
+        [self _launchStreamWithNSURLSession:req bodyBytes:[bodyData length]];
+        return YES;
+    }
+
+    // 都失败 → NSURLConnection 兜底
     self.connection = [[[NSURLConnection alloc] initWithRequest:req delegate:self
                                              startImmediately:NO] autorelease];
     if (self.connection) {
