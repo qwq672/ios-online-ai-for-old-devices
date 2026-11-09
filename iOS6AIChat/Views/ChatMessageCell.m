@@ -864,8 +864,10 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         CGFloat boundsWidth = self.bounds.size.width;
         if (boundsWidth < 100) boundsWidth = [UIScreen mainScreen].bounds.size.width;
         CGFloat textWidth = [ChatMessageCell aiTextWidthForOuterWidth:boundsWidth];
-        self.renderedAttr = [MarkdownParser parse:cleanText
-                                           dark:[iOS6Theme isDarkMode]];
+        UIFont *baseFont = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
+        self.renderedAttr = [MarkdownParser attributedStringFromMarkdown:cleanText
+                                                               baseFont:baseFont
+                                                                  width:textWidth];
     } else {
         self.renderedAttr = nil;
     }
