@@ -1660,6 +1660,19 @@ didFailForConversationID:(NSString *)conversationID
         Message *m = [_conversation.messages objectAtIndex:lastIdx.row];
         if (cell && m) {
             [cell applyMessage:m];
+            // v261103-36b: 预同步 cell.bounds 高度，消除 16ms 闪烁。
+            // applyMessage 后 cell 仍用旧 bounds 布局（setNeedsLayout 是异步），
+            // 下一帧才用新高度 layoutSubviews——这 16ms 内新文字可能溢出 cell.bounds
+            // 底部（被下一个 cell 盖住），下一帧才正常。手动算新高度 + 立即设 bounds
+            // + layoutIfNeeded，让 cell 当帧就按新高度布局好，无闪烁。
+            CGFloat newH = [ChatMessageCell heightForMessage:m
+                                                       width:_tableView.bounds.size.width];
+            CGRect cb = cell.bounds;
+            if (cb.size.height != newH && newH > 0) {
+                cb.size.height = newH;
+                cell.bounds = cb;
+            }
+            [cell layoutIfNeeded];
         } else {
             // cell 不可见（滚出屏幕）或已被复用 — 退化到 reloadData
             [_tableView reloadData];
