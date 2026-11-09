@@ -38,37 +38,26 @@ static NSMutableSet *gStreamingMessageIDs = nil;
 
 @interface ChatMessageCell () {
     BOOL _thinkingCollapsed;
-    NSMutableArray *_imageViews;       // weak refs to image subviews (autoreleased on assign to subview, but we keep for layout)
-    NSString *_currentMessageKey;      // for cache key generation
-    // v261025-8: generated-image (生图) result view — a big AspectFit
-    // image inside the bubble, unlike the 80×80 vision thumbnails in
-    // _imageViews. Retained like the other buttons/views (MRC).
+    NSMutableArray *_imageViews;
+    NSString *_currentMessageKey;
     UIImageView *_generatedImageView;
-    // v261025-5: retained UIColor ivar for the thinking-block border.
-    // CALayer.borderColor holds a CGColorRef. The CGColor is owned by
-    // whatever UIColor produced it; if that UIColor is autoreleased (which
-    // is what [iOS6Theme thinkingBorderColor] returns), then once the
-    // autorelease pool drains the layer's borderColor becomes a dangling
-    // pointer. When the layer is later released (cell teardown) QuartzCore
-    // tries to CGColorRelease the dangling ref → SIGSEGV inside
-    // _CFAutoreleasePoolPop → -[ChatMessageCell dealloc +758] → crash
-    // (visible in user-reported v261025-4 logs).
     UIColor *_thinkingBorderUIColor;
-    // Same hazard for _thinkingBlock.background + _thinkingSep.
     UIColor *_thinkingBgUIColor;
     UIColor *_thinkingSepUIColor;
-    // v261025-32: left accent line for AI messages (Option ②: user-only bubbles).
     UIView *_accentLine;
     UIColor *_accentLineColor;
+    // v261103-33: 穿插思考卡片 — 从 content 解析出的 section 数组
+    // 每个 section = NSMutableDictionary: {type, title, content, toggle, label, sep, collapsed, height}
+    // type: "thinking" / "text" / "tool"
+    NSMutableArray *_inlineSections;
 }
 @property (nonatomic, retain) UIView *thinkingBlock;
 @property (nonatomic, retain) UIButton *thinkingToggle;
 @property (nonatomic, retain) UILabel *thinkingLabel;
 @property (nonatomic, retain) UIView *thinkingSep;
-// v261103-22: 多段思考卡片 — 每段思考独立 toggle/label/sep，垂直堆叠在 _thinkingBlock 内
-// 每个元素 = NSMutableDictionary: {toggle, label, sep, collapsed, text}
 @property (nonatomic, retain) NSMutableArray *thinkingSegments;
-// v261025-8: 生图 result image view.
+@property (nonatomic, retain) NSMutableArray *inlineSections;  // v261103-33
+@property (nonatomic, retain) UIView *sectionsContainer;  // v261103-33: 容器 view
 @property (nonatomic, retain) UIImageView *generatedImageView;
 @end
 
@@ -77,6 +66,8 @@ static NSMutableSet *gStreamingMessageIDs = nil;
 @synthesize textView=_textView, bubble=_bubble, message=_message, renderedAttr=_renderedAttr;
 @synthesize thinkingBlock=_thinkingBlock, thinkingToggle=_thinkingToggle,
             thinkingLabel=_thinkingLabel, thinkingSep=_thinkingSep,
+            thinkingSegments=_thinkingSegments,
+            inlineSections=_inlineSections, sectionsContainer=_sectionsContainer,
             generatedImageView=_generatedImageView,
             delegate=_delegate,
             regenerateButton=_regenerateButton, clipboardButton=_clipboardButton,
@@ -450,6 +441,12 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         _textView.userInteractionEnabled = YES;
         [_bubble addSubview:_textView];
 
+        // v261103-33: sectionsContainer — 穿插思考卡片的容器
+        _sectionsContainer = [[UIView alloc] initWithFrame:CGRectZero];
+        _sectionsContainer.backgroundColor = [UIColor clearColor];
+        _sectionsContainer.hidden = YES;  // 默认隐藏，有思考块时显示
+        [_bubble addSubview:_sectionsContainer];
+
         // Thinking block — collapsible reasoning display.
         _thinkingBlock = [[UIView alloc] initWithFrame:CGRectZero];
         // v261025-5: retain the theme colors in ivars so the layer's
@@ -734,6 +731,183 @@ static NSMutableSet *gStreamingMessageIDs = nil;
 }
 
 // v261103-22: 多段思考卡片的 toggle — sender.tag = segment index
+// v261103-33: 解析 \x00THINK\x00 标记，创建穿插可折叠卡片
+// 标记格式: \x00THINK\x00标题\x01内容\x00END\x00
+// 解析后 _textView 只显示非标记文字，思考卡片在 sectionsContainer 里
+- (void)_parseInlineThinkingSections:(NSString *)content message:(Message *)message
+{
+    // 清理旧 sections
+    if (_inlineSections) {
+        for (NSDictionary *sec in _inlineSections) {
+            UIView *v = [sec objectForKey:@"view"];
+            if (v) [v removeFromSuperview];
+        }
+        [_inlineSections removeAllObjects];
+    } else {
+        self.inlineSections = [NSMutableArray array];
+    }
+
+    // 解析 content，找 \x00THINK\x00...\x00END\x00 标记
+    NSMutableString *cleanText = [NSMutableString string];  // 去掉标记后的文字
+    NSInteger thinkIdx = 0;
+
+    NSUInteger searchStart = 0;
+    NSString *thinkTag = @"\x00THINK\x00";
+    NSString *endTag = @"\x00END\x00";
+    NSString *sep = @"\x01";
+
+    while (searchStart < [content length]) {
+        NSRange thinkRange = [content rangeOfString:thinkTag
+                                            options:0
+                                              range:NSMakeRange(searchStart, [content length] - searchStart)];
+        if (thinkRange.location == NSNotFound) {
+            // 剩余都是普通文字
+            NSString *remaining = [content substringFromIndex:searchStart];
+            [cleanText appendString:remaining];
+            break;
+        }
+
+        // thinkRange.location 之前的文字是普通段
+        if (thinkRange.location > searchStart) {
+            NSString *textBefore = [content substringWithRange:NSMakeRange(searchStart, thinkRange.location - searchStart)];
+            [cleanText appendString:textBefore];
+        }
+
+        // 找 \x00END\x00
+        NSUInteger endSearchStart = thinkRange.location + thinkRange.length;
+        NSRange endRange = [content rangeOfString:endTag
+                                          options:0
+                                            range:NSMakeRange(endSearchStart, [content length] - endSearchStart)];
+        if (endRange.location == NSNotFound) break;
+
+        // 提取 title + content（用 \x01 分隔）
+        NSString *thinkContent = [content substringWithRange:NSMakeRange(endSearchStart, endRange.location - endSearchStart)];
+        NSRange sepRange = [thinkContent rangeOfString:sep];
+        NSString *title = sepRange.location != NSNotFound ? [thinkContent substringToIndex:sepRange.location] : @"思考";
+        NSString *thinkText = sepRange.location != NSNotFound ? [thinkContent substringFromIndex:sepRange.location + sepRange.length] : thinkContent;
+
+        // 创建可折叠卡片 view
+        UIView *cardView = [[[UIView alloc] initWithFrame:CGRectZero] autorelease];
+        cardView.backgroundColor = [iOS6Theme thinkingBackgroundColor];
+        cardView.layer.cornerRadius = 8.0f;
+        cardView.layer.borderWidth = 1.0f;
+        // 保留 borderColor 的 UIColor
+        UIColor *borderColor = [[iOS6Theme thinkingBorderColor] retain];
+        cardView.layer.borderColor = [borderColor CGColor];
+        cardView.clipsToBounds = YES;
+
+        // toggle 按钮
+        UIButton *toggle = [UIButton buttonWithType:UIButtonTypeCustom];
+        toggle.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+        toggle.contentEdgeInsets = UIEdgeInsetsMake(0, 6, 0, 6);
+        toggle.titleLabel.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
+        [toggle setTitleColor:[iOS6Theme tintColor] forState:UIControlStateNormal];
+        toggle.tag = thinkIdx;
+        [toggle addTarget:self action:@selector(_toggleInlineThinking:)
+            forControlEvents:UIControlEventTouchUpInside];
+
+        // 检查展开状态
+        NSString *secKey = [NSString stringWithFormat:@"%@_inline_%ld", message.messageID, (long)thinkIdx];
+        BOOL collapsed = ![ChatMessageCell _isThinkingExpanded:secKey];
+
+        NSString *toggleTitle;
+        if (collapsed) {
+            toggleTitle = [NSString stringWithFormat:@"💭 %@ ∧", title];
+        } else {
+            toggleTitle = [NSString stringWithFormat:@"💭 %@ ∨", title];
+        }
+        [toggle setTitle:toggleTitle forState:UIControlStateNormal];
+        [cardView addSubview:toggle];
+
+        // 内容 label
+        UILabel *contentLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+        contentLabel.numberOfLines = 0;
+        contentLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
+        contentLabel.textColor = [iOS6Theme secondaryTextColor];
+        contentLabel.backgroundColor = [UIColor clearColor];
+        contentLabel.text = thinkText;
+        contentLabel.hidden = collapsed;
+        [cardView addSubview:contentLabel];
+        [contentLabel release];
+
+        // 分隔线
+        UIView *sep2 = [[UIView alloc] initWithFrame:CGRectZero];
+        sep2.backgroundColor = [iOS6Theme hairlineColor];
+        sep2.hidden = collapsed;
+        [cardView addSubview:sep2];
+        [sep2 release];
+
+        [_sectionsContainer addSubview:cardView];
+
+        // 记录 section
+        NSDictionary *sec = [NSDictionary dictionaryWithObjectsAndKeys:
+            @"thinking", @"type",
+            title, @"title",
+            thinkText, @"content",
+            cardView, @"view",
+            toggle, @"toggle",
+            contentLabel, @"label",
+            sep2, @"sep",
+            [NSNumber numberWithBool:collapsed], @"collapsed",
+            borderColor, @"borderColor",
+            secKey, @"key",
+            nil];
+        [_inlineSections addObject:sec];
+        thinkIdx++;
+
+        searchStart = endRange.location + endRange.length;
+    }
+
+    // 用 cleanText 替换 _textView 的内容（去掉标记）
+    // 重新渲染 Markdown
+    if ([cleanText length] > 0) {
+        CGFloat boundsWidth = self.bounds.size.width;
+        if (boundsWidth < 100) boundsWidth = [UIScreen mainScreen].bounds.size.width;
+        CGFloat textWidth = [ChatMessageCell aiTextWidthForOuterWidth:boundsWidth];
+        self.renderedAttr = [MarkdownParser parse:cleanText
+                                           dark:[iOS6Theme isDarkMode]];
+    } else {
+        self.renderedAttr = nil;
+    }
+}
+
+// v261103-33: 穿插思考卡片的 toggle
+- (void)_toggleInlineThinking:(UIButton *)sender
+{
+    NSInteger idx = sender.tag;
+    if (!_inlineSections || idx < 0 || idx >= (NSInteger)[_inlineSections count]) return;
+    NSMutableDictionary *sec = [_inlineSections objectAtIndex:idx];
+    BOOL collapsed = [[sec objectForKey:@"collapsed"] boolValue];
+    collapsed = !collapsed;
+    [sec setObject:[NSNumber numberWithBool:collapsed] forKey:@"collapsed"];
+
+    UILabel *label = [sec objectForKey:@"label"];
+    UIView *sep = [sec objectForKey:@"sep"];
+    label.hidden = collapsed;
+    sep.hidden = collapsed;
+
+    NSString *title = [sec objectForKey:@"title"];
+    NSString *newTitle;
+    if (collapsed) {
+        newTitle = [NSString stringWithFormat:@"💭 %@ ∧", title];
+    } else {
+        newTitle = [NSString stringWithFormat:@"💭 %@ ∨", title];
+    }
+    [sender setTitle:newTitle forState:UIControlStateNormal];
+
+    NSString *secKey = [sec objectForKey:@"key"];
+    [self.class _markThinkingExpanded:secKey expanded:!collapsed];
+
+    [self setNeedsLayout];
+    UIView *v = self.superview;
+    while (v && ![v isKindOfClass:[UITableView class]]) v = v.superview;
+    if ([v isKindOfClass:[UITableView class]]) {
+        UITableView *tv = (UITableView *)v;
+        [tv beginUpdates];
+        [tv endUpdates];
+    }
+}
+
 - (void)_toggleThinkingSegment:(UIButton *)sender
 {
     NSInteger idx = sender.tag;
@@ -870,19 +1044,24 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     }
 
     // === Deep thinking block ===
-    // v261103-14: FIX new/old coexistence — the collapsible card was only
-    // showing for the FIRST thinking segment (from _thinkingAccumulated
-    // stored on the message). Subsequent thinking segments (from :::thinking
-    // blocks inserted into _accumulated during tool-call relaunches) were
-    // rendered as inline text but NOT as collapsible cards.
-    //
-    // Fix: show the collapsible card ONLY if the message has a non-empty
-    // `thinking` property AND there are no :::thinking blocks already in
-    // the content (meaning the thinking hasn't been segmented yet). If
-    // :::thinking blocks exist in the content, they're already rendered
-    // as inline gray boxes by MarkdownParser — don't double-show.
-    BOOL hasInlineThinking = [displayedContent rangeOfString:@":::thinking"].location != NSNotFound;
-    if (displayedThinking.length > 0 && !message.isUser && !hasInlineThinking) {
+    // v261103-33: 穿插思考卡片重构
+    // 如果 content 里有 \x00THINK\x00 标记（MarkdownParser 插入），
+    // 解析标记，在 sectionsContainer 里创建独立的可折叠卡片，
+    // _textView 只渲染非思考的文字段。
+    // 如果没有标记（无 :::thinking），回退到旧的 _thinkingBlock 逻辑。
+    BOOL hasInlineThinking = [displayedContent rangeOfString:@"\x00THINK\x00"].location != NSNotFound;
+
+    if (hasInlineThinking && !message.isUser) {
+        // v261103-33: 解析 \x00THINK\x00 标记，创建穿插卡片
+        [self _parseInlineThinkingSections:displayedContent message:message];
+        _thinkingBlock.hidden = YES;
+        _sectionsContainer.hidden = NO;
+    } else {
+        // 旧逻辑 — 没有 :::thinking 标记
+        _sectionsContainer.hidden = YES;
+
+    BOOL hasInlineThinkingOld = [displayedContent rangeOfString:@":::thinking"].location != NSNotFound;
+    if (displayedThinking.length > 0 && !message.isUser && !hasInlineThinkingOld) {
         _thinkingBlock.hidden = NO;
         BOOL thinkingLive = [ChatMessageCell _isThinkingLive:message];
         // v261103-22: 按 ────────── 分隔符拆分多段思考，每段独立卡片
@@ -970,6 +1149,7 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         }
         _thinkingBlock.hidden = YES;
     }
+    } // end else (旧逻辑)
 
     // === v261025-8: Generated image (生图 result) ===
     // The message carries a local file name; decode off-main and show a
@@ -1203,8 +1383,33 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         bubbleWidth = MAX(textRect.size.width + 38, 60);
         bubbleWidth = MIN(bubbleWidth, maxBubbleWidth);
     }
+    // v261103-33: 如果有穿插思考卡片，加 sections 高度
+    CGFloat inlineSectionsH = 0;
+    if (_inlineSections && [_inlineSections count] > 0) {
+        CGFloat toggleH = 22;
+        for (NSInteger i = 0; i < (NSInteger)[_inlineSections count]; i++) {
+            NSDictionary *sec = [_inlineSections objectAtIndex:i];
+            BOOL collapsed = [[sec objectForKey:@"collapsed"] boolValue];
+            CGFloat cardH = toggleH + 4;
+            if (!collapsed) {
+                NSString *thinkText = [sec objectForKey:@"content"];
+                if (thinkText.length > 0) {
+                    UIFont *thinkFont = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
+                    NSAttributedString *attr = [[[NSAttributedString alloc]
+                        initWithString:thinkText
+                            attributes:@{NSFontAttributeName: thinkFont}] autorelease];
+                    CGSize sz = [attr boundingRectWithSize:CGSizeMake(availTextWidth - 8, CGFLOAT_MAX)
+                                                   options:(NSStringDrawingUsesLineFragmentOrigin |
+                                                            NSStringDrawingUsesFontLeading)
+                                                   context:nil].size;
+                    cardH += ceilf(sz.height) + 6 + 4;
+                }
+            }
+            inlineSectionsH += cardH + 4;
+        }
+    }
     CGFloat bubbleHeight = textRect.size.height + insetV + 2 * bubbleInnerVPad + tailHeight + safety
-                          + thinkingH + imagesH + genImgH;
+                          + thinkingH + imagesH + genImgH + inlineSectionsH;
     if (bubbleHeight < 40) bubbleHeight = 40;
 
     CGFloat bubbleX;
@@ -1234,7 +1439,49 @@ static NSMutableSet *gStreamingMessageIDs = nil;
 
     // Place thinking block at top of bubble.
     CGFloat yOffset = 4;
-    if (!_thinkingBlock.hidden) {
+    if (!_sectionsContainer.hidden) {
+        // v261103-33: 穿插思考卡片 — sectionsContainer 覆盖整个 bubble 内容区
+        // 卡片在 sectionsContainer 内垂直堆叠
+        CGFloat sectionY = 0;
+        CGFloat toggleH = 22;
+        for (NSInteger i = 0; i < (NSInteger)[_inlineSections count]; i++) {
+            NSDictionary *sec = [_inlineSections objectAtIndex:i];
+            UIView *cardView = [sec objectForKey:@"view"];
+            UIButton *toggle = [sec objectForKey:@"toggle"];
+            UILabel *label = [sec objectForKey:@"label"];
+            UIView *sepView = [sec objectForKey:@"sep"];
+            BOOL collapsed = [[sec objectForKey:@"collapsed"] boolValue];
+
+            // toggle 高度
+            toggle.frame = CGRectMake(2, 2, contentW - 4, toggleH);
+            CGFloat cardH = toggleH + 4;  // toggle + padding
+
+            if (!collapsed) {
+                // 内容高度
+                NSString *thinkText = [sec objectForKey:@"content"];
+                if (thinkText.length > 0) {
+                    NSAttributedString *attr = [[[NSAttributedString alloc]
+                        initWithString:thinkText
+                            attributes:@{NSFontAttributeName: label.font}] autorelease];
+                    CGSize sz = [attr boundingRectWithSize:CGSizeMake(contentW - 8, CGFLOAT_MAX)
+                                                   options:(NSStringDrawingUsesLineFragmentOrigin |
+                                                            NSStringDrawingUsesFontLeading)
+                                                   context:nil].size;
+                    CGFloat labelH = ceilf(sz.height) + 6;
+                    label.frame = CGRectMake(6, toggleH + 2, contentW - 8, labelH);
+                    sepView.frame = CGRectMake(6, toggleH, contentW - 12, 1);
+                    cardH += labelH + 4;
+                }
+            }
+
+            cardView.frame = CGRectMake(0, sectionY, contentW, cardH);
+            sectionY += cardH + 4;
+        }
+
+        CGFloat sectionsH = sectionY;
+        _sectionsContainer.frame = CGRectMake(contentX, yOffset, contentW, sectionsH);
+        yOffset += sectionsH + 4;
+    } else if (!_thinkingBlock.hidden) {
         _thinkingBlock.frame = CGRectMake(contentX, yOffset, contentW, thinkingH);
         yOffset += thinkingH + 4;
     }
@@ -1397,7 +1644,56 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // v261103-31: 如果 content 里有 :::thinking（交错布局），不计算 _thinkingBlock 高度
     // （思考已在 content 流里，_thinkingBlock 隐藏）
     NSString *dispContentForCalc = [Message displayedContentForMessage:message];
-    BOOL hasInlineThinkingForCalc = [dispContentForCalc rangeOfString:@":::thinking"].location != NSNotFound;
+    // v261103-33: 检查 \x00THINK\x00 标记（穿插思考卡片）
+    BOOL hasInlineThinkMarker = [dispContentForCalc rangeOfString:@"\x00THINK\x00"].location != NSNotFound;
+    BOOL hasInlineThinkingForCalc = [dispContentForCalc rangeOfString:@":::thinking"].location != NSNotFound || hasInlineThinkMarker;
+
+    // v261103-33: 如果有穿插思考标记，计算思考卡片高度
+    CGFloat inlineThinkH = 0;
+    if (hasInlineThinkMarker && !message.isUser) {
+        // 解析 \x00THINK\x00...\x00END\x00 标记，计算每个卡片高度
+        NSString *thinkTag = @"\x00THINK\x00";
+        NSString *endTag = @"\x00END\x00";
+        NSString *thinkSep = @"\x01";
+        NSUInteger searchStart = 0;
+        CGFloat toggleH = 22;
+        NSInteger thinkIdx = 0;
+        while (searchStart < [dispContentForCalc length]) {
+            NSRange thinkRange = [dispContentForCalc rangeOfString:thinkTag
+                                                           options:0
+                                                             range:NSMakeRange(searchStart, [dispContentForCalc length] - searchStart)];
+            if (thinkRange.location == NSNotFound) break;
+            NSUInteger endSearchStart = thinkRange.location + thinkRange.length;
+            NSRange endRange = [dispContentForCalc rangeOfString:endTag
+                                                          options:0
+                                                            range:NSMakeRange(endSearchStart, [dispContentForCalc length] - endSearchStart)];
+            if (endRange.location == NSNotFound) break;
+            NSString *thinkContent = [dispContentForCalc substringWithRange:NSMakeRange(endSearchStart, endRange.location - endSearchStart)];
+            NSRange sepRange = [thinkContent rangeOfString:thinkSep];
+            NSString *thinkText = sepRange.location != NSNotFound ? [thinkContent substringFromIndex:sepRange.location + sepRange.length] : thinkContent;
+
+            // 检查展开状态
+            NSString *secKey = [NSString stringWithFormat:@"%@_inline_%ld", message.messageID, (long)thinkIdx];
+            BOOL collapsed = ![self _isThinkingExpanded:secKey];
+
+            CGFloat cardH = toggleH + 4;
+            if (!collapsed && thinkText.length > 0) {
+                UIFont *thinkFont = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
+                NSAttributedString *attr = [[[NSAttributedString alloc]
+                    initWithString:thinkText
+                        attributes:@{NSFontAttributeName: thinkFont}] autorelease];
+                CGSize sz = [attr boundingRectWithSize:CGSizeMake(availTextWidth - 8, CGFLOAT_MAX)
+                                               options:(NSStringDrawingUsesLineFragmentOrigin |
+                                                        NSStringDrawingUsesFontLeading)
+                                               context:nil].size;
+                cardH += ceilf(sz.height) + 6 + 4;
+            }
+            inlineThinkH += cardH + 4;
+            thinkIdx++;
+            searchStart = endRange.location + endRange.length;
+        }
+    }
+
     CGFloat thinkingH = 0;
     if (dispThinkingForCalc.length > 0 && !message.isUser && !hasInlineThinkingForCalc) {
         // v261103-28: 多段思考卡片高度计算 — 按分隔符拆分，每段独立计算
@@ -1480,7 +1776,7 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     CGFloat vPad = useBubble ? 5 : 4;
     CGFloat safety = useBubble ? 20 : 24;
     CGFloat bubbleHeight = textRect.size.height + insetV + 2 * vPad + tailH + safety
-                          + thinkingH + imagesH;
+                          + thinkingH + imagesH + inlineThinkH;
     CGFloat result = bubbleHeight + 2 * verticalPad + buttonH;
     if (result < 50) result = 50;
 
@@ -1521,6 +1817,9 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     UIView *ts = _thinkingSep;              _thinkingSep = nil;
     // v261103-22: 清理多段思考卡片
     NSMutableArray *tsegs = _thinkingSegments; _thinkingSegments = nil;
+    // v261103-33: 清理穿插思考卡片
+    NSMutableArray *inlSecs = _inlineSections; _inlineSections = nil;
+    UIView *secCont = _sectionsContainer; _sectionsContainer = nil;
     NSMutableArray *ivs = _imageViews;      _imageViews = nil;
     NSString *cmk = _currentMessageKey;     _currentMessageKey = nil;
     UIButton *rb = _regenerateButton;       _regenerateButton = nil;
@@ -1548,6 +1847,8 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     [tl release];
     [ts release];
     [tsegs release];   // v261103-22: 多段思考卡片
+    [inlSecs release]; // v261103-33: 穿插思考卡片
+    [secCont release]; // v261103-33: sectionsContainer
     [ivs release];
     [cmk release];
     [rb release];

@@ -865,27 +865,19 @@ static void AppendAttrString(NSMutableAttributedString *out,
     if ([contentLines count] == 0) return;
 
     if (isThinking) {
-        // v261103-30: 思考卡片穿插渲染 — 标题行 + 内容行，卡片样式
+        // v261103-33: 思考块用特殊标记渲染，ChatMessageCell 会解析这些标记
+        // 创建独立可折叠卡片 view（不再用 attributed string 渲染卡片样式）
+        // 标记格式: \x00THINK_START\x00标题\x00内容\x00THINK_END\x00
+        // ChatMessageCell 检测这些标记，创建独立的 UIButton + UILabel
         NSString *fullText = [contentLines componentsJoinedByString:@"\n"];
         NSInteger charCount = [fullText length];
-        // 标题行: 💭 思考 (XXX 字)
-        NSString *title = [NSString stringWithFormat:@"💭 思考 (%ld 字)", (long)charCount];
-        UIFont *titleFont = [UIFont boldSystemFontOfSize:baseFont.pointSize - 1] ?: baseFont;
-        UIColor *titleColor = [iOS6Theme tintColor];
-        UIColor *cardBG = [iOS6Theme thinkingBackgroundColor];
-        UIColor *cardBorder = [iOS6Theme thinkingBorderColor];
-        UIColor *contentColor = [iOS6Theme secondaryTextColor];
-        UIFont *contentFont = [UIFont systemFontOfSize:baseFont.pointSize - 2] ?: baseFont;
+        NSString *title = [NSString stringWithFormat:@"思考 (%ld 字)", (long)charCount];
 
+        // 用不可见标记包围思考内容，ChatMessageCell 会解析
         AppendAttrString(out, @"\n", baseFont, [iOS6Theme textColor], nil, 0, 0);
-        // 标题行
-        AppendAttrString(out, title, titleFont, titleColor, cardBG, 0, 0);
-        AppendAttrString(out, @"\n", titleFont, titleColor, cardBG, 0, 0);
-        // 内容行（每行带背景色）
-        for (NSString *line in contentLines) {
-            AppendAttrString(out, line.length > 0 ? line : @" ", contentFont, contentColor, cardBG, 0, 0);
-            AppendAttrString(out, @"\n", contentFont, contentColor, cardBG, 0, 0);
-        }
+        // 标记: THINK_START + title + \x01 + content + THINK_END
+        NSString *marker = [NSString stringWithFormat:@"\x00THINK\x00%@\x01%@\x00END\x00", title, fullText];
+        AppendAttrString(out, marker, baseFont, [UIColor clearColor], nil, 0, 0);
         AppendAttrString(out, @"\n", baseFont, [iOS6Theme textColor], nil, 0, 0);
     } else {
         // tool 块 — 保持现有渲染
