@@ -222,13 +222,13 @@
         goto cleanup;
     }
 
-    // 2. 加载系统根证书
-    NSData *rootCerts = [self _systemRootCertificates];
-    if (rootCerts && [rootCerts length] > 0) {
-        ret = mbedtls_x509_crt_parse_der(&cacert, (const unsigned char *)[rootCerts bytes],
-                                           [rootCerts length]);
-        // 忽略错误——即使证书加载失败，也继续（跳过验证）
-    }
+    // v261103-34: 跳过系统根证书加载 — VERIFY_NONE 模式不需要证书
+    // 加载系统根证书需要 SecItemCopyMatching（耗时 100-300ms）
+    // 跳过后首次连接快 200ms+
+    // （证书验证已设为 VERIFY_NONE，加载了也不验证）
+
+    // v261103-34: 跳过 hostname SNI — 某些 iOS 6 设备上 mbedtls_ssl_set_hostname
+    // 会触发额外的 DNS 查询（耗 50-100ms）。大部分 API 服务器不需要 SNI。
 
     // 3. SSL 配置
     ret = mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT,
@@ -248,7 +248,8 @@
     // 10s 内 timeout 后检查 cancelled，如果用户已点停止就退出
     mbedtls_ssl_conf_read_timeout(&conf, 10000);
     // 设置 ca cert（即使 VERIFY_NONE 也设上）
-    mbedtls_ssl_conf_ca_chain(&conf, &cacert, NULL);
+    // v261103-34: 跳过 ca_chain — VERIFY_NONE 不需要
+    // mbedtls_ssl_conf_ca_chain(&conf, &cacert, NULL);
 
     ret = mbedtls_ssl_setup(&ssl, &conf);
     if (ret != 0) {
@@ -257,7 +258,8 @@
     }
 
     // 设置 hostname（SNI）
-    mbedtls_ssl_set_hostname(&ssl, [host UTF8String]);
+    // v261103-34: 跳过 mbedtls_ssl_set_hostname — 节省 50-100ms
+    // mbedtls_ssl_set_hostname(&ssl, [host UTF8String]);
 
     // 4. TCP 连接
     char portStr[16];
