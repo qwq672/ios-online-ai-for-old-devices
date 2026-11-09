@@ -58,6 +58,8 @@ extern NSString *const SettingsKeyImageGenFeatureEnabled;
 // the AI to know about device/time.
 extern NSString *const SettingsKeyEnableTimeTool;
 extern NSString *const SettingsKeyEnableDeviceInfoTool;
+// v261103-32: 自主视觉工具 — AI 自行获取网络图片并解析
+extern NSString *const SettingsKeyEnableVisionTool;
 
 // v261103-1: show suggestion chips + welcome greeting on empty new
 // conversations (default ON). When OFF, the empty placeholder still

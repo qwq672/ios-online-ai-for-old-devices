@@ -72,6 +72,7 @@ NSString *const SettingsKeyImageGenModel = @"imageGenModel";
 NSString *const SettingsKeyImageGenFeatureEnabled = @"imageGenFeatureEnabled";
 NSString *const SettingsKeyEnableTimeTool = @"enableTimeTool";
 NSString *const SettingsKeyEnableDeviceInfoTool = @"enableDeviceInfoTool";
+NSString *const SettingsKeyEnableVisionTool = @"settings.enableVisionTool";
 NSString *const SettingsKeyShowSuggestions = @"showSuggestions";
 
 // v261025-11: model-autonomous capability switches (default OFF).
@@ -485,6 +486,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                                 // v261102-1: time/device-info tool toggles.
                                 SettingsKeyEnableTimeTool,
                                 SettingsKeyEnableDeviceInfoTool,
+                                SettingsKeyEnableVisionTool,
                                 // v261103-1: show-suggestions toggle.
                                 SettingsKeyShowSuggestions,
                                 // v261103-2: transitWebSearch is dead code now
@@ -534,7 +536,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         // NetworkService — tool results are never shown inline now).
         // Now 6 rows: enable / Tavily Key / max results / 获取时间工具 /
         // 获取设备信息工具 / 显示工具调用.
-        case kSectionWebSearch:  return 6;
+        case kSectionWebSearch:  return 7;  // +1 自主视觉
         case kSectionPrompt:     return 1;
         case kSectionAdvanced:   return 1;  // 流式输出 (代理 URL 已移除)
         case kSectionAbout:      return 5;  // author / email / version / github / license
@@ -1030,6 +1032,34 @@ titleForFooterInSection:(NSInteger)section
     // bubble; only the gray :::tool "已..." frame is shown). Row count for
     // kSectionWebSearch is now 6 (was 7). Falls through to row 2 (max
     // results) below — but row 6 is no longer requested by tableView.
+    // v261103-32: 自主视觉工具开关
+    if (row == 6) {
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"自主视觉 (beta)", nil)]];
+        // 副标题说明
+        UILabel *subLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+        subLabel.text = @"AI 可自行获取网络图片并解析";
+        subLabel.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:11]];
+        subLabel.textColor = [iOS6Theme secondaryTextColor];
+        subLabel.backgroundColor = [UIColor clearColor];
+        subLabel.numberOfLines = 0;
+        subLabel.frame = CGRectMake(kPad, kRowH - 18, cell.contentView.bounds.size.width - kPad * 2 - 79, 14);
+        subLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        [cell.contentView addSubview:subLabel];
+        [subLabel release];
+        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+        BOOL on = NO;  // 默认关闭
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:SettingsKeyEnableVisionTool]) {
+            on = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyEnableVisionTool];
+        }
+        [sw setOn:on animated:NO];
+        [sw addTarget:self action:@selector(_enableVisionToolToggle:)
+         forControlEvents:UIControlEventValueChanged];
+        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f = cell.contentView.bounds;
+        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+        [cell.contentView addSubview:sw];
+        return cell;
+    }
     // row 2: max results stepper + value label.
     [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"结果数", nil)]];
     NSInteger max = [[settings objectForKey:SettingsKeyTavilyMaxResults] integerValue];
@@ -1255,6 +1285,11 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 - (IBAction)_enableDeviceInfoToolToggle:(UISwitch *)sw
 {
     [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyEnableDeviceInfoTool];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+- (IBAction)_enableVisionToolToggle:(UISwitch *)sw
+{
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:SettingsKeyEnableVisionTool];
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 // v261025-13: agent-style tool call display toggles.

@@ -767,6 +767,10 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
     if ([[NSUserDefaults standardUserDefaults] objectForKey:@"settings.enableVisionTool"]) {
         visionToolOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"settings.enableVisionTool"];
     }
+    // v261103-32: 用 SettingsKeyEnableVisionTool 替代硬编码字符串
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:SettingsKeyEnableVisionTool]) {
+        visionToolOn = [[NSUserDefaults standardUserDefaults] boolForKey:SettingsKeyEnableVisionTool];
+    }
     if (visionToolOn) {
         [toolsArray addObject:@{
             @"type": @"function",
@@ -1557,9 +1561,13 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
                 marker = @"\n\n:::tool\n获取位置中…\n:::\n\n";
             } else if ([fnName isEqualToString:@"get_image"]) {
                 id u = [argsDict objectForKey:@"url"];
-                NSString *us = [u isKindOfClass:[NSString class]] ? u : @"?";
-                NSString *displayURL = us.length > 60 ? [NSString stringWithFormat:@"%@…", [us substringToIndex:60]] : us;
-                marker = [NSString stringWithFormat:@"\n\n:::tool\n正在获取图片 %@…\n:::\n\n", displayURL];
+                NSString *us = [u isKindOfClass:[NSString class]] ? u : nil;
+                if (us) {
+                    NSString *displayURL = us.length > 60 ? [NSString stringWithFormat:@"%@…", [us substringToIndex:60]] : us;
+                    marker = [NSString stringWithFormat:@"\n\n:::tool\n正在解析图片 %@…\n:::\n\n", displayURL];
+                } else {
+                    marker = @"\n\n:::tool\n正在解析图片…\n:::\n\n";
+                }
             } else if ([fnName isEqualToString:@"generate_image"]) {
                 id p = [argsDict objectForKey:@"prompt"];
                 NSString *ps = [p isKindOfClass:[NSString class]] ? p : @"?";

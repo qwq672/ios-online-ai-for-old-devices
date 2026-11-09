@@ -32,10 +32,10 @@ static NSString * const kHexLightTabbarTop      = @"#FFFFFF";
 static NSString * const kHexLightTabbarBottom   = @"#D0D0D0";
 static NSString * const kHexLightPinstripe      = @"#F7F7F7";  // near-white  // muted   // very pale cool
 static NSString * const kHexLightPinstripeBG    = @"#EFEFEF";  // light grey bg  // muted cool grey   // soft cool grey
-static NSString * const kHexLightBubbleUser     = @"#DCF8C6";  // iMessage green   // pale emerald-tinted
-static NSString * const kHexLightBubbleUserB    = @"#A8D8A0";  // green border   // emerald border
-static NSString * const kHexLightBubbleAI       = @"#FFFFFF";  // white   // near-white
-static NSString * const kHexLightBubbleAIB      = @"#D0D0D0";  // grey border   // soft cool grey border
+static NSString * const kHexLightBubbleUser     = @"#E5E5EA";  // v261103-32: 浅灰（用户要求从绿色改）
+static NSString * const kHexLightBubbleUserB    = @"#C8C8CE";  // 灰色 border
+static NSString * const kHexLightBubbleAI       = @"#FFFFFF";  // white
+static NSString * const kHexLightBubbleAIB      = @"#D0D0D0";  // grey border
 static NSString * const kHexLightText           = @"#000000";  // black  // darker for contrast   // deep navy-charcoal
 static NSString * const kHexLightTextSecondary  = @"#666666";  // grey  // darker secondary   // cool grey
 static NSString * const kHexLightCodeBG         = @"#F5F5F5";  // light grey   // pale cool grey
@@ -54,10 +54,10 @@ static NSString * const kHexDarkTabbarTop        = @"#050505";  // v261103-1: de
 static NSString * const kHexDarkTabbarBottom     = @"#000000";  // pure black
 static NSString * const kHexDarkPinstripe        = @"#151515";  // v261103-1: darker grey (was #1A1A1A)
 static NSString * const kHexDarkPinstripeBG     = @"#070707";  // v261103-1: deeper bg (was #0A0A0A)
-static NSString * const kHexDarkBubbleUser      = @"#151515";  // v261103-1: darker grey (was #1A1A1A)
-static NSString * const kHexDarkBubbleUserB     = @"#252525";  // v261103-1: darker border (was #2A2A2A)
-static NSString * const kHexDarkBubbleAI        = @"#080808";  // v261103-1: near-black (was #0F0F0F)
-static NSString * const kHexDarkBubbleAIB       = @"#252525";  // v261103-1: darker border (was #2A2A2A)
+static NSString * const kHexDarkBubbleUser      = @"#3A3A3C";  // v261103-32: 深灰（能看出区别）
+static NSString * const kHexDarkBubbleUserB     = @"#4A4A4C";  // 深灰 border
+static NSString * const kHexDarkBubbleAI        = @"#1A1A1E";  // 深色 AI
+static NSString * const kHexDarkBubbleAIB       = @"#2A2A2E";  // 深色 border
 static NSString * const kHexDarkText            = @"#D8D8E0";  // v261103-1: dimmer off-white (was #E8E8F0) — reduces eye strain on darker bg
 static NSString * const kHexDarkTextSecondary   = @"#7A8298";  // v261103-1: dimmer blue-grey (was #8B95B0)
 static NSString * const kHexDarkCodeBG          = @"#111111";  // v261103-1: darker code bg (was #1A1A1A)
@@ -76,8 +76,8 @@ static NSString * const kHexLightControlNorm     = @"#E0E0E0";
 static NSString * const kHexLightHairline        = @"#D0D0D0";
 static NSString * const kHexLightButtonBG        = @"#FFFFFF";
 static NSString * const kHexLightButtonSel       = @"#D0D0D0";
-static NSString * const kHexLightThinkingBG      = @"#F7F7F7";
-static NSString * const kHexLightThinkingBorder  = @"#C8C8C8";
+static NSString * const kHexLightThinkingBG      = @"#F0F0F5";  // v261103-32: 淡蓝灰，融入聊天背景
+static NSString * const kHexLightThinkingBorder  = @"#D0D0D8";  // 柔和边框
 
 static NSString * const kHexDarkInputBG          = @"#111111";   // v261103-1: darker fill (was #1A1A1A)
 static NSString * const kHexDarkInputBorder      = @"#252525";   // v261103-1: darker (was #2A2A2A)
@@ -89,8 +89,8 @@ static NSString * const kHexDarkControlNorm      = @"#151515";   // v261103-1: d
 static NSString * const kHexDarkHairline         = @"#252525";   // v261103-1: darker (was #2A2A2A)
 static NSString * const kHexDarkButtonBG         = @"#151515";   // v261103-1: darker (was #1A1A1A)
 static NSString * const kHexDarkButtonSel        = @"#1E3A8A";   // active button = deep navy tint
-static NSString * const kHexDarkThinkingBG       = @"#111111";   // v261103-1: darker (was #1A1A1A)
-static NSString * const kHexDarkThinkingBorder   = @"#252525";   // v261103-1: darker (was #2A2A2A)
+static NSString * const kHexDarkThinkingBG       = @"#1A1A22";   // v261103-32: 深蓝灰，融入深色背景
+static NSString * const kHexDarkThinkingBorder   = @"#2A2A35";   // 柔和边框
 
 @implementation iOS6Theme
 

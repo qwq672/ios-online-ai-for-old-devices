@@ -1067,7 +1067,7 @@ static void AppendAttrString(NSMutableAttributedString *out,
     if (!out || out.length == 0) return;
     UIFont *emojiFont = [UIFont fontWithName:@"AppleColorEmoji"
                                         size:baseFont.pointSize];
-    if (!emojiFont) return;  // font not available on this device
+    if (!emojiFont) return;
 
     NSString *str = out.string;
     NSUInteger len = str.length;
@@ -1075,25 +1075,35 @@ static void AppendAttrString(NSMutableAttributedString *out,
     while (i < len) {
         unichar c = [str characterAtIndex:i];
         if (c >= 0xD800 && c <= 0xDBFF && i + 1 < len) {
-            // Surrogate pair → compute full codepoint.
             unichar low = [str characterAtIndex:i + 1];
             uint32_t cp = ((uint32_t)(c - 0xD800) << 10) + (low - 0xDC00) + 0x10000;
-            // Emoji ranges in the supplementary plane:
-            //   U+1F300–1F5FF  Misc Symbols & Pictographs (🎨🔧📋)
-            //   U+1F600–1F64F  Emoticons (😀😂)
-            //   U+1F680–1F6FF  Transport & Map (🚀✈)
-            //   U+1F900–1F9FF  Supplemental (🧐🥳 — may not be in iOS 6 font)
             if ((cp >= 0x1F300 && cp <= 0x1F9FF)) {
                 [out addAttribute:NSFontAttributeName value:emojiFont
                            range:NSMakeRange(i, 2)];
+                // v261103-32: emoji 后面插入一个零宽空格 (U+200B)
+                // 防止 emoji 后的字符与 emoji 重叠（iOS 6 字体宽度计算 bug）
+                // 只在下一个字符不是空格/换行/零宽空格时插入
+                if (i + 2 < len) {
+                    unichar nextC = [str characterAtIndex:i + 2];
+                    if (nextC != ' ' && nextC != '\n' && nextC != 0x200B) {
+                        [out insertString:@"\u200B" atIndex:i + 2];
+                        len = str.length;  // 更新长度
+                    }
+                }
             }
             i += 2;
         } else {
-            // BMP emoji ranges:
-            //   U+2600–27BF  Misc Symbols & Dingbats (☀☕✂✈)
             if (c >= 0x2600 && c <= 0x27BF) {
                 [out addAttribute:NSFontAttributeName value:emojiFont
                            range:NSMakeRange(i, 1)];
+                // v261103-32: BMP emoji 后也插入零宽空格
+                if (i + 1 < len) {
+                    unichar nextC = [str characterAtIndex:i + 1];
+                    if (nextC != ' ' && nextC != '\n' && nextC != 0x200B) {
+                        [out insertString:@"\u200B" atIndex:i + 1];
+                        len = str.length;
+                    }
+                }
             }
             i++;
         }

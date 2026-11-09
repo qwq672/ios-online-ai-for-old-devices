@@ -1640,8 +1640,9 @@ didFailForConversationID:(NSString *)conversationID
     // instances — the root chat AND any pushed history chat starved each
     // other's refreshes); now per-instance.
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-    // v261103-30: throttle 从 0.4s 增到 0.5s — 降低发热，仍保持流式感
-    if (!force && now - self.lastRowReloadTime < 0.5) return;
+    // v261103-32: throttle 从 0.5s 调到 0.3s — 流式更流畅
+    // 0.5s 太慢（用户反馈流式不够流畅），0.3s 是流畅与发热的平衡点
+    if (!force && now - self.lastRowReloadTime < 0.3) return;
     self.lastRowReloadTime = now;
 
     NSIndexPath *lastIdx = [NSIndexPath indexPathForRow:[_conversation.messages count] - 1
