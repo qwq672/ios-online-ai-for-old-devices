@@ -1635,14 +1635,11 @@ didFailForConversationID:(NSString *)conversationID
 - (void)_refreshLastRowForce:(BOOL)force
 {
     if ([_conversation.messages count] == 0) return;
-    // Throttle: only reload every 0.4s to reduce CPU usage during streaming.
-    // v261025-1: was a `static` (one variable shared across ALL ChatVC
-    // instances — the root chat AND any pushed history chat starved each
-    // other's refreshes); now per-instance.
+    // Throttle: only refresh every 0.15s during streaming.
+    // v261103-36: 0.3→0.15s — 单次刷新便宜了（直接 applyMessage 不重生 cell），
+    // 可以提频。首字延迟也消除（首个 chunk 不受 throttle 限制 — 见下方 force 分支）。
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-    // v261103-32: throttle 从 0.5s 调到 0.3s — 流式更流畅
-    // 0.5s 太慢（用户反馈流式不够流畅），0.3s 是流畅与发热的平衡点
-    if (!force && now - self.lastRowReloadTime < 0.3) return;
+    if (!force && now - self.lastRowReloadTime < 0.15) return;
     self.lastRowReloadTime = now;
 
     NSIndexPath *lastIdx = [NSIndexPath indexPathForRow:[_conversation.messages count] - 1
@@ -1651,12 +1648,30 @@ didFailForConversationID:(NSString *)conversationID
         lastIdx.row >= (NSInteger)[_tableView numberOfRowsInSection:0]) {
         [_tableView reloadData];
     } else {
+        // v261103-36: 字重叠根因 A — iOS 6 上 reloadRowsAtIndexPaths:
+        // withRowAnimation:UITableViewRowAnimationNone 实际是 cross-fade
+        // 动画（旧 cell 淡出 + 新 cell 淡入，两个 cell 同位置叠加 ~0.25s）。
+        // throttle 周期与动画时长接近，导致每次刷新都在动画叠加态，
+        // 新旧 cell frame 不同（高度变化）→ 文字重叠。
+        // 修复：直接拿可见 cell 调 applyMessage，让 cell 内部刷 attributedText，
+        // 不触发 cell 重生。高度变化通过空 beginUpdates/endUpdates 仅同步 rowHeight
+        // （只改高度不重生 cell 时不会 cross-fade）。
+        ChatMessageCell *cell = (ChatMessageCell *)[_tableView cellForRowAtIndexPath:lastIdx];
+        Message *m = [_conversation.messages objectAtIndex:lastIdx.row];
+        if (cell && m) {
+            [cell applyMessage:m];
+        } else {
+            // cell 不可见（滚出屏幕）或已被复用 — 退化到 reloadData
+            [_tableView reloadData];
+        }
+        // 仅同步高度（不重生 cell），iOS 6 上不会触发 cross-fade
         [_tableView beginUpdates];
-        [_tableView reloadRowsAtIndexPaths:[NSArray arrayWithObject:lastIdx]
-                        withRowAnimation:UITableViewRowAnimationNone];
         [_tableView endUpdates];
     }
-    [self _scrollToBottomAnimated:YES];
+    // v261103-36: 字重叠根因 B — animated:YES 与 throttle 周期打架，
+    // contentOffset 在两个目标间跳 → cell 视觉位置抖 → 文字位置抖。
+    // 改为 animated:NO 瞬时定位（与底部消息被截根除修复同款）。
+    [self _scrollToBottomAnimated:NO];
 }
 
 #pragma mark - Table data source

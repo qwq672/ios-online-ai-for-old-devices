@@ -529,11 +529,12 @@ static void AppendAttrString(NSMutableAttributedString *out,
     // iOS 6 doesn't auto-fallback to the emoji font for emoji in
     // NSAttributedString — the base font (Helvetica) has no emoji glyphs
     // → renders as □ (tofu). Explicit font override fixes this.
-    // v261103-1: skip the emoji-font pass in fast mode (O(n) per render,
-    // unnecessary during streaming). The final full-path render applies it.
-    if (!fast) {
-        [self _applyEmojiFont:out baseFont:baseFont];
-    }
+    // v261103-36: 字重叠根因 C2 — 取消 fast 模式跳过。原来流式时跳过
+    // emoji-font pass 想省 O(n) 开销，但代价是：流式中 emoji 显示成 □（Helvetica
+    // metrics），完成时切到 AppleColorEmoji + 零宽空格（不同 metrics），切换
+    // 瞬间行高突变 → 文字溢出/重叠。emoji-font pass 本身 O(n) 不算贵
+    // （5K 字消息 ~5ms），保持流式也跑，行高全程一致。
+    [self _applyEmojiFont:out baseFont:baseFont];
     return [out autorelease];
 }
 

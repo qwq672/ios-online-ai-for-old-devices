@@ -1588,11 +1588,19 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // content length component to invalidate the cache when chunks arrive.
     // v261025-6: include currentVariantIndex in the key so switching
     // variants re-queries the height (different content length per variant).
-    NSString *cacheKey = [NSString stringWithFormat:@"%@_%.0f_%lu_%lu_%ld",
+    // v261103-36: 字重叠根因 C — 加 fast 标志。流式时 fast=YES 跳过 emoji-font
+    // pass，emoji 用 Helvetica 字体显示成 □（窄）；完成时 fast=NO 跑 emoji-font
+    // + 插零宽空格，emoji 用 AppleColorEmoji（宽）+ 多一个隐形字符 → 同一行
+    // 文字流式时和完成时占的宽度不一样，行数可能差 1。heightCache 不带 fast
+    // 标志会返回流式版（□）的高度，但 cell 实际渲染是完成版（彩色 emoji）→
+    // 高度 < 实际内容 → 文字溢出 cell frame → 重叠到下一行。
+    BOOL fast = [ChatMessageCell isMessageStreaming:message.messageID];
+    NSString *cacheKey = [NSString stringWithFormat:@"%@_%.0f_%lu_%lu_%ld_%@",
                           message.messageID, (double)width,
                           (unsigned long)message.content.length,
                           (unsigned long)message.thinking.length,
-                          (long)message.currentVariantIndex];
+                          (long)message.currentVariantIndex,
+                          fast ? @"F" : @"S"];
     NSNumber *cached = [gHeightCache objectForKey:cacheKey];
     if (cached) {
         return [cached floatValue];
