@@ -948,7 +948,8 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
     // v261103-21 bug fix: 检查所有三种传输方式，不只 _connection。
     // 之前 iOS 7+ (NSURLSession) / iOS 6 (CFNetwork) 路径 _connection 为 nil,
     // 用户点停止直接 return → 不取消流、composer 卡在 streaming 状态。
-    if (!_connection && !_dataTask && !_cfReadStream) {
+    // v261103-35 fix #2: 加 _mbedtlsClient 检查 — mbedTLS 是首选传输
+    if (!_connection && !_dataTask && !_cfReadStream && !_mbedtlsClient) {
         // Nothing in flight — no-op (defensive; UI shouldn't allow this).
         return;
     }

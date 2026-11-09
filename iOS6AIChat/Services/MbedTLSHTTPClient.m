@@ -34,10 +34,11 @@
 
 - (void)startRequest:(NSURL *)url method:(NSString *)method headers:(NSDictionary *)headers body:(NSData *)body
 {
-    self.requestURL = [url retain];
-    self.requestMethod = [method copy];
-    self.requestHeaders = [headers retain];
-    self.requestBody = [body retain];
+    // v261103-35 fix #1: 去掉外层 retain/copy — property setter 已 retain/copy
+    self.requestURL = url;
+    self.requestMethod = method;
+    self.requestHeaders = headers;
+    self.requestBody = body;
     self.cancelled = NO;
     self.statusCodeSent = NO;
 

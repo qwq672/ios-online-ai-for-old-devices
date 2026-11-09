@@ -1047,15 +1047,15 @@ static NSMutableSet *gStreamingMessageIDs = nil;
 
     // === Deep thinking block ===
     // v261103-33: 穿插思考卡片重构
-    // 如果 content 里有 \x00THINK\x00 标记（MarkdownParser 插入），
-    // 解析标记，在 sectionsContainer 里创建独立的可折叠卡片，
-    // _textView 只渲染非思考的文字段。
-    // 如果没有标记（无 :::thinking），回退到旧的 _thinkingBlock 逻辑。
-    BOOL hasInlineThinking = [displayedContent rangeOfString:@"\x00THINK\x00"].location != NSNotFound;
+    // 检查 _renderedAttr（MarkdownParser 渲染后的 attributed string）里是否有 \x00THINK\x00 标记
+    // （标记由 MarkdownParser._appendToolStatus 插入，不在原始 content 里）
+    NSString *renderedString = _renderedAttr ? [_renderedAttr string] : @"";
+    BOOL hasInlineThinking = [renderedString rangeOfString:@"\x00THINK\x00"].location != NSNotFound;
 
     if (hasInlineThinking && !message.isUser) {
         // v261103-33: 解析 \x00THINK\x00 标记，创建穿插卡片
-        [self _parseInlineThinkingSections:displayedContent message:message];
+        // 用 renderedString（含标记）而不是 displayedContent（不含标记）
+        [self _parseInlineThinkingSections:renderedString message:message];
         _thinkingBlock.hidden = YES;
         _sectionsContainer.hidden = NO;
     } else {
@@ -1646,8 +1646,11 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // v261103-31: 如果 content 里有 :::thinking（交错布局），不计算 _thinkingBlock 高度
     // （思考已在 content 流里，_thinkingBlock 隐藏）
     NSString *dispContentForCalc = [Message displayedContentForMessage:message];
-    // v261103-33: 检查 \x00THINK\x00 标记（穿插思考卡片）
-    BOOL hasInlineThinkMarker = [dispContentForCalc rangeOfString:@"\x00THINK\x00"].location != NSNotFound;
+    // v261103-33: 检查渲染后的 attributed string 里是否有 \x00THINK\x00 标记
+    // （标记由 MarkdownParser 插入，不在原始 content 里）
+    NSAttributedString *renderedAttrForCheck = [ChatMessageCell _renderedAttrForMessage:msgForRender width:availTextWidth];
+    NSString *renderedStrForCheck = renderedAttrForCheck ? [renderedAttrForCheck string] : @"";
+    BOOL hasInlineThinkMarker = [renderedStrForCheck rangeOfString:@"\x00THINK\x00"].location != NSNotFound;
     BOOL hasInlineThinkingForCalc = [dispContentForCalc rangeOfString:@":::thinking"].location != NSNotFound || hasInlineThinkMarker;
 
     // v261103-33: 如果有穿插思考标记，计算思考卡片高度
