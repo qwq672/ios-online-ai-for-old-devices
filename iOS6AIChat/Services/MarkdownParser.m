@@ -1086,7 +1086,8 @@ static void AppendAttrString(NSMutableAttributedString *out,
                 if (i + 2 < len) {
                     unichar nextC = [str characterAtIndex:i + 2];
                     if (nextC != ' ' && nextC != '\n' && nextC != 0x200B) {
-                        [out insertString:@"\u200B" atIndex:i + 2];
+                        // v261103-32: 插入零宽空格防止 emoji 后字符重叠
+                        [out replaceCharactersInRange:NSMakeRange(i + 2, 0) withString:@"\u200B"];
                         len = str.length;  // 更新长度
                     }
                 }
@@ -1100,7 +1101,7 @@ static void AppendAttrString(NSMutableAttributedString *out,
                 if (i + 1 < len) {
                     unichar nextC = [str characterAtIndex:i + 1];
                     if (nextC != ' ' && nextC != '\n' && nextC != 0x200B) {
-                        [out insertString:@"\u200B" atIndex:i + 1];
+                        [out replaceCharactersInRange:NSMakeRange(i + 1, 0) withString:@"\u200B"];
                         len = str.length;
                     }
                 }
