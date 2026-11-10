@@ -747,30 +747,58 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         self.inlineSections = [NSMutableArray array];
     }
 
-    // 解析 content，找 \x00THINK\x00...\x00END\x00 标记
-    NSMutableString *cleanText = [NSMutableString string];  // 去掉标记后的文字
+    // v261103-40: 穿插布局 — 文字段不再拼接进 cleanText，
+    // 而是创建 UILabel 加入 _inlineSections（type=text），
+    // 和思考卡片交替堆叠，实现真正的穿插。
     NSInteger thinkIdx = 0;
+    CGFloat boundsWidth = self.bounds.size.width;
+    if (boundsWidth < 100) boundsWidth = [UIScreen mainScreen].bounds.size.width;
+    CGFloat textWidth = [ChatMessageCell aiTextWidthForOuterWidth:boundsWidth];
+    UIFont *baseFont = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
 
     NSUInteger searchStart = 0;
     NSString *thinkTag = @"\x00THINK\x00";
     NSString *endTag = @"\x00END\x00";
     NSString *sep = @"\x01";
 
+    // helper: 创建文字段 UILabel 加入 _inlineSections
+    void (^addTextSection)(NSString *) = ^(NSString *textSeg) {
+        if (!textSeg || textSeg.length == 0) return;
+        UILabel *textLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+        textLabel.numberOfLines = 0;
+        textLabel.font = baseFont;
+        textLabel.textColor = [iOS6Theme textColor];
+        textLabel.backgroundColor = [UIColor clearColor];
+        NSAttributedString *renderedText = [MarkdownParser attributedStringFromMarkdown:textSeg
+                                                                           baseFont:baseFont
+                                                                              width:textWidth];
+        textLabel.attributedText = renderedText;
+        textLabel.lineBreakMode = UILineBreakModeWordWrap;
+        [_sectionsContainer addSubview:textLabel];
+        NSMutableDictionary *textSec = [NSMutableDictionary dictionaryWithObjectsAndKeys:
+            @"text", @"type",
+            textSeg, @"content",
+            textLabel, @"label",
+            nil];
+        [_inlineSections addObject:textSec];
+        [textLabel release];
+    };
+
     while (searchStart < [content length]) {
         NSRange thinkRange = [content rangeOfString:thinkTag
                                             options:0
                                               range:NSMakeRange(searchStart, [content length] - searchStart)];
         if (thinkRange.location == NSNotFound) {
-            // 剩余都是普通文字
+            // 剩余都是普通文字 — 创建 UILabel 加入 sections
             NSString *remaining = [content substringFromIndex:searchStart];
-            [cleanText appendString:remaining];
+            addTextSection(remaining);
             break;
         }
 
-        // thinkRange.location 之前的文字是普通段
+        // thinkRange.location 之前的文字是普通段 — 创建 UILabel
         if (thinkRange.location > searchStart) {
             NSString *textBefore = [content substringWithRange:NSMakeRange(searchStart, thinkRange.location - searchStart)];
-            [cleanText appendString:textBefore];
+            addTextSection(textBefore);
         }
 
         // 找 \x00END\x00
@@ -839,8 +867,10 @@ static NSMutableSet *gStreamingMessageIDs = nil;
 
         [_sectionsContainer addSubview:cardView];
 
-        // 记录 section
-        NSDictionary *sec = [NSDictionary dictionaryWithObjectsAndKeys:
+        // 记录 section — v261103-40: 用 NSMutableDictionary（was NSDictionary）
+        // _toggleInlineThinking 会 setObject:forKey:@"collapsed" 修改它，
+        // immutable dict 调 setObject 会 NSInvalidArgumentException 闪退。
+        NSMutableDictionary *sec = [NSMutableDictionary dictionaryWithObjectsAndKeys:
             @"thinking", @"type",
             title, @"title",
             thinkText, @"content",
@@ -858,19 +888,10 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         searchStart = endRange.location + endRange.length;
     }
 
-    // 用 cleanText 替换 _textView 的内容（去掉标记）
-    // 重新渲染 Markdown
-    if ([cleanText length] > 0) {
-        CGFloat boundsWidth = self.bounds.size.width;
-        if (boundsWidth < 100) boundsWidth = [UIScreen mainScreen].bounds.size.width;
-        CGFloat textWidth = [ChatMessageCell aiTextWidthForOuterWidth:boundsWidth];
-        UIFont *baseFont = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
-        self.renderedAttr = [MarkdownParser attributedStringFromMarkdown:cleanText
-                                                               baseFont:baseFont
-                                                                  width:textWidth];
-    } else {
-        self.renderedAttr = nil;
-    }
+    // v261103-40: 穿插布局 — 不再用 cleanText + _textView
+    // 文字段已作为 UILabel 加入 _inlineSections，_textView 隐藏
+    self.renderedAttr = nil;
+    _textView.hidden = YES;
 }
 
 // v261103-33: 穿插思考卡片的 toggle
@@ -1061,6 +1082,9 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     } else {
         // 旧逻辑 — 没有 :::thinking 标记
         _sectionsContainer.hidden = YES;
+        // v261103-40: 重置 _textView.hidden（cell 复用时上次消息可能有穿插思考
+        // 设了 hidden=YES，这次普通消息不重置会导致文字不显示）
+        _textView.hidden = NO;
 
     BOOL hasInlineThinkingOld = [displayedContent rangeOfString:@":::thinking"].location != NSNotFound;
     if (displayedThinking.length > 0 && !message.isUser && !hasInlineThinkingOld) {
@@ -1328,14 +1352,15 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     }
 
     // === Main text sizing ===
+    // v261103-40: _textView 隐藏时（穿插布局），textRect 高度 0
     CGRect textRect = CGRectZero;
-    if (_renderedAttr) {
+    if (_renderedAttr && !_textView.hidden) {
         textRect = [_renderedAttr boundingRectWithSize:CGSizeMake(availTextWidth, CGFLOAT_MAX)
                                                 options:(NSStringDrawingUsesLineFragmentOrigin |
                                                          NSStringDrawingUsesFontLeading)
                                                 context:nil];
     }
-    if (textRect.size.height < 20) textRect.size.height = 20;
+    if (!_textView.hidden && textRect.size.height < 20) textRect.size.height = 20;
 
     // === Image strip sizing (if images present) ===
     CGFloat imagesH = 0;
@@ -1374,7 +1399,8 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // past the inset, comfortably absorbing a 1-line drift.
     // v261103-38: safety 20/24 → 32/36 — 用户报最后一行被遮，boundingRectWithSize
     // 低估超过 20pt 时仍遮。32/36 多吸收一行（~17pt）。
-    CGFloat safety = useBubble ? 32 : 36;
+    // v261103-40: 32/36 太大导致生成后大空白，回退到 26/30（折中）
+    CGFloat safety = useBubble ? 26 : 30;
     CGFloat insetV = useBubble ? 14 : 8;  // v261025-33: textContainerInset vertical total
     CGFloat bubbleWidth;
     if (!useBubble) {
@@ -1444,42 +1470,59 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // Place thinking block at top of bubble.
     CGFloat yOffset = 4;
     if (!_sectionsContainer.hidden) {
-        // v261103-33: 穿插思考卡片 — sectionsContainer 覆盖整个 bubble 内容区
-        // 卡片在 sectionsContainer 内垂直堆叠
+        // v261103-40: 穿插布局 — 遍历 _inlineSections 按 type 堆叠
+        // type=text: UILabel 文字段
+        // type=thinking: 可折叠思考卡片
         CGFloat sectionY = 0;
         CGFloat toggleH = 22;
         for (NSInteger i = 0; i < (NSInteger)[_inlineSections count]; i++) {
             NSDictionary *sec = [_inlineSections objectAtIndex:i];
-            UIView *cardView = [sec objectForKey:@"view"];
-            UIButton *toggle = [sec objectForKey:@"toggle"];
-            UILabel *label = [sec objectForKey:@"label"];
-            UIView *sepView = [sec objectForKey:@"sep"];
-            BOOL collapsed = [[sec objectForKey:@"collapsed"] boolValue];
-
-            // toggle 高度
-            toggle.frame = CGRectMake(2, 2, contentW - 4, toggleH);
-            CGFloat cardH = toggleH + 4;  // toggle + padding
-
-            if (!collapsed) {
-                // 内容高度
-                NSString *thinkText = [sec objectForKey:@"content"];
-                if (thinkText.length > 0) {
-                    NSAttributedString *attr = [[[NSAttributedString alloc]
-                        initWithString:thinkText
-                            attributes:@{NSFontAttributeName: label.font}] autorelease];
-                    CGSize sz = [attr boundingRectWithSize:CGSizeMake(contentW - 8, CGFLOAT_MAX)
-                                                   options:(NSStringDrawingUsesLineFragmentOrigin |
-                                                            NSStringDrawingUsesFontLeading)
-                                                   context:nil].size;
-                    CGFloat labelH = ceilf(sz.height) + 6;
-                    label.frame = CGRectMake(6, toggleH + 2, contentW - 8, labelH);
-                    sepView.frame = CGRectMake(6, toggleH, contentW - 12, 1);
-                    cardH += labelH + 4;
+            NSString *type = [sec objectForKey:@"type"];
+            
+            if ([type isEqualToString:@"text"]) {
+                // 文字段 UILabel
+                UILabel *textLabel = [sec objectForKey:@"label"];
+                NSAttributedString *textAttr = textLabel.attributedText;
+                if (textAttr && textAttr.length > 0) {
+                    CGSize sz = [textAttr boundingRectWithSize:CGSizeMake(contentW - 4, CGFLOAT_MAX)
+                                                       options:(NSStringDrawingUsesLineFragmentOrigin |
+                                                                NSStringDrawingUsesFontLeading)
+                                                       context:nil].size;
+                    CGFloat textH = ceilf(sz.height) + 4;
+                    textLabel.frame = CGRectMake(2, sectionY, contentW - 4, textH);
+                    sectionY += textH + 4;
                 }
-            }
+            } else {
+                // thinking 卡片
+                UIView *cardView = [sec objectForKey:@"view"];
+                UIButton *toggle = [sec objectForKey:@"toggle"];
+                UILabel *label = [sec objectForKey:@"label"];
+                UIView *sepView = [sec objectForKey:@"sep"];
+                BOOL collapsed = [[sec objectForKey:@"collapsed"] boolValue];
 
-            cardView.frame = CGRectMake(0, sectionY, contentW, cardH);
-            sectionY += cardH + 4;
+                toggle.frame = CGRectMake(2, 2, contentW - 4, toggleH);
+                CGFloat cardH = toggleH + 4;
+
+                if (!collapsed) {
+                    NSString *thinkText = [sec objectForKey:@"content"];
+                    if (thinkText.length > 0) {
+                        NSAttributedString *attr = [[[NSAttributedString alloc]
+                            initWithString:thinkText
+                                attributes:@{NSFontAttributeName: label.font}] autorelease];
+                        CGSize sz = [attr boundingRectWithSize:CGSizeMake(contentW - 8, CGFLOAT_MAX)
+                                                       options:(NSStringDrawingUsesLineFragmentOrigin |
+                                                                NSStringDrawingUsesFontLeading)
+                                                       context:nil].size;
+                        CGFloat labelH = ceilf(sz.height) + 6;
+                        label.frame = CGRectMake(6, toggleH + 2, contentW - 8, labelH);
+                        sepView.frame = CGRectMake(6, toggleH, contentW - 12, 1);
+                        cardH += labelH + 4;
+                    }
+                }
+
+                cardView.frame = CGRectMake(0, sectionY, contentW, cardH);
+                sectionY += cardH + 4;
+            }
         }
 
         CGFloat sectionsH = sectionY;
@@ -1663,21 +1706,50 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     BOOL hasInlineThinkMarker = [renderedStrForCheck rangeOfString:@"\x00THINK\x00"].location != NSNotFound;
     BOOL hasInlineThinkingForCalc = [dispContentForCalc rangeOfString:@":::thinking"].location != NSNotFound || hasInlineThinkMarker;
 
-    // v261103-33: 如果有穿插思考标记，计算思考卡片高度
+    // v261103-40: 穿插布局高度计算 — 文字段 + 卡片交替
+    // 文字段用 MarkdownParser 渲染算高度，卡片按折叠状态算高度
     CGFloat inlineThinkH = 0;
     if (hasInlineThinkMarker && !message.isUser) {
-        // 解析 \x00THINK\x00...\x00END\x00 标记，计算每个卡片高度
         NSString *thinkTag = @"\x00THINK\x00";
         NSString *endTag = @"\x00END\x00";
         NSString *thinkSep = @"\x01";
         NSUInteger searchStart = 0;
         CGFloat toggleH = 22;
         NSInteger thinkIdx = 0;
+        UIFont *baseFont = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
         while (searchStart < [dispContentForCalc length]) {
             NSRange thinkRange = [dispContentForCalc rangeOfString:thinkTag
                                                            options:0
                                                              range:NSMakeRange(searchStart, [dispContentForCalc length] - searchStart)];
-            if (thinkRange.location == NSNotFound) break;
+            if (thinkRange.location == NSNotFound) {
+                // v261103-40: 剩余文字段 — 算高度
+                NSString *remaining = [dispContentForCalc substringFromIndex:searchStart];
+                if (remaining.length > 0) {
+                    NSAttributedString *textAttr = [MarkdownParser attributedStringFromMarkdown:remaining
+                                                                                       baseFont:baseFont
+                                                                                          width:availTextWidth];
+                    CGSize sz = [textAttr boundingRectWithSize:CGSizeMake(availTextWidth - 4, CGFLOAT_MAX)
+                                                       options:(NSStringDrawingUsesLineFragmentOrigin |
+                                                                NSStringDrawingUsesFontLeading)
+                                                       context:nil].size;
+                    inlineThinkH += ceilf(sz.height) + 4;
+                }
+                break;
+            }
+            // v261103-40: 标记前的文字段 — 算高度
+            if (thinkRange.location > searchStart) {
+                NSString *textBefore = [dispContentForCalc substringWithRange:NSMakeRange(searchStart, thinkRange.location - searchStart)];
+                if (textBefore.length > 0) {
+                    NSAttributedString *textAttr = [MarkdownParser attributedStringFromMarkdown:textBefore
+                                                                                       baseFont:baseFont
+                                                                                          width:availTextWidth];
+                    CGSize sz = [textAttr boundingRectWithSize:CGSizeMake(availTextWidth - 4, CGFLOAT_MAX)
+                                                       options:(NSStringDrawingUsesLineFragmentOrigin |
+                                                                NSStringDrawingUsesFontLeading)
+                                                       context:nil].size;
+                    inlineThinkH += ceilf(sz.height) + 4;
+                }
+            }
             NSUInteger endSearchStart = thinkRange.location + thinkRange.length;
             NSRange endRange = [dispContentForCalc rangeOfString:endTag
                                                           options:0
@@ -1707,6 +1779,9 @@ static NSMutableSet *gStreamingMessageIDs = nil;
             thinkIdx++;
             searchStart = endRange.location + endRange.length;
         }
+        // v261103-40: 有穿插思考时，_textView 隐藏，textRect 高度归零
+        // （文字高度已算进 inlineThinkH）
+        textRect.size.height = 0;
     }
 
     CGFloat thinkingH = 0;
@@ -1790,7 +1865,8 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     CGFloat tailH = useBubble ? 6 : 0;
     CGFloat vPad = useBubble ? 5 : 4;
     // v261103-38: safety 20/24 → 32/36（与 _layoutInternal 同步，吸收 boundingRectWithSize 低估）
-    CGFloat safety = useBubble ? 32 : 36;
+    // v261103-40: 32/36 太大导致空白，回退到 26/30
+    CGFloat safety = useBubble ? 26 : 30;
     CGFloat bubbleHeight = textRect.size.height + insetV + 2 * vPad + tailH + safety
                           + thinkingH + imagesH + inlineThinkH;
     CGFloat result = bubbleHeight + 2 * verticalPad + buttonH;
