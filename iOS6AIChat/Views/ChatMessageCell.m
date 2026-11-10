@@ -1372,7 +1372,9 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // 8pt slack was entirely consumed by the (4,4,4,4) textContainerInset
     // → any underestimate clipped the last line. 24pt leaves 16pt of headroom
     // past the inset, comfortably absorbing a 1-line drift.
-    CGFloat safety = useBubble ? 20 : 24;
+    // v261103-38: safety 20/24 → 32/36 — 用户报最后一行被遮，boundingRectWithSize
+    // 低估超过 20pt 时仍遮。32/36 多吸收一行（~17pt）。
+    CGFloat safety = useBubble ? 32 : 36;
     CGFloat insetV = useBubble ? 14 : 8;  // v261025-33: textContainerInset vertical total
     CGFloat bubbleWidth;
     if (!useBubble) {
@@ -1787,7 +1789,8 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     CGFloat insetV = useBubble ? 14 : 8;   // top+bottom textContainerInset
     CGFloat tailH = useBubble ? 6 : 0;
     CGFloat vPad = useBubble ? 5 : 4;
-    CGFloat safety = useBubble ? 20 : 24;
+    // v261103-38: safety 20/24 → 32/36（与 _layoutInternal 同步，吸收 boundingRectWithSize 低估）
+    CGFloat safety = useBubble ? 32 : 36;
     CGFloat bubbleHeight = textRect.size.height + insetV + 2 * vPad + tailH + safety
                           + thinkingH + imagesH + inlineThinkH;
     CGFloat result = bubbleHeight + 2 * verticalPad + buttonH;

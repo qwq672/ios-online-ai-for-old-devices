@@ -1635,11 +1635,12 @@ didFailForConversationID:(NSString *)conversationID
 - (void)_refreshLastRowForce:(BOOL)force
 {
     if ([_conversation.messages count] == 0) return;
-    // Throttle: only refresh every 0.15s during streaming.
-    // v261103-36: 0.3→0.15s — 单次刷新便宜了（直接 applyMessage 不重生 cell），
-    // 可以提频。首字延迟也消除（首个 chunk 不受 throttle 限制 — 见下方 force 分支）。
+    // Throttle: 0.3s — v261103-36 的 0.15s 太频繁，每次 layoutIfNeeded
+    // 跑全量 _layoutInternal（O(n) 整条消息），5K 字消息 ~50-100ms/次，
+    // 0.15s 周期下主线程被占满 → 网络回调堆积 → 响应慢到 5 秒+。
+    // v261103-38: 回退到 0.3s，主线程负担减半。
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-    if (!force && now - self.lastRowReloadTime < 0.15) return;
+    if (!force && now - self.lastRowReloadTime < 0.3) return;
     self.lastRowReloadTime = now;
 
     NSIndexPath *lastIdx = [NSIndexPath indexPathForRow:[_conversation.messages count] - 1
@@ -1648,42 +1649,27 @@ didFailForConversationID:(NSString *)conversationID
         lastIdx.row >= (NSInteger)[_tableView numberOfRowsInSection:0]) {
         [_tableView reloadData];
     } else {
-        // v261103-36: 字重叠根因 A — iOS 6 上 reloadRowsAtIndexPaths:
-        // withRowAnimation:UITableViewRowAnimationNone 实际是 cross-fade
-        // 动画（旧 cell 淡出 + 新 cell 淡入，两个 cell 同位置叠加 ~0.25s）。
-        // throttle 周期与动画时长接近，导致每次刷新都在动画叠加态，
-        // 新旧 cell frame 不同（高度变化）→ 文字重叠。
-        // 修复：直接拿可见 cell 调 applyMessage，让 cell 内部刷 attributedText，
-        // 不触发 cell 重生。高度变化通过空 beginUpdates/endUpdates 仅同步 rowHeight
-        // （只改高度不重生 cell 时不会 cross-fade）。
+        // v261103-36: 直接 applyMessage 不走 reloadRows（避免 cross-fade 重叠）
         ChatMessageCell *cell = (ChatMessageCell *)[_tableView cellForRowAtIndexPath:lastIdx];
         Message *m = [_conversation.messages objectAtIndex:lastIdx.row];
         if (cell && m) {
             [cell applyMessage:m];
-            // v261103-36b: 预同步 cell.bounds 高度，消除 16ms 闪烁。
-            // applyMessage 后 cell 仍用旧 bounds 布局（setNeedsLayout 是异步），
-            // 下一帧才用新高度 layoutSubviews——这 16ms 内新文字可能溢出 cell.bounds
-            // 底部（被下一个 cell 盖住），下一帧才正常。手动算新高度 + 立即设 bounds
-            // + layoutIfNeeded，让 cell 当帧就按新高度布局好，无闪烁。
-            CGFloat newH = [ChatMessageCell heightForMessage:m
-                                                       width:_tableView.bounds.size.width];
-            CGRect cb = cell.bounds;
-            if (cb.size.height != newH && newH > 0) {
-                cb.size.height = newH;
-                cell.bounds = cb;
-            }
+            // v261103-38: 去掉 v261103-36b 的 cell.bounds 预同步
+            // 36b 手动设 cell.bounds.height = newH，但 cell.frame 是 tableView
+            // 管的 — cell 内部用新高度布局，tableView 还认旧高度 → beginUpdates
+            // 后 cell.frame 更新 + scrollToBottom 滚动，两个动作叠加 → 界面跳动。
+            // 正确做法：让 tableView 全权管理 cell.frame，不手动设 cell.bounds。
+            // beginUpdates/endUpdates 让 tableView 重算高度 + 更新 cell.frame。
+            [_tableView beginUpdates];
+            [_tableView endUpdates];
+            // cell.frame 更新后，强制立即布局（消除 16ms 溢出 — 新文字短暂
+            // 溢出 cell.bounds 底部被下一个 cell 盖住的现象）。
             [cell layoutIfNeeded];
         } else {
-            // cell 不可见（滚出屏幕）或已被复用 — 退化到 reloadData
             [_tableView reloadData];
         }
-        // 仅同步高度（不重生 cell），iOS 6 上不会触发 cross-fade
-        [_tableView beginUpdates];
-        [_tableView endUpdates];
     }
-    // v261103-36: 字重叠根因 B — animated:YES 与 throttle 周期打架，
-    // contentOffset 在两个目标间跳 → cell 视觉位置抖 → 文字位置抖。
-    // 改为 animated:NO 瞬时定位（与底部消息被截根除修复同款）。
+    // v261103-36: animated:NO 瞬时定位（避免与 throttle 周期打架）
     [self _scrollToBottomAnimated:NO];
 }
 
