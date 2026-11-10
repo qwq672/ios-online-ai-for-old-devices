@@ -25,7 +25,7 @@ static CGFloat const kFontScale[] = { 0.85f, 1.0f, 1.15f, 1.3f, 1.5f };
 // Light palette — iOS standard blue accent on cool off-white.
 // Reverted from v261018-10's monochrome (white tint) — user said
 // "浅色配色仍用之前的蓝色" (light color scheme still uses previous blue).
-static NSString * const kHexLightTint           = @"#007AFF";  // iOS standard blue (reverted from #FFFFFF)
+static NSString * const kHexLightTint           = @"#4A6FA5";  // v261103-39: 哑光蓝（was #007AFF 高饱和网页蓝，DS 批评违和）
 static NSString * const kHexLightNavbarTop      = @"#FFFFFF";
 static NSString * const kHexLightNavbarBottom   = @"#E8E8E8";
 static NSString * const kHexLightTabbarTop      = @"#FFFFFF";
@@ -41,27 +41,27 @@ static NSString * const kHexLightTextSecondary  = @"#666666";  // grey  // darke
 static NSString * const kHexLightCodeBG         = @"#F5F5F5";  // light grey   // pale cool grey
 static NSString * const kHexLightCodeBorder     = @"#D0D0D0";
 
-// Dark palette — DEEP navy blue tint on near-BLACK grey background.
-// v261018-12: reverted from #000000 (black) tint back to deep navy
-// #1E3A8A (user said "醒目色仍为蓝色"). BUT the BACKGROUND is now
-// much darker — near-black grey (#0A0A0A) instead of navy-black
-// (#0F1A2E). This gives a true "dark mode" feel rather than the
-// previous navy-tinted dark mode.
-static NSString * const kHexDarkTint            = @"#1E3A8A";  // deep navy (reverted from #000000)
-static NSString * const kHexDarkNavbarTop       = @"#050505";  // v261103-1: deeper black (was #0A0A0A)
-static NSString * const kHexDarkNavbarBottom    = @"#000000";  // pure black
-static NSString * const kHexDarkTabbarTop        = @"#050505";  // v261103-1: deeper (was #0A0A0A)
-static NSString * const kHexDarkTabbarBottom     = @"#000000";  // pure black
-static NSString * const kHexDarkPinstripe        = @"#151515";  // v261103-1: darker grey (was #1A1A1A)
-static NSString * const kHexDarkPinstripeBG     = @"#070707";  // v261103-1: deeper bg (was #0A0A0A)
+// Dark palette — v261103-39: 大修
+// DS 批评'纯黑底配深灰框几乎隐形' — 原来一堆 #050505/#070705/#000000
+// 近黑糊成一团，层级分不清。改为深灰层级体系：
+//   主背景 #1C1C1E → 气泡 #2C2C2E → 控件 #2C2C2E → 边框 #3A3A3C
+// 每层差 ~10-15% 亮度，肉眼能分出层级。
+// tint 也降饱和：#1E3A8A → #7A9AC8（亮哑光蓝，不再刺眼）
+static NSString * const kHexDarkTint            = @"#7A9AC8";  // v261103-39: 亮哑光蓝（was #1E3A8A 深海军蓝）
+static NSString * const kHexDarkNavbarTop       = @"#1C1C1E";  // v261103-39: 深灰（was #050505 近黑）
+static NSString * const kHexDarkNavbarBottom    = @"#1A1A1C";  // v261103-39（was #000000 纯黑）
+static NSString * const kHexDarkTabbarTop        = @"#1C1C1E";  // v261103-39（was #050505）
+static NSString * const kHexDarkTabbarBottom     = @"#1A1A1C";  // v261103-39（was #000000）
+static NSString * const kHexDarkPinstripe        = @"#2C2C2E";  // v261103-39（was #151515）
+static NSString * const kHexDarkPinstripeBG     = @"#1C1C1E";  // v261103-39: 主背景深灰（was #070707 近黑）
 static NSString * const kHexDarkBubbleUser      = @"#3A3A3C";  // v261103-32: 深灰（能看出区别）
 static NSString * const kHexDarkBubbleUserB     = @"#4A4A4C";  // 深灰 border
-static NSString * const kHexDarkBubbleAI        = @"#1A1A1E";  // 深色 AI
-static NSString * const kHexDarkBubbleAIB       = @"#2A2A2E";  // 深色 border
-static NSString * const kHexDarkText            = @"#D8D8E0";  // v261103-1: dimmer off-white (was #E8E8F0) — reduces eye strain on darker bg
-static NSString * const kHexDarkTextSecondary   = @"#7A8298";  // v261103-1: dimmer blue-grey (was #8B95B0)
-static NSString * const kHexDarkCodeBG          = @"#111111";  // v261103-1: darker code bg (was #1A1A1A)
-static NSString * const kHexDarkCodeBorder      = @"#252525";  // v261103-1: darker (was #2A2A2A)
+static NSString * const kHexDarkBubbleAI        = @"#2C2C2E";  // v261103-39: 比背景亮一点区分气泡（was #1A1A1E）
+static NSString * const kHexDarkBubbleAIB       = @"#3A3A3C";  // v261103-39（was #2A2A2E）
+static NSString * const kHexDarkText            = @"#ECECF0";  // v261103-39: 提亮（was #D8D8E0）— DS 批评字不够亮
+static NSString * const kHexDarkTextSecondary   = @"#9A9AA8";  // v261103-39: 提亮（was #7A8298）
+static NSString * const kHexDarkCodeBG          = @"#2A2A2C";  // v261103-39（was #111111 近黑）
+static NSString * const kHexDarkCodeBorder      = @"#3A3A3C";  // v261103-39（was #252525）
 
 // Additional dark/light form-control colors for dark mode UI fix.
 // Light: standard iOS form controls (white bg / light grey)
@@ -79,18 +79,18 @@ static NSString * const kHexLightButtonSel       = @"#D0D0D0";
 static NSString * const kHexLightThinkingBG      = @"#F0F0F5";  // v261103-32: 淡蓝灰，融入聊天背景
 static NSString * const kHexLightThinkingBorder  = @"#D0D0D8";  // 柔和边框
 
-static NSString * const kHexDarkInputBG          = @"#111111";   // v261103-1: darker fill (was #1A1A1A)
-static NSString * const kHexDarkInputBorder      = @"#252525";   // v261103-1: darker (was #2A2A2A)
-static NSString * const kHexDarkInputText        = @"#D8D8E0";   // v261103-1: dimmer (was #E8E8F0)
-static NSString * const kHexDarkPlaceholder       = @"#7A8298";   // v261103-1: dimmer (was #8B95B0)
-static NSString * const kHexDarkControlBG        = @"#050505";   // v261103-1: deeper (was #0A0A0A)
-static NSString * const kHexDarkControlSel        = @"#1E3A8A";   // selected = deep navy tint
-static NSString * const kHexDarkControlNorm      = @"#151515";   // v261103-1: darker (was #1A1A1A)
-static NSString * const kHexDarkHairline         = @"#252525";   // v261103-1: darker (was #2A2A2A)
-static NSString * const kHexDarkButtonBG         = @"#151515";   // v261103-1: darker (was #1A1A1A)
-static NSString * const kHexDarkButtonSel        = @"#1E3A8A";   // active button = deep navy tint
-static NSString * const kHexDarkThinkingBG       = @"#1A1A22";   // v261103-32: 深蓝灰，融入深色背景
-static NSString * const kHexDarkThinkingBorder   = @"#2A2A35";   // 柔和边框
+static NSString * const kHexDarkInputBG          = @"#2C2C2E";   // v261103-39（was #111111）
+static NSString * const kHexDarkInputBorder      = @"#3A3A3C";   // v261103-39（was #252525）
+static NSString * const kHexDarkInputText        = @"#ECECF0";   // v261103-39: 提亮（was #D8D8E0）
+static NSString * const kHexDarkPlaceholder       = @"#6A6A78";   // v261103-39（was #7A8298）
+static NSString * const kHexDarkControlBG        = @"#2C2C2E";   // v261103-39（was #050505）
+static NSString * const kHexDarkControlSel        = @"#3A5A8A";   // v261103-39: 哑光蓝选中（was #1E3A8A）
+static NSString * const kHexDarkControlNorm      = @"#2C2C2E";   // v261103-39（was #151515）
+static NSString * const kHexDarkHairline         = @"#3A3A3C";   // v261103-39（was #252525）
+static NSString * const kHexDarkButtonBG         = @"#2C2C2E";   // v261103-39（was #151515）
+static NSString * const kHexDarkButtonSel        = @"#3A5A8A";   // v261103-39: 哑光蓝选中（was #1E3A8A）
+static NSString * const kHexDarkThinkingBG       = @"#2A2A2E";   // v261103-39（was #1A1A22）
+static NSString * const kHexDarkThinkingBorder   = @"#3A3A3C";   // v261103-39（was #2A2A35）
 
 @implementation iOS6Theme
 

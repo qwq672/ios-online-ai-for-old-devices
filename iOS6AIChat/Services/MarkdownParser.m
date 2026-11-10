@@ -881,15 +881,16 @@ static void AppendAttrString(NSMutableAttributedString *out,
         AppendAttrString(out, marker, baseFont, [UIColor clearColor], nil, 0, 0);
         AppendAttrString(out, @"\n", baseFont, [iOS6Theme textColor], nil, 0, 0);
     } else {
-        // tool 块 — 保持现有渲染
+        // v261103-39: tool 块轻量化 — DS 批评"沉重墓碑"
+        // 原来有 codeBG 背景色块（DS 误认为"厚重边框"），占据视觉重心。
+        // 改成纯斜体小字号浅灰文字，无边框无背景，像"画外音"一样滑过。
         NSString *body = [contentLines componentsJoinedByString:@" · "];
         if (body.length == 0) return;
         UIFont *toolFont = [UIFont italicSystemFontOfSize:baseFont.pointSize - 1] ?: baseFont;
         UIColor *fg = [iOS6Theme secondaryTextColor];
-        UIColor *bg = [iOS6Theme codeBackgroundColor];
         AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
-        AppendAttrString(out, body, toolFont, fg, bg, 0, 0);
-        AppendAttrString(out, @"\n", toolFont, fg, bg, 0, 0);
+        AppendAttrString(out, body, toolFont, fg, nil, 0, 0);  // v261103-39: bg nil（was codeBG）
+        AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
         AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
     }
 }
