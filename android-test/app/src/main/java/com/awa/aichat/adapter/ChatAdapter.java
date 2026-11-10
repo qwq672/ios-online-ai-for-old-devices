@@ -208,7 +208,8 @@ public class ChatAdapter extends BaseAdapter {
         String thinking = msg.thinking == null ? "" : msg.thinking;
         if (thinking.length() > 0) {
             h.thinking.setVisibility(View.VISIBLE);
-            h.thinking.setText("💭 " + thinking);
+            // v0.3: 不用 💭 emoji（Android 2.3 无 emoji 字体显示成方块），改纯文本
+            h.thinking.setText("[思考] " + thinking);
         } else {
             h.thinking.setVisibility(View.GONE);
         }

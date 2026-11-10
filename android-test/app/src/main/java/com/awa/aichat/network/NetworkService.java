@@ -100,7 +100,7 @@ public class NetworkService {
                     // IOException — that's expected, not an error).
                     if (cancelled) return;
                     Log.e(TAG, "stream error", e);
-                    notifyError(e.getMessage() != null ? e.getMessage() : e.toString());
+                    notifyError(friendlyError(e));
                 }
             }
         }, "AIChat-Stream");
@@ -349,6 +349,35 @@ public class NetworkService {
     private static String truncate(String s, int max) {
         if (s == null) return "";
         return s.length() <= max ? s : s.substring(0, max) + "…";
+    }
+
+    /**
+     * v0.3: 把底层网络异常翻译成用户能看懂的中文消息。
+     * Android 2.3 老设备用户看到 'UnknownHostException: xxx' 会懵，
+     * 而且 ⚠️ emoji 在 2.3 显示成方块（无 emoji 字体）。
+     * 这里分类常见异常 → 友好中文 + 原始信息（截断）。
+     */
+    private static String friendlyError(Exception e) {
+        if (e == null) return "未知错误";
+        String cls = e.getClass().getSimpleName();
+        String msg = e.getMessage();
+        if (e instanceof java.net.UnknownHostException) {
+            return "无法连接服务器：DNS 解析失败（" + truncate(msg, 60) + "）— 请检查网络或 base URL";
+        }
+        if (e instanceof java.net.SocketTimeoutException) {
+            return "连接超时：服务器未响应（" + truncate(msg, 60) + "）";
+        }
+        if (e instanceof java.net.ConnectException) {
+            return "连接被拒绝（" + truncate(msg, 60) + "）— 服务器可能不可达或端口错误";
+        }
+        if (e instanceof javax.net.ssl.SSLException
+            || (msg != null && msg.contains("SSL"))) {
+            return "SSL/TLS 握手失败（" + truncate(msg, 60) + "）— 设备可能不支持 TLS 1.2";
+        }
+        if (e instanceof java.io.IOException) {
+            return "网络 IO 错误（" + truncate(msg, 60) + "）";
+        }
+        return cls + ": " + truncate(msg, 80);
     }
 
     /**

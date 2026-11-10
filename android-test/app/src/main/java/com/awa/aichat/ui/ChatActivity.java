@@ -242,8 +242,10 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
     public void onError(String message) {
         isStreaming = false;
         sendButton.setText("发送");
+        // v0.3: 不用 ⚠️ emoji（Android 2.3 无 emoji 字体显示成方块），
+        // 用纯文本前缀。NetworkService.friendlyError 已翻译成中文。
         String shown = message == null ? "未知错误" : message;
-        adapter.markLastError("⚠️ " + shown);
+        adapter.markLastError("[错误] " + shown);
         listView.setSelection(adapter.getCount() - 1);
     }
 
