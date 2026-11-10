@@ -178,17 +178,25 @@
         [httpReq appendFormat:@"Host: %@\r\n", host];
     }
     // 添加 headers
+    BOOL hasConnectionHeader = NO;  // v261103-36: 防止 Connection 头重复
     for (NSString *key in self.requestHeaders) {
         NSString *val = [self.requestHeaders objectForKey:key];
         if ([key isKindOfClass:[NSString class]] && [val isKindOfClass:[NSString class]]) {
             [httpReq appendFormat:@"%@: %@\r\n", key, val];
+            if ([key caseInsensitiveCompare:@"Connection"] == NSOrderedSame) {
+                hasConnectionHeader = YES;
+            }
         }
     }
     // Content-Length
     if (self.requestBody) {
         [httpReq appendFormat:@"Content-Length: %lu\r\n", (unsigned long)[self.requestBody length]];
     }
-    [httpReq appendString:@"Connection: close\r\n\r\n"];
+    // v261103-36: 只在调用方没设 Connection 时加（防止重复头）
+    if (!hasConnectionHeader) {
+        [httpReq appendString:@"Connection: close\r\n"];
+    }
+    [httpReq appendString:@"\r\n"];
 
     // 拼接 body
     NSMutableData *fullRequest = [NSMutableData data];
@@ -258,9 +266,24 @@
         goto cleanup;
     }
 
-    // 设置 hostname（SNI）
-    // v261103-34: 跳过 mbedtls_ssl_set_hostname — 节省 50-100ms
-    // mbedtls_ssl_set_hostname(&ssl, [host UTF8String]);
+    // v261103-36: 恢复 SNI（v261103-34 跳过的修复）
+    // v261103-34 为省 50-100ms 跳过了 mbedtls_ssl_set_hostname，但这会
+    // 导致 TLS ClientHello 不发 Server Name extension → Cloudflare / Vercar /
+    // 现代 API 网关（多 vhost 共享 IP）不知道客户端要连哪个 vhost → 返回默认
+    // 证书或直接 handshake_failure alert → ssl_handshake 返回非 0 →
+    // "聊天直接报错"。
+    // mbedtls_ssl_set_hostname 同时做两件事：
+    //   (1) 证书验证的 hostname 检查（VERIFY_NONE 跳过这个）
+    //   (2) TLS ClientHello 的 SNI extension（必须保留）
+    // 跳过 set_hostname 会同时跳过 (2)，这是 v261103-34 的错误判断。
+    // 注释里"大部分 API 服务器不需要 SNI"是错的 — 现代 HTTPS 服务器
+    // （特别是 CDN/网关后面的）几乎都要求 SNI。
+    // 用户的中转 api-ai.awa.lat 在 Cloudflare 后面，要求 SNI → 触发此 bug。
+    ret = mbedtls_ssl_set_hostname(&ssl, [host UTF8String]);
+    if (ret != 0) {
+        [self _failWithError:[NSString stringWithFormat:@"set_hostname failed: %d", ret]];
+        goto cleanup;
+    }
 
     // 4. TCP 连接
     char portStr[16];
