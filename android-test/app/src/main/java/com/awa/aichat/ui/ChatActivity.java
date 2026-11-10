@@ -78,18 +78,24 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
 
         // Restore conversation across recreate (theme switch / orientation).
         if (savedInstanceState != null) {
-            String[] roles = savedInstanceState.getStringArray("roles");
-            String[] contents = savedInstanceState.getStringArray("contents");
-            String[] thinkings = savedInstanceState.getStringArray("thinkings");
-            boolean[] errors = savedInstanceState.getBooleanArray("errors");
-            if (roles != null && contents != null && roles.length == contents.length) {
-                for (int i = 0; i < roles.length; i++) {
-                    int r = Integer.parseInt(roles[i]);
-                    Message m = new Message(r, contents[i]);
-                    if (thinkings != null && i < thinkings.length) m.thinking = thinkings[i];
-                    if (errors != null && i < errors.length) m.error = errors[i];
-                    adapter.add(m);
+            try {
+                String[] roles = savedInstanceState.getStringArray("roles");
+                String[] contents = savedInstanceState.getStringArray("contents");
+                String[] thinkings = savedInstanceState.getStringArray("thinkings");
+                boolean[] errors = savedInstanceState.getBooleanArray("errors");
+                if (roles != null && contents != null && roles.length == contents.length) {
+                    for (int i = 0; i < roles.length; i++) {
+                        int r = Integer.parseInt(roles[i]);
+                        Message m = new Message(r, contents[i]);
+                        if (thinkings != null && i < thinkings.length) m.thinking = thinkings[i];
+                        if (errors != null && i < errors.length) m.error = errors[i];
+                        adapter.add(m);
+                    }
                 }
+            } catch (Exception e) {
+                // v0.3: 防御性 — 恢复失败不崩（NumberFormatException / IndexOutOfBounds
+                // 在某些 OEM 2.3 build 上偶发，老设备闪退高发路径之一）
+                android.util.Log.w("ChatActivity", "state restore failed: " + e.getMessage());
             }
         }
 

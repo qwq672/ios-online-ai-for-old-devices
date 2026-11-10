@@ -42,6 +42,23 @@ public class NetworkService {
     private static final String TAG = "NetworkService";
     private static final int TIMEOUT = 120000; // 2 min
 
+    // v0.3: Android 2.3 默认只支持 TLS 1.0，OpenAI/Zhipu 等 API 要求 TLS 1.2+。
+    // 启用 TLS 1.2（如果设备 OpenSSL 支持的话）。在某些 2.3 OEM build 上这会
+    // 静默失败（设备没编 TLS 1.2），但不影响 TLS 1.0 连接。
+    // 这是"聊天即闪退"在老设备高发的疑似根因之一：TLS 握手失败 → 某些 OEM
+    // 抛 RuntimeException 而非 IOException → catch(Exception) 接住但 onError
+    // message 可能为 null → 显示 "⚠️ null"（已修），不至于闪退。
+    static {
+        try {
+            javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLSv1.2");
+            sc.init(null, null, null);
+            javax.net.ssl.HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
+            Log.i(TAG, "TLS 1.2 enabled");
+        } catch (Exception e) {
+            Log.w(TAG, "TLS 1.2 init failed (device may not support): " + e.getMessage());
+        }
+    }
+
     public interface Listener {
         void onChunk(String fullText);
         void onThinking(String thinkingText);
