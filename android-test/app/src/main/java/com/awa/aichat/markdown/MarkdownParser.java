@@ -11,8 +11,9 @@ import android.text.style.StyleSpan;
 import android.text.style.TypefaceSpan;
 import android.text.style.URLSpan;
 import android.text.style.UnderlineSpan;
-import android.util.LruCache;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -35,11 +36,25 @@ import java.util.regex.Pattern;
  */
 public class MarkdownParser {
 
-    // LruCache of recently rendered spans. Key = length|dark, value = parsed.
+    // v0.3: LRU cache of recently rendered spans. Key = length|dark, value = parsed.
     // We don't key on the full text because that would hold strong refs
     // to potentially huge strings; length-based invalidation is good
     // enough for streaming (content only changes by appending).
-    private static final LruCache<String, SpannableStringBuilder> CACHE = new LruCache<String, SpannableStringBuilder>(64);
+    //
+    // v0.3 fix: android.util.LruCache 是 API 12（Honeycomb MR1）加入的，
+    // 不是 API 9！Android 2.3 (API 9-11) 上 LruCache 类不存在 → MarkdownParser
+    // 类静态初始化抛 NoClassDefFoundError → ChatAdapter.getView 调 parseCached
+    // 时崩 → 一点发送就闪退。这是"老设备闪退，新设备没问题"的根因。
+    // 改用 LinkedHashMap + removeEldestEntry 自己实现 LRU（API 1 兼容）。
+    private static final int MAX_CACHE = 64;
+    private static final LinkedHashMap<String, SpannableStringBuilder> CACHE =
+        new LinkedHashMap<String, SpannableStringBuilder>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, SpannableStringBuilder> eldest) {
+                return size() > MAX_CACHE;
+            }
+        };
+    private static final Object CACHE_LOCK = new Object();
 
     // Theme color cache (resolved lazily).
     private static int lightCodeBg = 0xFFF4F4F8;
@@ -59,10 +74,14 @@ public class MarkdownParser {
             return new SpannableStringBuilder();
         }
         String key = (dark ? "d" : "l") + ":" + text.length() + ":" + (text.hashCode() & 0x7FFFFFFF);
-        SpannableStringBuilder cached = CACHE.get(key);
-        if (cached != null) return cached;
+        synchronized (CACHE_LOCK) {
+            SpannableStringBuilder cached = CACHE.get(key);
+            if (cached != null) return cached;
+        }
         SpannableStringBuilder rendered = parse(text, dark);
-        CACHE.put(key, rendered);
+        synchronized (CACHE_LOCK) {
+            CACHE.put(key, rendered);
+        }
         return rendered;
     }
 
