@@ -266,6 +266,7 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        networkService.setListener(null);  // v261103-35 fix #12: 释放 Activity 引用
         networkService.cancel();
     }
 

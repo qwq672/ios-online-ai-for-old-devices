@@ -51,7 +51,7 @@ public class NetworkService {
 
     private Listener listener;
     private volatile boolean cancelled = false;
-    private HttpURLConnection connection;
+    private volatile HttpURLConnection connection;  // v261103-35 fix #11: volatile 防 cancel 竞态
     private Thread streamThread;
 
     // Accumulated text + thinking
@@ -226,23 +226,24 @@ public class NetworkService {
                 if (delta == null) delta = choice.optJSONObject("message");
 
                 if (delta != null) {
-                    // Content
-                    String content = delta.optString("content", "");
-                    if (content == null) content = "";
+                    // Content — v0.3: Android org.json optString(key, "") 在
+                    // JSON 值为 null 时返回字符串 "null"（不是 fallback ""），
+                    // 导致截图里出现的 "nullnullnull…" — 用 safeStr 过滤。
+                    String content = safeStr(delta, "content");
                     if (content.length() > 0) {
                         accumulated.append(content);
                         notifyChunk(accumulated.toString());
                     }
 
                     // Reasoning / thinking — try every known field name.
-                    String reasoning = delta.optString("reasoning_content", "");
-                    if (reasoning == null || reasoning.length() == 0) {
-                        reasoning = delta.optString("reasoning", "");
+                    String reasoning = safeStr(delta, "reasoning_content");
+                    if (reasoning.length() == 0) {
+                        reasoning = safeStr(delta, "reasoning");
                     }
-                    if (reasoning == null || reasoning.length() == 0) {
-                        reasoning = delta.optString("thinking", "");
+                    if (reasoning.length() == 0) {
+                        reasoning = safeStr(delta, "thinking");
                     }
-                    if (reasoning != null && reasoning.length() > 0) {
+                    if (reasoning.length() > 0) {
                         thinkingAccumulated.append(reasoning);
                         notifyThinking(thinkingAccumulated.toString());
                     }
@@ -289,21 +290,21 @@ public class NetworkService {
             JSONObject message = choice.optJSONObject("message");
             if (message == null) return;
 
-            String content = message.optString("content", "");
-            if (content == null) content = "";
+            // v0.3: safeStr 过滤 JSON null → "null" 字符串 bug
+            String content = safeStr(message, "content");
             if (content.length() > 0) {
                 accumulated.append(content);
                 notifyChunk(accumulated.toString());
             }
 
-            String reasoning = message.optString("reasoning_content", "");
-            if (reasoning == null || reasoning.length() == 0) {
-                reasoning = message.optString("reasoning", "");
+            String reasoning = safeStr(message, "reasoning_content");
+            if (reasoning.length() == 0) {
+                reasoning = safeStr(message, "reasoning");
             }
-            if (reasoning == null || reasoning.length() == 0) {
-                reasoning = message.optString("thinking", "");
+            if (reasoning.length() == 0) {
+                reasoning = safeStr(message, "thinking");
             }
-            if (reasoning != null && reasoning.length() > 0) {
+            if (reasoning.length() > 0) {
                 thinkingAccumulated.append(reasoning);
                 notifyThinking(thinkingAccumulated.toString());
             }
@@ -331,6 +332,24 @@ public class NetworkService {
     private static String truncate(String s, int max) {
         if (s == null) return "";
         return s.length() <= max ? s : s.substring(0, max) + "…";
+    }
+
+    /**
+     * v0.3: 安全读 String 字段。
+     * Android org.json 的 optString(key, fallback) 在 key 对应 JSON null 时
+     * 返回字符串 "null"（不是 fallback）— 因为 JSON.toString(JSONObject.NULL)
+     * 返回 String.valueOf(JSONObject.NULL) = "null"。这导致 SSE delta 里
+     * "content": null / "reasoning_content": null 被转成 "null" 字符串
+     * append 进累积文本，UI 显示 "nullnullnull…" 和 "💭 null嗯…"。
+     *
+     * 此 helper 同时处理：key 不存在、JSON null、字符串 "null" 三种情况。
+     */
+    private static String safeStr(JSONObject obj, String key) {
+        if (obj == null) return "";
+        if (obj.isNull(key)) return "";  // 显式 JSON null 或 key 不存在
+        String s = obj.optString(key, "");
+        if (s == null || s.length() == 0 || "null".equals(s)) return "";
+        return s;
     }
 
     // --- Listener notifications (on main thread) ---
