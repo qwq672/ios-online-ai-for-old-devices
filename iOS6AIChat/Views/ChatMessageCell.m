@@ -773,7 +773,7 @@ static NSMutableSet *gStreamingMessageIDs = nil;
                                                                            baseFont:baseFont
                                                                               width:textWidth];
         textLabel.attributedText = renderedText;
-        textLabel.lineBreakMode = UILineBreakModeWordWrap;
+        textLabel.lineBreakMode = NSLineBreakByWordWrapping;
         [_sectionsContainer addSubview:textLabel];
         NSMutableDictionary *textSec = [NSMutableDictionary dictionaryWithObjectsAndKeys:
             @"text", @"type",
