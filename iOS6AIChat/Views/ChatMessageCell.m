@@ -838,11 +838,12 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         NSString *secKey = [NSString stringWithFormat:@"%@_inline_%ld", message.messageID, (long)thinkIdx];
         BOOL collapsed = ![ChatMessageCell _isThinkingExpanded:secKey];
 
+        // v261103-41: 恢复旧版样式 — “点击展开/收起”文字（无箭头无 emoji）
         NSString *toggleTitle;
         if (collapsed) {
-            toggleTitle = [NSString stringWithFormat:@"💭 %@ ∧", title];
+            toggleTitle = [NSString stringWithFormat:@"%@ · 点击展开", title];
         } else {
-            toggleTitle = [NSString stringWithFormat:@"💭 %@ ∨", title];
+            toggleTitle = [NSString stringWithFormat:@"%@ · 点击收起", title];
         }
         [toggle setTitle:toggleTitle forState:UIControlStateNormal];
         [cardView addSubview:toggle];
@@ -909,12 +910,13 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     label.hidden = collapsed;
     sep.hidden = collapsed;
 
+    // v261103-41: 恢复旧版样式 — “点击展开/收起”文字（无箭头无 emoji）
     NSString *title = [sec objectForKey:@"title"];
     NSString *newTitle;
     if (collapsed) {
-        newTitle = [NSString stringWithFormat:@"💭 %@ ∧", title];
+        newTitle = [NSString stringWithFormat:@"%@ · 点击展开", title];
     } else {
-        newTitle = [NSString stringWithFormat:@"💭 %@ ∨", title];
+        newTitle = [NSString stringWithFormat:@"%@ · 点击收起", title];
     }
     [sender setTitle:newTitle forState:UIControlStateNormal];
 
