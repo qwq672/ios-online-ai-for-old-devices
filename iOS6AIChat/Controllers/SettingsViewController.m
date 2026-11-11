@@ -1171,7 +1171,8 @@ titleForFooterInSection:(NSInteger)section
     valLabel.backgroundColor = [UIColor clearColor];
     valLabel.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     CGRect f = cell.contentView.bounds;
-    valLabel.frame = CGRectMake(f.size.width - 79 - kPad - 50, (kRowH - 20) / 2, 50, 20);
+    // v261103-48: valLabel 右对齐（row 1 没有开关，不用 -79）
+    valLabel.frame = CGRectMake(f.size.width - kPad - 55, (kRowH - 20) / 2, 55, 20);
     valLabel.tag = 999;  // 用于 slider 回调更新
     [cell.contentView addSubview:valLabel];
 
@@ -1188,9 +1189,11 @@ titleForFooterInSection:(NSInteger)section
     slider.userInteractionEnabled = streamingOn;
     slider.alpha = streamingOn ? 1.0 : 0.4;
     [cell.contentView addSubview:slider];
-    // Slider 放在值标签左边
-    CGFloat sliderW = f.size.width - 79 - kPad - valLabel.frame.size.width - 16 - kPad;
-    slider.frame = CGRectMake(kPad + 70, (kRowH - 30) / 2, sliderW, 30);
+    // v261103-48: slider 在 label 右边到 valLabel 左边之间
+    CGFloat sliderX = kPad + 78;
+    CGFloat sliderW = valLabel.frame.origin.x - sliderX - 8;
+    if (sliderW < 80) sliderW = 80;
+    slider.frame = CGRectMake(sliderX, (kRowH - 30) / 2, sliderW, 30);
 
     return cell;
 }

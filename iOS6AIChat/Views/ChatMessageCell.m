@@ -1925,7 +1925,10 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // → last line ALWAYS clipped. Now we add it to the height.
     // v261102-1: AI safety 8→24 (sync with _layoutInternal) — see comment there.
     // v261103-42: 有穿插思考时 _textView 隐藏，safety/insetV=0（同 _layoutInternal）
-    BOOL hasInlineLayout = hasInlineThinkMarker && !message.isUser;
+    // v261103-48: 流式时（fast）不走穿插布局（用 _textView 显示），
+    // 所以 hasInlineLayout 要加 !fast 条件 — 否则 heightForMessage 算穿插
+    // 布局高度（文字段拆分），但实际渲染用 _textView（整体文字），高度不一致 → 空白/溢出
+    BOOL hasInlineLayout = hasInlineThinkMarker && !message.isUser && !fast;
     CGFloat insetV = hasInlineLayout ? 0 : (useBubble ? 14 : 8);
     CGFloat tailH = useBubble ? 6 : 0;
     CGFloat vPad = useBubble ? 5 : 4;
