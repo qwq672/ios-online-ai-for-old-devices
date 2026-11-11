@@ -1066,19 +1066,50 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // （标记由 MarkdownParser._appendToolStatus 插入，不在原始 content 里）
     NSString *renderedString = _renderedAttr ? [_renderedAttr string] : @"";
     BOOL hasInlineThinking = [renderedString rangeOfString:@"\x00THINK\x00"].location != NSNotFound;
+    // v261103-47: 流式时不创建穿插布局（省掉重建 UILabel 的 30-80ms）
+    // 流式时用 _textView 显示 _renderedAttr（标记是 clearColor 不可见）
+    // 完成后才创建穿插布局（一次性渲染）
+    BOOL isStreaming = [ChatMessageCell isMessageStreaming:message.messageID];
 
-    if (hasInlineThinking && !message.isUser) {
-        // v261103-33: 解析 \x00THINK\x00 标记，创建穿插卡片
-        // 用 renderedString（含标记）而不是 displayedContent（不含标记）
+    if (hasInlineThinking && !message.isUser && !isStreaming) {
+        // 完成（非流式）— 创建穿插卡片
         [self _parseInlineThinkingSections:renderedString message:message];
         _thinkingBlock.hidden = YES;
         _sectionsContainer.hidden = NO;
     } else {
-        // 旧逻辑 — 没有 :::thinking 标记
+        // 流式时或无穿插思考 — 用 _textView 显示
         _sectionsContainer.hidden = YES;
         // v261103-40: 重置 _textView.hidden（cell 复用时上次消息可能有穿插思考
         // 设了 hidden=YES，这次普通消息不重置会导致文字不显示）
         _textView.hidden = NO;
+        // v261103-47: 流式时如果有旧穿插 sections，清理掉
+        if (isStreaming && _inlineSections && [_inlineSections count] > 0) {
+            for (UIView *sub in [_sectionsContainer subviews]) [sub removeFromSuperview];
+            [_inlineSections removeAllObjects];
+        }
+        // v261103-47: 流式时清理 _renderedAttr 里的标记（防止控制字符显示成空白）
+        if (isStreaming && hasInlineThinking && _renderedAttr) {
+            NSMutableAttributedString *cleanAttr = [_renderedAttr mutableCopy];
+            if (cleanAttr) {
+                NSString *str = cleanAttr.string;
+                NSUInteger searchStart = 0;
+                while (searchStart < [str length]) {
+                    NSRange thinkStart = [str rangeOfString:@"\x00THINK\x00" options:0
+                                                       range:NSMakeRange(searchStart, [str length] - searchStart)];
+                    if (thinkStart.location == NSNotFound) break;
+                    NSRange endTag = [str rangeOfString:@"\x00END\x00" options:0
+                                                    range:NSMakeRange(thinkStart.location + thinkStart.length,
+                                                                     [str length] - thinkStart.location - thinkStart.length)];
+                    if (endTag.location == NSNotFound) break;
+                    NSRange deleteRange = NSMakeRange(thinkStart.location,
+                                                      endTag.location + endTag.length - thinkStart.location);
+                    [cleanAttr deleteCharactersInRange:deleteRange];
+                    str = cleanAttr.string;
+                    searchStart = thinkStart.location;
+                }
+                self.renderedAttr = [cleanAttr autorelease];
+            }
+        }
 
     BOOL hasInlineThinkingOld = [displayedContent rangeOfString:@":::thinking"].location != NSNotFound;
     if (displayedThinking.length > 0 && !message.isUser && !hasInlineThinkingOld) {

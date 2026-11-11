@@ -48,6 +48,7 @@ NSString *const SettingsKeyImageMaxDim = @"imageMaxDim";
 NSString *const SettingsKeyModelSupportsImages = @"modelSupportsImages";
 NSString *const SettingsKeyModelSupportsThinking = @"modelSupportsThinking";
 NSString *const SettingsKeyStreamingOutput = @"streamingOutput";
+NSString *const SettingsKeyStreamingInterval = @"streamingInterval";  // v261103-47: ms
 // v261025-3: transit-server bundled model toggle (off by default).
 // When ON, the app calls GET /v1/transit/models and bulk-adds returned
 // models to local storage with source="transit". When OFF, all
@@ -538,7 +539,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         // 获取设备信息工具 / 显示工具调用.
         case kSectionWebSearch:  return 7;  // +1 自主视觉
         case kSectionPrompt:     return 1;
-        case kSectionAdvanced:   return 1;  // 流式输出 (代理 URL 已移除)
+        case kSectionAdvanced:   return 2;  // v261103-47: 流式输出 + 刷新频率
         case kSectionAbout:      return 5;  // author / email / version / github / license
         case kSectionReset:      return 1;
         default: return 0;
@@ -1128,23 +1129,84 @@ titleForFooterInSection:(NSInteger)section
 
 - (UITableViewCell *)_advancedCellForRow:(NSInteger)row cell:(UITableViewCell *)cell settings:(NSDictionary *)settings
 {
-    // v261103-3: only one row — 流式输出. The "代理 URL" row was removed
-    // (image gen always goes direct now; user confirmed transit/proxy
-    // doesn't help with OpenAI's geo-block anyway).
-    [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"流式输出", nil)]];
-    UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+    if (row == 0) {
+        // 流式输出开关
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"流式输出", nil)]];
+        UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
+        BOOL streamingOn = YES;
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingOutput"]) {
+            streamingOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"streamingOutput"];
+        }
+        [sw setOn:streamingOn animated:NO];
+        [sw addTarget:self action:@selector(_streamingOutputToggle:)
+         forControlEvents:UIControlEventValueChanged];
+        sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        CGRect f = cell.contentView.bounds;
+        sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
+        [cell.contentView addSubview:sw];
+        return cell;
+    }
+    // v261103-47: row 1 — 刷新频率 slider
+    // 流式 OFF 时灰色（主次关系：刷新频率依赖流式输出开关）
     BOOL streamingOn = YES;
     if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingOutput"]) {
         streamingOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"streamingOutput"];
     }
-    [sw setOn:streamingOn animated:NO];
-    [sw addTarget:self action:@selector(_streamingOutputToggle:)
-     forControlEvents:UIControlEventValueChanged];
-    sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    NSInteger interval = 300;  // 默认 300ms
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingInterval"]) {
+        interval = [[NSUserDefaults standardUserDefaults] integerForKey:@"streamingInterval"];
+    }
+    if (interval < 160) interval = 160;
+    if (interval > 1000) interval = 1000;
+
+    UILabel *titleLabel = [self _labelWithText:NSLocalizedString(@"刷新频率", nil)];
+    titleLabel.textColor = streamingOn ? titleLabel.textColor : [UIColor grayColor];
+    [cell.contentView addSubview:titleLabel];
+
+    // 值标签
+    UILabel *valLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
+    valLabel.text = [NSString stringWithFormat:@"%ldms", (long)interval];
+    valLabel.font = [UIFont systemFontOfSize:13];
+    valLabel.textColor = streamingOn ? [iOS6Theme secondaryTextColor] : [UIColor grayColor];
+    valLabel.backgroundColor = [UIColor clearColor];
+    valLabel.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     CGRect f = cell.contentView.bounds;
-    sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
-    [cell.contentView addSubview:sw];
+    valLabel.frame = CGRectMake(f.size.width - 79 - kPad - 50, (kRowH - 20) / 2, 50, 20);
+    valLabel.tag = 999;  // 用于 slider 回调更新
+    [cell.contentView addSubview:valLabel];
+
+    // Slider
+    UISlider *slider = [[[UISlider alloc] initWithFrame:CGRectZero] autorelease];
+    slider.minimumValue = 160;
+    slider.maximumValue = 1000;
+    slider.value = interval;
+    slider.continuous = YES;
+    slider.tag = 998;
+    [slider addTarget:self action:@selector(_streamingIntervalChanged:)
+     forControlEvents:UIControlEventValueChanged];
+    slider.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    slider.userInteractionEnabled = streamingOn;
+    slider.alpha = streamingOn ? 1.0 : 0.4;
+    [cell.contentView addSubview:slider];
+    // Slider 放在值标签左边
+    CGFloat sliderW = f.size.width - 79 - kPad - valLabel.frame.size.width - 16 - kPad;
+    slider.frame = CGRectMake(kPad + 70, (kRowH - 30) / 2, sliderW, 30);
+
     return cell;
+}
+
+- (IBAction)_streamingIntervalChanged:(UISlider *)slider
+{
+    NSInteger val = (NSInteger)slider.value;
+    if (val < 160) val = 160;
+    if (val > 1000) val = 1000;
+    [[NSUserDefaults standardUserDefaults] setInteger:val forKey:@"streamingInterval"];
+    // 更新值标签
+    UIView *cellView = slider.superview;
+    UILabel *valLabel = (UILabel *)[cellView viewWithTag:999];
+    if (valLabel) {
+        valLabel.text = [NSString stringWithFormat:@"%ldms", (long)val];
+    }
 }
 
 - (UITableViewCell *)_aboutCellForRow:(NSInteger)row cell:(UITableViewCell *)cell
@@ -1245,6 +1307,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
     [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"streamingOutput"];
     [[NSUserDefaults standardUserDefaults] synchronize];
+    // v261103-47: 刷新刷新频率 row 的灰色状态（流式 OFF → 灰色不可用）
+    [self.tableView reloadData];
 }
 
 // v261025-11: useServerModel toggle row was removed from the UI (去重) —

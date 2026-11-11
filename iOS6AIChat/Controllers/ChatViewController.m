@@ -1635,12 +1635,17 @@ didFailForConversationID:(NSString *)conversationID
 - (void)_refreshLastRowForce:(BOOL)force
 {
     if ([_conversation.messages count] == 0) return;
-    // Throttle: 0.3s — v261103-36 的 0.15s 太频繁，每次 layoutIfNeeded
-    // 跑全量 _layoutInternal（O(n) 整条消息），5K 字消息 ~50-100ms/次，
-    // 0.15s 周期下主线程被占满 → 网络回调堆积 → 响应慢到 5 秒+。
-    // v261103-38: 回退到 0.3s，主线程负担减半。
+    // v261103-47: throttle 从设置页读取（默认 300ms，范围 160-1000ms）
+    // 流式 OFF 时不用 throttle（非流式模式一次性返回）
+    NSTimeInterval throttleInterval = 0.3;
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingInterval"]) {
+        NSInteger ms = [[NSUserDefaults standardUserDefaults] integerForKey:@"streamingInterval"];
+        if (ms < 160) ms = 160;
+        if (ms > 1000) ms = 1000;
+        throttleInterval = (NSTimeInterval)ms / 1000.0;
+    }
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-    if (!force && now - self.lastRowReloadTime < 0.3) return;
+    if (!force && now - self.lastRowReloadTime < throttleInterval) return;
     self.lastRowReloadTime = now;
 
     NSIndexPath *lastIdx = [NSIndexPath indexPathForRow:[_conversation.messages count] - 1

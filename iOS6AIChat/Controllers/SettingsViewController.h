@@ -28,6 +28,7 @@ extern NSString *const SettingsKeyModelList;
 extern NSString *const SettingsKeyModelSupportsImages;
 extern NSString *const SettingsKeyModelSupportsThinking;
 extern NSString *const SettingsKeyStreamingOutput;
+extern NSString *const SettingsKeyStreamingInterval;  // v261103-47: 流式刷新频率（ms）
 extern NSString *const SettingsKeyTemperature;
 extern NSString *const SettingsKeySystemPrompt;
 extern NSString *const SettingsKeyWebSearchEnabled;
