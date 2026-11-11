@@ -25,6 +25,8 @@
 #import "iOS6Theme.h"
 #import "NetworkService.h"
 #import "Logger.h"
+#import "NSDataBase64.h"        // v261103-50: 导出/导入 base64
+#import "ConversationStore.h"   // v261103-50: 导出/导入对话
 // v261025-3: needed for [ModelManagementViewController removeAllTransitModels]
 // + sourceForModel: + instantiate throwaway VC for searchTransitBundledModels
 #import "ModelManagementViewController.h"
@@ -539,7 +541,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         // 获取设备信息工具 / 显示工具调用.
         case kSectionWebSearch:  return 7;  // +1 自主视觉
         case kSectionPrompt:     return 1;
-        case kSectionAdvanced:   return 2;  // v261103-47: 流式输出 + 刷新频率
+        case kSectionAdvanced:   return 4;  // v261103-47: 流式输出 + 刷新频率 + 导出 + 导入
         case kSectionAbout:      return 5;  // author / email / version / github / license
         case kSectionReset:      return 1;
         default: return 0;
@@ -1196,6 +1198,24 @@ titleForFooterInSection:(NSInteger)section
     slider.frame = CGRectMake(sliderX, (kRowH - 30) / 2, sliderW, 30);
 
     return cell;
+    }
+    // v261103-50: row 2 — 导出对话
+    if (row == 2) {
+        cell.textLabel.text = NSLocalizedString(@"导出对话", nil);
+        cell.textLabel.textColor = [iOS6Theme tintColor];
+        cell.textLabel.textAlignment = NSTextAlignmentLeft;
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        return cell;
+    }
+    // v261103-50: row 3 — 导入对话
+    if (row == 3) {
+        cell.textLabel.text = NSLocalizedString(@"导入对话（从剪贴板）", nil);
+        cell.textLabel.textColor = [iOS6Theme tintColor];
+        cell.textLabel.textAlignment = NSTextAlignmentLeft;
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        return cell;
+    }
+    return cell;
 }
 
 - (IBAction)_streamingIntervalChanged:(UISlider *)slider
@@ -1273,7 +1293,126 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
         [self.navigationController pushViewController:mm animated:YES];
     }
     // v261025-11: 默认提供商行已删（去重）— provider sheet 触发随之移除。
+    // v261103-50: 导出/导入对话
+    else if (logical == kSectionAdvanced) {
+        if (indexPath.row == 2) {
+            [self _exportConversations];
+        } else if (indexPath.row == 3) {
+            [self _importConversations];
+        }
+    }
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+}
+
+// v261103-50: 导出对话 — 序列化所有对话 → JSON → 写文件 → 分享
+- (void)_exportConversations
+{
+    NSArray *convs = [[ConversationStore sharedStore] conversations];
+    if ([convs count] == 0) {
+        UIAlertView *alert = [[[UIAlertView alloc] initWithTitle:nil
+                                                          message:@"没有对话可导出"
+                                                         delegate:nil
+                                                cancelButtonTitle:@"好的"
+                                                otherButtonTitles:nil] autorelease];
+        [alert show];
+        return;
+    }
+    NSMutableArray *arr = [NSMutableArray arrayWithCapacity:[convs count]];
+    for (Conversation *c in convs) {
+        NSData *data = [NSKeyedArchiver archivedDataWithRootObject:c];
+        NSString *b64 = [data base64String];  // NSDataBase64 category
+        if (b64) {
+            [arr addObject:@{
+                @"id": c.conversationID ?: @"",
+                @"title": c.title ?: @"",
+                @"data": b64
+            }];
+        }
+    }
+    NSDictionary *export = @{@"version": @(1), @"conversations": arr};
+    NSError *jsonErr = nil;
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:export
+                                                       options:NSJSONWritingPrettyPrinted
+                                                         error:&jsonErr];
+    if (jsonErr || !jsonData) {
+        UIAlertView *alert = [[[UIAlertView alloc] initWithTitle:nil
+                                                          message:@"导出失败"
+                                                         delegate:nil
+                                                cancelButtonTitle:@"好的"
+                                                otherButtonTitles:nil] autorelease];
+        [alert show];
+        return;
+    }
+    // 写到 Documents
+    NSString *docs = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,
+                                                           NSUserDomainMask, YES) objectAtIndex:0];
+    NSString *filePath = [docs stringByAppendingPathComponent:
+                          [NSString stringWithFormat:@"AIAnyWhere_export_%.0f.json",
+                           [NSDate timeIntervalSinceReferenceDate]]];
+    [jsonData writeToFile:filePath atomically:YES];
+    // 分享
+    UIActivityViewController *avc = [[[UIActivityViewController alloc]
+        initWithActivityItems:[NSArray arrayWithObjects:
+            [NSURL fileURLWithPath:filePath], nil]
+        applicationActivities:nil] autorelease];
+    if ([iOS6Theme isDarkMode]) {
+        // iOS 6 没有 avc 的样式控制，跳过
+    }
+    [self presentViewController:avc animated:YES completion:nil];
+}
+
+// v261103-50: 导入对话 — 从剪贴板读 JSON → 解析 → 写入
+- (void)_importConversations
+{
+    UIPasteboard *pb = [UIPasteboard generalPasteboard];
+    NSString *jsonStr = pb.string;
+    if (!jsonStr || jsonStr.length == 0) {
+        UIAlertView *alert = [[[UIAlertView alloc] initWithTitle:nil
+            message:@"剪贴板为空。请先复制导出的 JSON。"
+            delegate:nil cancelButtonTitle:@"好的" otherButtonTitles:nil] autorelease];
+        [alert show];
+        return;
+    }
+    NSData *jsonData = [jsonStr dataUsingEncoding:NSUTF8StringEncoding];
+    NSError *err = nil;
+    NSDictionary *dict = [NSJSONSerialization JSONObjectWithData:jsonData
+                                                        options:0
+                                                          error:&err];
+    if (err || ![dict isKindOfClass:[NSDictionary class]]) {
+        UIAlertView *alert = [[[UIAlertView alloc] initWithTitle:nil
+            message:@"剪贴板内容不是有效的 JSON。"
+            delegate:nil cancelButtonTitle:@"好的" otherButtonTitles:nil] autorelease];
+        [alert show];
+        return;
+    }
+    NSArray *convs = [dict objectForKey:@"conversations"];
+    if (![convs isKindOfClass:[NSArray class]] || [convs count] == 0) {
+        UIAlertView *alert = [[[UIAlertView alloc] initWithTitle:nil
+            message:@"JSON 中没有对话数据。"
+            delegate:nil cancelButtonTitle:@"好的" otherButtonTitles:nil] autorelease];
+        [alert show];
+        return;
+    }
+    NSInteger imported = 0;
+    for (NSDictionary *c in convs) {
+        NSString *b64 = [c objectForKey:@"data"];
+        if (![b64 isKindOfClass:[NSString class]]) continue;
+        NSData *data = [NSData dataFromBase64String:b64];
+        if (!data) continue;
+        @try {
+            Conversation *conv = [NSKeyedUnarchiver unarchiveObjectWithData:data];
+            if ([conv isKindOfClass:[Conversation class]]) {
+                [[ConversationStore sharedStore] saveConversation:conv];
+                imported++;
+            }
+        } @catch (NSException *e) {
+            // 跳过损坏的对话
+        }
+    }
+    UIAlertView *alert = [[[UIAlertView alloc] initWithTitle:nil
+        message:[NSString stringWithFormat:@"成功导入 %ld 个对话", (long)imported]
+        delegate:nil cancelButtonTitle:@"好的" otherButtonTitles:nil] autorelease];
+    [alert show];
 }
 
 // v261025-8: provider picker — 6 家 + 自定义，action sheet 每项一行。
