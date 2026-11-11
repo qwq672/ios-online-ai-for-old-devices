@@ -39,6 +39,7 @@
 
 #import "MarkdownParser.h"
 #import "iOS6Theme.h"
+#import "NSDataBase64.h"   // v261103-42: markdown 图片 base64 解码
 
 // Helper macro: append a string with given attributes.
 static void AppendAttrString(NSMutableAttributedString *out,
@@ -769,6 +770,72 @@ static void AppendAttrString(NSMutableAttributedString *out,
             }
         }
 
+        // === Image ![alt](url) ===========================================
+        // v261103-42: 支持 markdown 图片语法
+        // data:image/...;base64,xxx → 同步解码成 UIImage，NSTextAttachment 插入
+        // http(s):// → 渲染成 [alt](url) 链接（可点击）
+        if (c == '!' && i + 1 < len && [line characterAtIndex:i+1] == '[') {
+            NSRange search = NSMakeRange(i + 2, len - (i + 2));
+            NSRange close = [line rangeOfString:@"](" options:0 range:search];
+            if (close.location != NSNotFound) {
+                NSRange endParen = [line rangeOfString:@")"
+                                                options:0
+                                                  range:NSMakeRange(close.location + 2,
+                                                                       len - (close.location + 2))];
+                if (endParen.location != NSNotFound) {
+                    NSString *alt = [line substringWithRange:
+                                     NSMakeRange(i + 2, close.location - (i + 2))];
+                    NSString *url = [line substringWithRange:
+                                     NSMakeRange(close.location + 2,
+                                                   endParen.location - (close.location + 2))];
+                    if (buf.length > 0) {
+                        AppendAttrString(out, buf, baseFont, [iOS6Theme textColor], nil, 0, 0);
+                        [buf setString:@""];
+                    }
+                    // data: URL → 同步解码
+                    if ([url hasPrefix:@"data:image"]) {
+                        NSRange comma = [url rangeOfString:@","];
+                        if (comma.location != NSNotFound) {
+                            NSString *base64 = [url substringFromIndex:comma.location + 1];
+                            NSData *imgData = [NSData dataFromBase64String:base64];
+                            if (imgData) {
+                                UIImage *img = [UIImage imageWithData:imgData];
+                                if (img && img.size.width > 0) {
+                                    NSTextAttachment *attachment = [[[NSTextAttachment alloc] init] autorelease];
+                                    attachment.image = img;
+                                    // 限制图片大小（最大 200x200）
+                                    CGFloat maxW = 200, maxH = 200;
+                                    CGFloat scale = MIN(maxW / img.size.width, maxH / img.size.height);
+                                    if (scale > 1.0) scale = 1.0;
+                                    attachment.bounds = CGRectMake(0, 0,
+                                        img.size.width * scale, img.size.height * scale);
+                                    NSAttributedString *imgAttr = [NSAttributedString attributedStringWithAttachment:attachment];
+                                    [out appendAttributedString:imgAttr];
+                                    i = endParen.location + 1;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    // HTTP URL 或解码失败 → 渲染成链接
+                    NSMutableAttributedString *linkAttr = [[NSMutableAttributedString alloc]
+                                                            initWithString:alt.length > 0 ? alt : @"图片"];
+                    [linkAttr addAttribute:NSUnderlineStyleAttributeName value:@(1)
+                                      range:NSMakeRange(0, linkAttr.length)];
+                    [linkAttr addAttribute:NSForegroundColorAttributeName
+                                       value:[iOS6Theme tintColor]
+                                       range:NSMakeRange(0, linkAttr.length)];
+                    [linkAttr addAttribute:NSLinkAttributeName
+                                       value:url
+                                       range:NSMakeRange(0, linkAttr.length)];
+                    [out appendAttributedString:linkAttr];
+                    [linkAttr release];
+                    i = endParen.location + 1;
+                    continue;
+                }
+            }
+        }
+
         // === Link [label](url) ===========================================
         if (c == '[') {
             NSRange search = NSMakeRange(i + 1, len - (i + 1));
@@ -884,10 +951,14 @@ static void AppendAttrString(NSMutableAttributedString *out,
         // v261103-39: tool 块轻量化 — DS 批评"沉重墓碑"
         // 原来有 codeBG 背景色块（DS 误认为"厚重边框"），占据视觉重心。
         // 改成纯斜体小字号浅灰文字，无边框无背景，像"画外音"一样滑过。
+        // v261103-42: 进一步降色 — 用户说"混一起"，比 secondaryTextColor 更灰，
+        // 视觉上更"退后"。深色模式 #6A6A78，浅色模式 #888888。
         NSString *body = [contentLines componentsJoinedByString:@" · "];
         if (body.length == 0) return;
         UIFont *toolFont = [UIFont italicSystemFontOfSize:baseFont.pointSize - 1] ?: baseFont;
-        UIColor *fg = [iOS6Theme secondaryTextColor];
+        UIColor *fg = [iOS6Theme isDarkMode]
+            ? [UIColor colorWithWhite:0.42 alpha:1.0]   // #6A6A78 深色模式
+            : [UIColor colorWithWhite:0.53 alpha:1.0];  // #888888 浅色模式
         AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
         AppendAttrString(out, body, toolFont, fg, nil, 0, 0);  // v261103-39: bg nil（was codeBG）
         AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
@@ -1022,8 +1093,10 @@ static void AppendAttrString(NSMutableAttributedString *out,
         UIFont *rowFont = isHeader ? headerFont : bodyFont;
         UIColor *rowColor = isHeader ? headerColor : textColor;
 
-        // Build the row string with proper column padding.
-        NSMutableString *rowStr = [NSMutableString string];
+        // v261103-42: 逐单元格渲染，单元格间加竖向分割线 │
+        // 原来拼成一行字符串一次性渲染（单一颜色），无法给竖线不同颜色。
+        // 改成逐单元格 AppendAttrString，竖线用 hairlineColor。
+        UIColor *vlineColor = [iOS6Theme hairlineColor];
         for (NSUInteger c = 0; c < maxCols; c++) {
             NSString *cell = c < [row count] ? [row objectAtIndex:c] : @"";
             NSUInteger targetW = [[colWidths objectAtIndex:c] unsignedIntegerValue];
@@ -1032,15 +1105,12 @@ static void AppendAttrString(NSMutableAttributedString *out,
             while (padded.length < targetW) {
                 padded = [padded stringByAppendingString:@" "];
             }
-            // Add cell + separator space.
-            [rowStr appendFormat:@"%@  ", padded];
+            // v261103-42: 竖向分割线（单元格之间，不在末尾加）
+            if (c > 0) {
+                AppendAttrString(out, @" │ ", rowFont, vlineColor, rowBg, 0, 0);
+            }
+            AppendAttrString(out, padded, rowFont, rowColor, rowBg, 0, 0);
         }
-        // Trim trailing spaces.
-        NSString *trimmedRow = [rowStr stringByTrimmingCharactersInSet:
-                               [NSCharacterSet whitespaceCharacterSet]];
-
-        // Render with background color.
-        AppendAttrString(out, trimmedRow, rowFont, rowColor, rowBg, 0, 0);
         AppendAttrString(out, @"\n", rowFont, rowColor, rowBg, 0, 0);
         dataRowIdx++;
     }

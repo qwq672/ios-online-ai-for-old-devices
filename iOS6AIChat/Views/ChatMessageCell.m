@@ -292,16 +292,13 @@ static NSMutableSet *gStreamingMessageIDs = nil;
 
 + (void)_markThinkingExpanded:(NSString *)mid expanded:(BOOL)e
 {
+    // v261103-42: nil key 防御 — removeObjectForKey:nil / setObject:forKey:nil
+    // 会 NSInvalidArgumentException 闪退（日志定位）
+    if (!mid) return;
     [self _initializeCaches];
     @synchronized(gExpandedThinking) {
         if (e) [gExpandedThinking setObject:@"1" forKey:mid];
         else [gExpandedThinking removeObjectForKey:mid];
-        // NSCache on iOS 6 doesn't expose `allKeys`, so we can't
-        // selectively invalidate entries by message ID prefix.
-        // Just flush the whole height cache — it'll be re-populated
-        // lazily as the table view queries heightForRow again.
-        // The cost is one extra Markdown re-render pass per visible
-        // message, which is acceptable for a tap-driven action.
         [gHeightCache removeAllObjects];
     }
 }
@@ -737,10 +734,13 @@ static NSMutableSet *gStreamingMessageIDs = nil;
 - (void)_parseInlineThinkingSections:(NSString *)content message:(Message *)message
 {
     // 清理旧 sections
+    // v261103-42: 修复文字上下重叠 — 原来只 remove "view" key（思考卡片 cardView），
+    // 文字段的 UILabel（key="label"）直接加在 _sectionsContainer 上没 remove →
+    // 流式刷新重新解析时新旧 UILabel 叠在一起 → 上下重叠。
+    // 改成遍历 _sectionsContainer.subviews 全部 remove，最干净。
     if (_inlineSections) {
-        for (NSDictionary *sec in _inlineSections) {
-            UIView *v = [sec objectForKey:@"view"];
-            if (v) [v removeFromSuperview];
+        for (UIView *sub in [_sectionsContainer subviews]) {
+            [sub removeFromSuperview];
         }
         [_inlineSections removeAllObjects];
     } else {
@@ -830,7 +830,10 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         toggle.contentEdgeInsets = UIEdgeInsetsMake(0, 6, 0, 6);
         toggle.titleLabel.font = [UIFont boldSystemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
         [toggle setTitleColor:[iOS6Theme tintColor] forState:UIControlStateNormal];
-        toggle.tag = thinkIdx;
+        // v261103-42: toggle.tag 用 _inlineSections 实际 index（addObject 前），
+        // 不用 thinkIdx — 穿插布局后 _inlineSections 含文字段，
+        // thinkIdx（思考序号）和数组 index 不对应，点卡片取错 section → 崩溃
+        toggle.tag = [_inlineSections count];
         [toggle addTarget:self action:@selector(_toggleInlineThinking:)
             forControlEvents:UIControlEventTouchUpInside];
 
@@ -901,6 +904,10 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     NSInteger idx = sender.tag;
     if (!_inlineSections || idx < 0 || idx >= (NSInteger)[_inlineSections count]) return;
     NSMutableDictionary *sec = [_inlineSections objectAtIndex:idx];
+    // v261103-42: 防御性 — 确保是 thinking 类型（文字段 type=text 没有 toggle，
+    // 但 tag 错位时可能取到文字段 → 没有 key/view/label 等字段 → 各种 nil 崩溃）
+    NSString *type = [sec objectForKey:@"type"];
+    if (![type isEqualToString:@"thinking"]) return;
     BOOL collapsed = [[sec objectForKey:@"collapsed"] boolValue];
     collapsed = !collapsed;
     [sec setObject:[NSNumber numberWithBool:collapsed] forKey:@"collapsed"];
@@ -1402,8 +1409,9 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // v261103-38: safety 20/24 → 32/36 — 用户报最后一行被遮，boundingRectWithSize
     // 低估超过 20pt 时仍遮。32/36 多吸收一行（~17pt）。
     // v261103-40: 32/36 太大导致生成后大空白，回退到 26/30（折中）
-    CGFloat safety = useBubble ? 26 : 30;
-    CGFloat insetV = useBubble ? 14 : 8;  // v261025-33: textContainerInset vertical total
+    // v261103-42: _textView.hidden（穿插布局）时 safety/insetV=0，避免大空白
+    CGFloat safety = _textView.hidden ? 0 : (useBubble ? 26 : 30);
+    CGFloat insetV = _textView.hidden ? 0 : (useBubble ? 14 : 8);
     CGFloat bubbleWidth;
     if (!useBubble) {
         bubbleWidth = self.bounds.size.width;  // AI: full width
@@ -1549,9 +1557,12 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // v261025-33: text height = bubbleHeight - consumed - bottom reserve.
     // insetV is already added to bubbleHeight (matches heightForMessage),
     // so the text frame now includes room for the textContainerInset.
-    CGFloat bottomReserve = useBubble ? (tailHeight + 4) : 4;
-    CGFloat textH = bubbleHeight - yOffset - imagesH - bottomReserve;
-    if (textH < 20) textH = 20;
+    // v261103-42: _textView.hidden 时不占空间（textH=0）
+    CGFloat textH = 0;
+    if (!_textView.hidden) {
+        textH = bubbleHeight - yOffset - imagesH - bottomReserve;
+        if (textH < 20) textH = 20;
+    }
     _textView.frame = CGRectMake(contentX, yOffset, contentW, textH);
 
     // Images at bottom of bubble.
@@ -1863,12 +1874,15 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // The old formula omitted this → text frame 8-14pt shorter than needed
     // → last line ALWAYS clipped. Now we add it to the height.
     // v261102-1: AI safety 8→24 (sync with _layoutInternal) — see comment there.
-    CGFloat insetV = useBubble ? 14 : 8;   // top+bottom textContainerInset
+    // v261103-42: 有穿插思考时 _textView 隐藏，safety/insetV=0（同 _layoutInternal）
+    BOOL hasInlineLayout = hasInlineThinkMarker && !message.isUser;
+    CGFloat insetV = hasInlineLayout ? 0 : (useBubble ? 14 : 8);
     CGFloat tailH = useBubble ? 6 : 0;
     CGFloat vPad = useBubble ? 5 : 4;
     // v261103-38: safety 20/24 → 32/36（与 _layoutInternal 同步，吸收 boundingRectWithSize 低估）
     // v261103-40: 32/36 太大导致空白，回退到 26/30
-    CGFloat safety = useBubble ? 26 : 30;
+    // v261103-42: 有穿插布局时 safety=0
+    CGFloat safety = hasInlineLayout ? 0 : (useBubble ? 26 : 30);
     CGFloat bubbleHeight = textRect.size.height + insetV + 2 * vPad + tailH + safety
                           + thinkingH + imagesH + inlineThinkH;
     CGFloat result = bubbleHeight + 2 * verticalPad + buttonH;
