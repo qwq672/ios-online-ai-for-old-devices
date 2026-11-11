@@ -255,35 +255,9 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         // colors to white so they stay readable. Only runs for user
         // messages and only on the MISS path (the remapped string is
         // what lands in the cache, so hits stay free).
-        // v261103-1: skip the color remap during streaming (fast path)
-        // — user messages are short, but the enumerateAttribute pass
-        // is O(n) and unnecessary while chunks are still arriving.
-        // The final full-path render will apply the remap.
-        if (message.isUser && !fast) {
-            NSMutableAttributedString *m = [[attr mutableCopy] autorelease];
-            if (m) {
-                UIColor *base = [iOS6Theme textColor];
-                UIColor *sec  = [iOS6Theme secondaryTextColor];
-                [m enumerateAttribute:NSForegroundColorAttributeName
-                              inRange:NSMakeRange(0, [m length])
-                              options:0
-                         usingBlock:^(id value, NSRange range, BOOL *stop) {
-                    if (![(NSObject *)value isKindOfClass:[UIColor class]]) return;
-                    UIColor *c = (UIColor *)value;
-                    // Exact-component matches only — code blocks, links
-                    // and syntax colors keep their own palette.
-                    if ([c isEqual:base]) {
-                        [m addAttribute:NSForegroundColorAttributeName
-                                  value:[UIColor whiteColor] range:range];
-                    } else if ([c isEqual:sec]) {
-                        [m addAttribute:NSForegroundColorAttributeName
-                                  value:[UIColor colorWithWhite:1.0f alpha:0.82f]
-                                          range:range];
-                    }
-                }];
-                attr = m;
-            }
-        }
+        // v261103-45: 用户气泡改成灰色后，不再需要白色 remap
+        // （原 remap 是绿色气泡需要白色文字，现在灰色气泡用 textColor）
+        // 删除 remap 节省 O(n) enumerateAttribute pass。
         [gRenderedAttrCache setObject:attr forKey:cacheKey
                               cost:(NSInteger)[message.content length]];
     }
@@ -1047,8 +1021,9 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // green user glass, theme color on the silver/charcoal AI glass.
     // (Only affects plain-text fallbacks; the attributed string above
     // is the real render path.)
-    _textView.textColor = message.isUser ? [UIColor whiteColor]
-                                          : [iOS6Theme textColor];
+    // v261103-45: 用户气泡改成灰色后，文字用 textColor（和 AI 一样），
+    // 不再用白色（白色在浅灰背景上对比度不够）
+    _textView.textColor = [iOS6Theme textColor];
 
     // Compute text width — MUST use the same unified width as
     // heightForMessage and _layoutInternal so the Markdown re-wrap and

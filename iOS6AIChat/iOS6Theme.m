@@ -855,18 +855,20 @@ static const uint8_t kNoiseCells[24] = {
     }
     BOOL dark = [self isDarkMode];
 
-    // Palette — classic iOS 6 Messages:
-    //   user: saturated green glass (white text goes on top)
-    //   assistant: silver-white glass (light) / charcoal (dark)
+    // Palette — v261103-45: 用户气泡改成灰色（和 bubbleUserColor 一致）
+    //   原 green (#A3E86C/#56C130) 是 DS 批评的"塑料感"来源。
+    //   v261103-32 改了 bubbleUserColor 为灰色但 stretchable image 硬编码绿色，
+    //   image 优先于 vector drawing → 灰色没生效 → 还是绿色塑料。
+    //   现在统一改成灰色渐变。
     NSString *topHex, *botHex, *borderHex;
     if (isUser) {
-        topHex    = dark ? @"#4F9C36" : @"#A3E86C";
-        botHex    = dark ? @"#2C6B1E" : @"#56C130";
-        borderHex = dark ? @"#1E4A12" : @"#3E8A22";
+        topHex    = dark ? @"#3A3A3C" : @"#E5E5EA";
+        botHex    = dark ? @"#2A2A2C" : @"#C8C8CE";
+        borderHex = dark ? @"#4A4A4C" : @"#A8A8AE";
     } else {
-        topHex    = dark ? @"#3C3C42" : @"#FFFFFF";
-        botHex    = dark ? @"#242428" : @"#E3E3E8";
-        borderHex = dark ? @"#141418" : @"#B9B9C0";
+        topHex    = dark ? @"#2C2C2E" : @"#FFFFFF";
+        botHex    = dark ? @"#1C1C1E" : @"#E3E3E8";
+        borderHex = dark ? @"#3A3A3C" : @"#B9B9C0";
     }
 
     // Build body+tail path (same construction as the legacy drawRect).
