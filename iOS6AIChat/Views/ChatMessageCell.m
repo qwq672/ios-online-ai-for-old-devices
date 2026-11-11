@@ -1083,7 +1083,8 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         // 设了 hidden=YES，这次普通消息不重置会导致文字不显示）
         _textView.hidden = NO;
         // v261103-47: 流式时如果有旧穿插 sections，清理掉
-        if (isStreaming && _inlineSections && [_inlineSections count] > 0) {
+        // v261103-48: 总是清理（防止 cell 复用时旧 sections 内存泄漏）
+        if (_inlineSections && [_inlineSections count] > 0) {
             for (UIView *sub in [_sectionsContainer subviews]) [sub removeFromSuperview];
             [_inlineSections removeAllObjects];
         }
