@@ -750,11 +750,13 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // v261103-40: 穿插布局 — 文字段不再拼接进 cleanText，
     // 而是创建 UILabel 加入 _inlineSections（type=text），
     // 和思考卡片交替堆叠，实现真正的穿插。
+    // v261103-44: 流式时文字段用 plain text（快速），完成后用 MarkdownParser（完整）
     NSInteger thinkIdx = 0;
     CGFloat boundsWidth = self.bounds.size.width;
     if (boundsWidth < 100) boundsWidth = [UIScreen mainScreen].bounds.size.width;
     CGFloat textWidth = [ChatMessageCell aiTextWidthForOuterWidth:boundsWidth];
     UIFont *baseFont = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
+    BOOL fast = [ChatMessageCell isMessageStreaming:message.messageID];
 
     NSUInteger searchStart = 0;
     NSString *thinkTag = @"\x00THINK\x00";
@@ -769,9 +771,17 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         textLabel.font = baseFont;
         textLabel.textColor = [iOS6Theme textColor];
         textLabel.backgroundColor = [UIColor clearColor];
-        NSAttributedString *renderedText = [MarkdownParser attributedStringFromMarkdown:textSeg
-                                                                           baseFont:baseFont
-                                                                              width:textWidth];
+        // v261103-44: 流式时用 plain text（快速），完成后用 MarkdownParser
+        NSAttributedString *renderedText;
+        if (fast) {
+            renderedText = [[[NSAttributedString alloc] initWithString:textSeg
+                attributes:@{NSFontAttributeName: baseFont,
+                             NSForegroundColorAttributeName: [iOS6Theme textColor]}] autorelease];
+        } else {
+            renderedText = [MarkdownParser attributedStringFromMarkdown:textSeg
+                                                               baseFont:baseFont
+                                                                  width:textWidth];
+        }
         textLabel.attributedText = renderedText;
         textLabel.lineBreakMode = NSLineBreakByWordWrapping;
         [_sectionsContainer addSubview:textLabel];
@@ -1739,9 +1749,16 @@ static NSMutableSet *gStreamingMessageIDs = nil;
                 // v261103-40: 剩余文字段 — 算高度
                 NSString *remaining = [dispContentForCalc substringFromIndex:searchStart];
                 if (remaining.length > 0) {
-                    NSAttributedString *textAttr = [MarkdownParser attributedStringFromMarkdown:remaining
-                                                                                       baseFont:baseFont
-                                                                                          width:availTextWidth];
+                    // v261103-44: 流式时用 plain text 高度（快速），完成后用 MarkdownParser
+                    NSAttributedString *textAttr;
+                    if (fast) {
+                        textAttr = [[[NSAttributedString alloc] initWithString:remaining
+                            attributes:@{NSFontAttributeName: baseFont}] autorelease];
+                    } else {
+                        textAttr = [MarkdownParser attributedStringFromMarkdown:remaining
+                                                                           baseFont:baseFont
+                                                                              width:availTextWidth];
+                    };
                     CGSize sz = [textAttr boundingRectWithSize:CGSizeMake(availTextWidth - 4, CGFLOAT_MAX)
                                                        options:(NSStringDrawingUsesLineFragmentOrigin |
                                                                 NSStringDrawingUsesFontLeading)
@@ -1754,9 +1771,16 @@ static NSMutableSet *gStreamingMessageIDs = nil;
             if (thinkRange.location > searchStart) {
                 NSString *textBefore = [dispContentForCalc substringWithRange:NSMakeRange(searchStart, thinkRange.location - searchStart)];
                 if (textBefore.length > 0) {
-                    NSAttributedString *textAttr = [MarkdownParser attributedStringFromMarkdown:textBefore
-                                                                                       baseFont:baseFont
-                                                                                          width:availTextWidth];
+                    // v261103-44: 流式时用 plain text 高度（快速）
+                    NSAttributedString *textAttr;
+                    if (fast) {
+                        textAttr = [[[NSAttributedString alloc] initWithString:textBefore
+                            attributes:@{NSFontAttributeName: baseFont}] autorelease];
+                    } else {
+                        textAttr = [MarkdownParser attributedStringFromMarkdown:textBefore
+                                                                           baseFont:baseFont
+                                                                              width:availTextWidth];
+                    };
                     CGSize sz = [textAttr boundingRectWithSize:CGSizeMake(availTextWidth - 4, CGFLOAT_MAX)
                                                        options:(NSStringDrawingUsesLineFragmentOrigin |
                                                                 NSStringDrawingUsesFontLeading)
