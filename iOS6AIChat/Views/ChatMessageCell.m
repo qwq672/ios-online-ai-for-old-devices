@@ -1558,6 +1558,7 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // insetV is already added to bubbleHeight (matches heightForMessage),
     // so the text frame now includes room for the textContainerInset.
     // v261103-42: _textView.hidden 时不占空间（textH=0）
+    CGFloat bottomReserve = useBubble ? (tailHeight + 4) : 4;
     CGFloat textH = 0;
     if (!_textView.hidden) {
         textH = bubbleHeight - yOffset - imagesH - bottomReserve;
