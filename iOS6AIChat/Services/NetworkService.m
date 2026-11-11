@@ -1805,10 +1805,21 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
                     resultStr = @"Error: invalid image URL";
                 }
                 @synchronized(toolResults) {
-                    [toolResults addObject:@{
-                        @"role": @"tool", @"tool_call_id": callId ?: @"",
-                        @"content": resultStr
-                    }];
+                    // v261103-46: 图片用 image_url 数组格式（OpenAI vision API）
+                    // 原来返回字符串 "data:image/jpeg;base64,xxx"，AI 不知道是图片，
+                    // 当文本处理 → "无法解码渲染像素内容"。
+                    // 改成 content 数组含 image_url 类型，支持 vision 的模型能直接看到图片。
+                    if ([resultStr hasPrefix:@"data:image"]) {
+                        [toolResults addObject:@{
+                            @"role": @"tool", @"tool_call_id": callId ?: @"",
+                            @"content": @[@{@"type": @"image_url", @"image_url": @{@"url": resultStr}}]
+                        }];
+                    } else {
+                        [toolResults addObject:@{
+                            @"role": @"tool", @"tool_call_id": callId ?: @"",
+                            @"content": resultStr
+                        }];
+                    }
                 }
                 continue;
             }

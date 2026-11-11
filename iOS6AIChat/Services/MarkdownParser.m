@@ -949,18 +949,18 @@ static void AppendAttrString(NSMutableAttributedString *out,
         AppendAttrString(out, @"\n", baseFont, [iOS6Theme textColor], nil, 0, 0);
     } else {
         // v261103-39: tool 块轻量化 — DS 批评"沉重墓碑"
-        // 原来有 codeBG 背景色块（DS 误认为"厚重边框"），占据视觉重心。
-        // 改成纯斜体小字号浅灰文字，无边框无背景，像"画外音"一样滑过。
-        // v261103-42: 进一步降色 — 用户说"混一起"，比 secondaryTextColor 更灰，
-        // 视觉上更"退后"。深色模式 #6A6A78，浅色模式 #888888。
+        // v261103-42: 进一步降色 — 用户说"混一起"
+        // v261103-46: 再降色 + 加前缀 "· " 让视觉上明显是"旁白"
+        //   深色模式 #5A5A68，浅色模式 #999999（比 secondaryTextColor 更灰）
         NSString *body = [contentLines componentsJoinedByString:@" · "];
         if (body.length == 0) return;
         UIFont *toolFont = [UIFont italicSystemFontOfSize:baseFont.pointSize - 1] ?: baseFont;
         UIColor *fg = [iOS6Theme isDarkMode]
-            ? [UIColor colorWithWhite:0.42 alpha:1.0]   // #6A6A78 深色模式
-            : [UIColor colorWithWhite:0.53 alpha:1.0];  // #888888 浅色模式
+            ? [UIColor colorWithWhite:0.35 alpha:1.0]   // #5A5A68 深色模式
+            : [UIColor colorWithWhite:0.6 alpha:1.0];   // #999999 浅色模式
         AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
-        AppendAttrString(out, body, toolFont, fg, nil, 0, 0);  // v261103-39: bg nil（was codeBG）
+        AppendAttrString(out, @"· ", toolFont, fg, nil, 0, 0);  // v261103-46: 前缀
+        AppendAttrString(out, body, toolFont, fg, nil, 0, 0);
         AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
         AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
     }

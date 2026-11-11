@@ -1409,28 +1409,47 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         bubbleWidth = MIN(bubbleWidth, maxBubbleWidth);
     }
     // v261103-33: 如果有穿插思考卡片，加 sections 高度
+    // v261103-46: inlineSectionsH 计算要区分 text/thinking 类型
+    // 原来不区分 → 文字段被当思考卡片处理，多算 toggleH(22pt) +
+    // 用 thinkFont(12pt) 算高度（实际用 baseFont 15pt）→ cell 高度
+    // 比内容大 → 大空白
     CGFloat inlineSectionsH = 0;
     if (_inlineSections && [_inlineSections count] > 0) {
         CGFloat toggleH = 22;
         for (NSInteger i = 0; i < (NSInteger)[_inlineSections count]; i++) {
             NSDictionary *sec = [_inlineSections objectAtIndex:i];
-            BOOL collapsed = [[sec objectForKey:@"collapsed"] boolValue];
-            CGFloat cardH = toggleH + 4;
-            if (!collapsed) {
-                NSString *thinkText = [sec objectForKey:@"content"];
-                if (thinkText.length > 0) {
-                    UIFont *thinkFont = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
-                    NSAttributedString *attr = [[[NSAttributedString alloc]
-                        initWithString:thinkText
-                            attributes:@{NSFontAttributeName: thinkFont}] autorelease];
-                    CGSize sz = [attr boundingRectWithSize:CGSizeMake(availTextWidth - 8, CGFLOAT_MAX)
-                                                   options:(NSStringDrawingUsesLineFragmentOrigin |
-                                                            NSStringDrawingUsesFontLeading)
-                                                   context:nil].size;
-                    cardH += ceilf(sz.height) + 6 + 4;
+            NSString *type = [sec objectForKey:@"type"];
+            if ([type isEqualToString:@"text"]) {
+                // 文字段 — 用 label.attributedText 算高度，不加 toggleH
+                UILabel *textLabel = [sec objectForKey:@"label"];
+                NSAttributedString *textAttr = textLabel.attributedText;
+                if (textAttr && textAttr.length > 0) {
+                    CGSize sz = [textAttr boundingRectWithSize:CGSizeMake(availTextWidth - 4, CGFLOAT_MAX)
+                                                       options:(NSStringDrawingUsesLineFragmentOrigin |
+                                                                NSStringDrawingUsesFontLeading)
+                                                       context:nil].size;
+                    inlineSectionsH += ceilf(sz.height) + 4;
                 }
+            } else {
+                // thinking 卡片
+                BOOL collapsed = [[sec objectForKey:@"collapsed"] boolValue];
+                CGFloat cardH = toggleH + 4;
+                if (!collapsed) {
+                    NSString *thinkText = [sec objectForKey:@"content"];
+                    if (thinkText.length > 0) {
+                        UIFont *thinkFont = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:12]];
+                        NSAttributedString *attr = [[[NSAttributedString alloc]
+                            initWithString:thinkText
+                                attributes:@{NSFontAttributeName: thinkFont}] autorelease];
+                        CGSize sz = [attr boundingRectWithSize:CGSizeMake(availTextWidth - 8, CGFLOAT_MAX)
+                                                       options:(NSStringDrawingUsesLineFragmentOrigin |
+                                                                NSStringDrawingUsesFontLeading)
+                                                       context:nil].size;
+                        cardH += ceilf(sz.height) + 6 + 4;
+                    }
+                }
+                inlineSectionsH += cardH + 4;
             }
-            inlineSectionsH += cardH + 4;
         }
     }
     CGFloat bubbleHeight = textRect.size.height + insetV + 2 * bubbleInnerVPad + tailHeight + safety
