@@ -956,10 +956,10 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     NSString *text = [seg objectForKey:@"text"];
     NSString *title;
     if (collapsed) {
-        title = [NSString stringWithFormat:@"💭 思考 #%ld (点击展开) — %lu 字",
+        title = [NSString stringWithFormat:@"思考 #%ld · 点击展开 — %lu 字",
                  (long)(idx + 1), (unsigned long)text.length];
     } else {
-        title = [NSString stringWithFormat:@"💭 思考 #%ld (点击收起)", (long)(idx + 1)];
+        title = [NSString stringWithFormat:@"思考 #%ld · 点击收起", (long)(idx + 1)];
     }
     [sender setTitle:title forState:UIControlStateNormal];
     // 记录展开状态（key = messageID_index）
@@ -1135,12 +1135,12 @@ static NSMutableSet *gStreamingMessageIDs = nil;
                 forControlEvents:UIControlEventTouchUpInside];
             NSString *title;
             if (thinkingLive && segIdx == [segments count] - 1) {
-                title = @"💭 深度思考中…";
+                title = @"深度思考中…";
             } else if (segCollapsed) {
-                title = [NSString stringWithFormat:@"💭 思考 #%ld (点击展开) — %lu 字",
+                title = [NSString stringWithFormat:@"思考 #%ld · 点击展开 — %lu 字",
                          (long)(segIdx + 1), (unsigned long)trimmed.length];
             } else {
-                title = [NSString stringWithFormat:@"💭 思考 #%ld (点击收起)", (long)(segIdx + 1)];
+                title = [NSString stringWithFormat:@"思考 #%ld · 点击收起", (long)(segIdx + 1)];
             }
             [segToggle setTitle:title forState:UIControlStateNormal];
             [_thinkingBlock addSubview:segToggle];
@@ -1230,7 +1230,7 @@ static NSMutableSet *gStreamingMessageIDs = nil;
             ? [UIColor colorWithWhite:1.0f alpha:0.82f]
             : [iOS6Theme secondaryTextColor];
         [withImages appendAttributedString:[[[NSAttributedString alloc]
-            initWithString:[NSString stringWithFormat:@"\n📎 %lu 张图片", (unsigned long)[message.images count]]
+            initWithString:[NSString stringWithFormat:@"\n%lu 张图片", (unsigned long)[message.images count]]
             attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12],
                           NSForegroundColorAttributeName: imgNoteColor}] autorelease]];
         self.renderedAttr = [withImages autorelease];

@@ -43,19 +43,19 @@ public class NetworkService {
     private static final int TIMEOUT = 120000; // 2 min
 
     // v0.3: Android 2.3 默认只支持 TLS 1.0，OpenAI/Zhipu 等 API 要求 TLS 1.2+。
-    // 启用 TLS 1.2（如果设备 OpenSSL 支持的话）。在某些 2.3 OEM build 上这会
-    // 静默失败（设备没编 TLS 1.2），但不影响 TLS 1.0 连接。
-    // 这是"聊天即闪退"在老设备高发的疑似根因之一：TLS 握手失败 → 某些 OEM
-    // 抛 RuntimeException 而非 IOException → catch(Exception) 接住但 onError
-    // message 可能为 null → 显示 "⚠️ null"（已修），不至于闪退。
+    // v0.4: 强化 TLS — 自定义 SSLSocketFactory 包装默认 factory，在每个 socket
+    // 上强制 setEnabledProtocols(["TLSv1.2", "TLSv1.1", "TLSv1"])。
+    // SSLContext.getInstance("TLSv1.2") 在某些 2.3 OEM build 上静默失败
+    // （返回不支持 TLS 1.2 的实现），自定义 factory 确保协议列表正确传递。
     static {
         try {
-            javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLSv1.2");
+            javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
             sc.init(null, null, null);
-            javax.net.ssl.HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
-            Log.i(TAG, "TLS 1.2 enabled");
+            javax.net.ssl.HttpsURLConnection.setDefaultSSLSocketFactory(
+                new TLSSocketFactory(sc.getSocketFactory()));
+            Log.i(TAG, "TLS 1.2 enforced via custom socket factory");
         } catch (Exception e) {
-            Log.w(TAG, "TLS 1.2 init failed (device may not support): " + e.getMessage());
+            Log.w(TAG, "TLS init failed: " + e.getMessage());
         }
     }
 
@@ -432,5 +432,63 @@ public class NetworkService {
                 if (listener != null) listener.onError(msg);
             }
         });
+    }
+
+    /**
+     * v0.4: 包装默认 SSLSocketFactory，强制启用 TLS 1.2/1.1/1.0。
+     * Android 2.3 默认只启用 TLS 1.0，某些 OEM build 即使 SSLContext.getInstance("TLS")
+     * 也不自动启用 TLS 1.2。这个 factory 在每个 socket 创建后强制 setEnabledProtocols。
+     * Conscrypt/ProviderInstaller 不支持 Android 2.3（minSdk=21），这是 2.3 的最佳方案。
+     */
+    private static class TLSSocketFactory extends javax.net.ssl.SSLSocketFactory {
+        private final javax.net.ssl.SSLSocketFactory delegate;
+        private final String[] protocols = {"TLSv1.2", "TLSv1.1", "TLSv1"};
+
+        TLSSocketFactory(javax.net.ssl.SSLSocketFactory delegate) {
+            this.delegate = delegate;
+        }
+
+        private java.net.Socket patch(java.net.Socket s) {
+            if (s instanceof javax.net.ssl.SSLSocket) {
+                javax.net.ssl.SSLSocket ssl = (javax.net.ssl.SSLSocket) s;
+                try { ssl.setEnabledProtocols(protocols); }
+                catch (IllegalArgumentException e) {
+                    // 设备不支持 TLS 1.2 — 保留默认协议
+                    Log.w(TAG, "TLS 1.2 not supported on this device");
+                }
+            }
+            return s;
+        }
+
+        @Override
+        public String[] getDefaultCipherSuites() { return delegate.getDefaultCipherSuites(); }
+
+        @Override
+        public String[] getSupportedCipherSuites() { return delegate.getSupportedCipherSuites(); }
+
+        @Override
+        public java.net.Socket createSocket(java.net.Socket s, String host, int port, boolean autoClose) throws java.io.IOException {
+            return patch(delegate.createSocket(s, host, port, autoClose));
+        }
+
+        @Override
+        public java.net.Socket createSocket(String host, int port) throws java.io.IOException {
+            return patch(delegate.createSocket(host, port));
+        }
+
+        @Override
+        public java.net.Socket createSocket(String host, int port, java.net.InetAddress localHost, int localPort) throws java.io.IOException {
+            return patch(delegate.createSocket(host, port, localHost, localPort));
+        }
+
+        @Override
+        public java.net.Socket createSocket(java.net.InetAddress host, int port) throws java.io.IOException {
+            return patch(delegate.createSocket(host, port));
+        }
+
+        @Override
+        public java.net.Socket createSocket(java.net.InetAddress address, int port, java.net.InetAddress localAddress, int localPort) throws java.io.IOException {
+            return patch(delegate.createSocket(address, port, localAddress, localPort));
+        }
     }
 }
