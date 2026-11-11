@@ -1088,10 +1088,15 @@ static NSMutableSet *gStreamingMessageIDs = nil;
             for (UIView *sub in [_sectionsContainer subviews]) [sub removeFromSuperview];
             [_inlineSections removeAllObjects];
         }
-        // v261103-47: 流式时清理 _renderedAttr 里的标记（防止控制字符显示成空白）
+        // v261103-49: 流式时把标记替换成可见的思考文字（不是删除）
+        // v261103-47 删除标记导致思考过程不可见（缺陷）。
+        // 改成替换成 "[思考] 标题\n内容"（斜体灰色），流式时能看到思考过程。
+        // 完成后才创建穿插布局（卡片样式）。
         if (isStreaming && hasInlineThinking && _renderedAttr) {
             NSMutableAttributedString *cleanAttr = [_renderedAttr mutableCopy];
             if (cleanAttr) {
+                UIFont *thinkFont = [UIFont italicSystemFontOfSize:[iOS6Theme fontPointSizeForBase:13]];
+                UIColor *thinkColor = [iOS6Theme secondaryTextColor];
                 NSString *str = cleanAttr.string;
                 NSUInteger searchStart = 0;
                 while (searchStart < [str length]) {
@@ -1102,11 +1107,26 @@ static NSMutableSet *gStreamingMessageIDs = nil;
                                                     range:NSMakeRange(thinkStart.location + thinkStart.length,
                                                                      [str length] - thinkStart.location - thinkStart.length)];
                     if (endTag.location == NSNotFound) break;
-                    NSRange deleteRange = NSMakeRange(thinkStart.location,
+                    // 提取标题 + 内容（用 \x01 分隔）
+                    NSUInteger contentStart = thinkStart.location + thinkStart.length;
+                    NSUInteger contentLen = endTag.location - contentStart;
+                    NSString *thinkContent = [str substringWithRange:NSMakeRange(contentStart, contentLen)];
+                    NSRange sepRange = [thinkContent rangeOfString:@"\x01"];
+                    NSString *title = sepRange.location != NSNotFound
+                        ? [thinkContent substringToIndex:sepRange.location] : @"思考";
+                    NSString *body = sepRange.location != NSNotFound
+                        ? [thinkContent substringFromIndex:sepRange.location + 1] : thinkContent;
+                    // 替换标记为可见文字
+                    NSString *replacement = [NSString stringWithFormat:@"\n[思考] %@\n%@\n", title, body];
+                    NSRange replaceRange = NSMakeRange(thinkStart.location,
                                                       endTag.location + endTag.length - thinkStart.location);
-                    [cleanAttr deleteCharactersInRange:deleteRange];
+                    [cleanAttr replaceCharactersInRange:replaceRange withString:replacement];
+                    // 给替换的文字加斜体灰色样式
+                    NSRange newRange = NSMakeRange(thinkStart.location, replacement.length);
+                    [cleanAttr addAttribute:NSFontAttributeName value:thinkFont range:newRange];
+                    [cleanAttr addAttribute:NSForegroundColorAttributeName value:thinkColor range:newRange];
                     str = cleanAttr.string;
-                    searchStart = thinkStart.location;
+                    searchStart = thinkStart.location + replacement.length;
                 }
                 self.renderedAttr = [cleanAttr autorelease];
             }
