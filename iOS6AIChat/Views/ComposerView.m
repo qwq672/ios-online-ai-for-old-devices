@@ -327,6 +327,8 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     // button height (btnH=30) so the text view is at least as tall as
     // the [+] and [▶] buttons.
     CGSize fitSize = [_textView sizeThatFits:CGSizeMake(tvW, CGFLOAT_MAX)];
+    // v261103-53: 向上取整防止 1px 空白
+    fitSize.height = (CGFloat)(NSInteger)(fitSize.height + 0.5f);
     if (fitSize.height > 0 && fitSize.height < tvH) {
         tvH = fitSize.height;
     }
@@ -671,6 +673,8 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 - (void)textViewDidChange:(UITextView *)textView
 {
     CGSize measured = [_textView sizeThatFits:CGSizeMake(_textView.frame.size.width, CGFLOAT_MAX)];
+    // v261103-53: 向上取整防止底部 1px 空白（sizeThatFits 返回小数高度）
+    measured.height = (CGFloat)(NSInteger)(measured.height + 0.5f);
     // v261103-4: clamp to sane range — sizeThatFits can return 0 or
     // negative on iOS 7 in edge cases (empty text + weird inset state),
     // which would shrink the composer to nothing and cause layout chaos.
