@@ -1011,9 +1011,10 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         }
     } else {
         // User: restore bubble-era text container inset.
+        // v261103-52: 左右 padding 10→5（减少文字后面空白）
         if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
             [_textView performSelector:@selector(setTextContainerInset:)
-                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(7, 10, 7, 10)]];
+                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(7, 5, 7, 5)]];
         }
     }
 
@@ -1266,21 +1267,20 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         UIColor *imgNoteColor = message.isUser
             ? [UIColor colorWithWhite:1.0f alpha:0.82f]
             : [iOS6Theme secondaryTextColor];
-        [withImages appendAttributedString:[[[NSAttributedString alloc]
-            initWithString:[NSString stringWithFormat:@"\n%lu 张图片", (unsigned long)[message.images count]]
-            attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12],
-                          NSForegroundColorAttributeName: imgNoteColor}] autorelease]];
+        // v261103-52: 去掉 "\n 张图片" 文字（缩略图本身能看出，文字多余）;
         self.renderedAttr = [withImages autorelease];
 
-        // Build image views lazily — decode on background.
-        CGFloat imgW = 80, imgH = 80;
+        // v261103-52: 缩略图 80→90，cornerRadius 6→10，加边框
+        CGFloat imgW = 90, imgH = 90;
         NSUInteger imgCount = MIN([message.images count], 3);
         for (NSUInteger i = 0; i < imgCount; i++) {
             NSString *dataUrl = [message.images objectAtIndex:i];
             UIImageView *iv = [[[UIImageView alloc] initWithFrame:CGRectZero] autorelease];
             iv.contentMode = UIViewContentModeScaleAspectFill;
             iv.clipsToBounds = YES;
-            iv.layer.cornerRadius = 6.0f;
+            iv.layer.cornerRadius = 10.0f;
+            iv.layer.borderWidth = 1.0f;
+            iv.layer.borderColor = [[iOS6Theme hairlineColor] CGColor];
             iv.backgroundColor = [iOS6Theme codeBackgroundColor];  // placeholder bg
             iv.tag = 9000 + (NSInteger)i;
             [_bubble addSubview:iv];
@@ -1412,9 +1412,10 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     CGFloat imagesH = 0;
     NSUInteger imgCount = [_imageViews count];
     if (imgCount > 0) {
-        imagesH = 80 + 6;  // 80x80 thumbnails + gap
+        imagesH = 90 + 6;  // v261103-52: 90x90 thumbnails + gap
         // Lay them out horizontally.
-        CGFloat imgW = 80, imgH = 80, imgGap = 4;
+        // v261103-52: imgW 80→90
+        CGFloat imgW = 90, imgH = 90, imgGap = 6;
         for (NSUInteger i = 0; i < imgCount; i++) {
             UIView *iv = [_imageViews objectAtIndex:i];
             iv.frame = CGRectMake(4 + (CGFloat)i * (imgW + imgGap), 0, imgW, imgH);
@@ -1457,7 +1458,8 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     } else if (thinkingLive) {
         bubbleWidth = maxBubbleWidth;
     } else {
-        bubbleWidth = MAX(textRect.size.width + 38, 60);
+        // v261103-52: +38→+28（左右 padding 10→5，减少文字后面空白）
+        bubbleWidth = MAX(textRect.size.width + 28, 60);
         bubbleWidth = MIN(bubbleWidth, maxBubbleWidth);
     }
     // v261103-33: 如果有穿插思考卡片，加 sections 高度
@@ -1909,7 +1911,7 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // Images section.
     CGFloat imagesH = 0;
     if (message.images && [message.images count] > 0) {
-        imagesH = 80 + 6;
+        imagesH = 90 + 6;  // v261103-52
     }
 
     // === v261025-8: generated-image messages ===
