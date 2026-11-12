@@ -1,5 +1,9 @@
 name: Build iOS IPA on Linux (Theos)
 
+# v261112: 需要 contents: write 权限才能创建 GitHub release
+permissions:
+  contents: write
+
 on:
   push:
     branches: [ main ]
