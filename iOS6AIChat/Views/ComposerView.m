@@ -298,6 +298,8 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 
     // Plus button (leftmost).
     _plusButton.frame = CGRectMake(x, btnY, btnW, btnH);
+    // v261103-51: 胶囊形态（iOS 6 经典按钮风格，两端半圆）
+    _plusButton.layer.cornerRadius = btnH / 2.0f;
     // Badge sits at the top-right corner of the plus button.
     _plusBadge.frame = CGRectMake(x + btnW - 10, btnY - 4, 16, 16);
     x += btnW + gap;
@@ -305,6 +307,8 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     // Send button (right).
     CGFloat sendX = w - sendW - pad;
     _sendButton.frame = CGRectMake(sendX, btnY, sendW, btnH);
+    // v261103-51: 胶囊形态（iOS 6 Send 按钮经典风格）
+    _sendButton.layer.cornerRadius = btnH / 2.0f;
 
     // Text view (middle, fills remaining space).
     // v261025-10: with only 2 buttons ([+] and [▶]) the text view now
