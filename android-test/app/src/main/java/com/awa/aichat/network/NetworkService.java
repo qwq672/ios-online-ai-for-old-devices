@@ -451,10 +451,21 @@ public class NetworkService {
         private java.net.Socket patch(java.net.Socket s) {
             if (s instanceof javax.net.ssl.SSLSocket) {
                 javax.net.ssl.SSLSocket ssl = (javax.net.ssl.SSLSocket) s;
-                try { ssl.setEnabledProtocols(protocols); }
-                catch (IllegalArgumentException e) {
-                    // 设备不支持 TLS 1.2 — 保留默认协议
-                    Log.w(TAG, "TLS 1.2 not supported on this device");
+                try {
+                    // v261112-2: 只设设备支持的协议（交集）
+                    // 原来直接设 ["TLSv1.2","TLSv1.1","TLSv1"]，如果设备不支持
+                    // TLSv1.1 会抛 IllegalArgumentException → catch 后保留默认
+                    // → TLS 1.2 也没启用。改成交集确保 TLS 1.2 被启用。
+                    java.util.List<String> supported = java.util.Arrays.asList(ssl.getSupportedProtocols());
+                    java.util.List<String> desired = new java.util.ArrayList<String>();
+                    for (String p : protocols) {
+                        if (supported.contains(p)) desired.add(p);
+                    }
+                    if (!desired.isEmpty()) {
+                        ssl.setEnabledProtocols(desired.toArray(new String[0]));
+                    }
+                } catch (IllegalArgumentException e) {
+                    Log.w(TAG, "TLS protocol set failed: " + e.getMessage());
                 }
             }
             return s;
