@@ -1149,6 +1149,7 @@ titleForFooterInSection:(NSInteger)section
         return cell;
     }
     // v261103-47: row 1 — 刷新频率 slider
+    if (row == 1) {
     // 流式 OFF 时灰色（主次关系：刷新频率依赖流式输出开关）
     BOOL streamingOn = YES;
     if ([[NSUserDefaults standardUserDefaults] objectForKey:@"streamingOutput"]) {
