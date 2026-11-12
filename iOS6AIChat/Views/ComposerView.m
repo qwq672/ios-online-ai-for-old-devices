@@ -72,8 +72,9 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
         if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
             // v261025-33: tighter insets — bottom=1 prevents the empty
             // space below single-line text that was visible on both iOS.
+            // v261103-54: 水平 padding 6→12（胶囊两端需要更多空间）
             [_textView performSelector:@selector(setTextContainerInset:)
-                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(2, 6, 1, 6)]];
+                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(2, 12, 1, 12)]];
         }
         // v261025-32: removed keyboard "Done" accessory button.
         // ChatVC already has tap-to-dismiss on the table view background.
@@ -337,6 +338,8 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     if (tvH < btnH) tvH = btnH;
     CGFloat tvY = (h - tvH) / 2.0f;
     _textView.frame = CGRectMake(tvX, tvY, tvW, tvH);
+    // v261103-54: 胶囊形态（iOS 6 iMessage 原生风格，两端半圆）
+    _textView.layer.cornerRadius = tvH / 2.0f;
     
     // v261025-32: the composer background fills the entire view bounds —
     // no gap below the text view. The background color is set in init
