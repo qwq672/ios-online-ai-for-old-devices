@@ -1452,8 +1452,11 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // 低估超过 20pt 时仍遮。32/36 多吸收一行（~17pt）。
     // v261103-40: 32/36 太大导致生成后大空白，回退到 26/30（折中）
     // v261103-42: _textView.hidden（穿插布局）时 safety/insetV=0，避免大空白
-    CGFloat safety = _textView.hidden ? 0 : (useBubble ? 26 : 30);
-    CGFloat insetV = _textView.hidden ? 0 : (useBubble ? 14 : 8);
+    // v261112: 用共享核心计算（消除重复代码，和 heightForMessage 一致）
+    CGFloat bubbleHeight = [ChatMessageCell _coreBubbleHeightWithTextHeight:textRect.size.height
+                                                               textHidden:_textView.hidden
+                                                                useBubble:useBubble]
+                          + thinkingH + imagesH + genImgH + inlineSectionsH;
     CGFloat bubbleWidth;
     if (!useBubble) {
         bubbleWidth = self.bounds.size.width;  // AI: full width
@@ -1510,8 +1513,7 @@ static NSMutableSet *gStreamingMessageIDs = nil;
             }
         }
     }
-    CGFloat bubbleHeight = textRect.size.height + insetV + 2 * bubbleInnerVPad + tailHeight + safety
-                          + thinkingH + imagesH + genImgH + inlineSectionsH;
+    // bubbleHeight 已在上方用 _coreBubbleHeightWithTextHeight 算（v261112 重构）
     if (bubbleHeight < 40) bubbleHeight = 40;
 
     CGFloat bubbleX;
@@ -1698,6 +1700,25 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // v261024-19: NO @try — internal func does its own checks.
     if (!message) return 60;
     return [self _heightForMessageInternal:message width:width];
+}
+
+/**
+ * v261112: 共享 bubbleHeight 核心计算 — 消除 heightForMessage 和
+ * _layoutInternal 的重复代码（屎山根因：改一处忘改另一处 → 高度不一致）。
+ * 只算 textHeight + insetV + vPad*2 + tailH + safety。
+ * 各调用方自己加 thinkingH/imagesH/inlineThinkH 等额外高度。
+ *
+ * 改 safety/insetV/vPad/tailH 只改这里一处，两处自动同步。
+ */
++ (CGFloat)_coreBubbleHeightWithTextHeight:(CGFloat)textHeight
+                                textHidden:(BOOL)hidden
+                                 useBubble:(BOOL)useBubble
+{
+    CGFloat insetV = hidden ? 0 : (useBubble ? 14 : 8);
+    CGFloat tailH = useBubble ? 6 : 0;
+    CGFloat vPad = useBubble ? 5 : 4;
+    CGFloat safety = hidden ? 0 : (useBubble ? 26 : 30);
+    return textHeight + insetV + 2 * vPad + tailH + safety;
 }
 
 + (CGFloat)_heightForMessageInternal:(Message *)message width:(CGFloat)width
@@ -1956,15 +1977,11 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // 所以 hasInlineLayout 要加 !fast 条件 — 否则 heightForMessage 算穿插
     // 布局高度（文字段拆分），但实际渲染用 _textView（整体文字），高度不一致 → 空白/溢出
     BOOL hasInlineLayout = hasInlineThinkMarker && !message.isUser && !fast;
-    CGFloat insetV = hasInlineLayout ? 0 : (useBubble ? 14 : 8);
-    CGFloat tailH = useBubble ? 6 : 0;
-    CGFloat vPad = useBubble ? 5 : 4;
-    // v261103-38: safety 20/24 → 32/36（与 _layoutInternal 同步，吸收 boundingRectWithSize 低估）
-    // v261103-40: 32/36 太大导致空白，回退到 26/30
-    // v261103-42: 有穿插布局时 safety=0
-    CGFloat safety = hasInlineLayout ? 0 : (useBubble ? 26 : 30);
-    CGFloat bubbleHeight = textRect.size.height + insetV + 2 * vPad + tailH + safety
-                          + thinkingH + imagesH + inlineThinkH;
+    // v261112: 用共享核心计算（消除重复代码）
+    CGFloat coreH = [self _coreBubbleHeightWithTextHeight:textRect.size.height
+                                              textHidden:hasInlineLayout
+                                               useBubble:useBubble];
+    CGFloat bubbleHeight = coreH + thinkingH + imagesH + inlineThinkH;
     CGFloat result = bubbleHeight + 2 * verticalPad + buttonH;
     if (result < 50) result = 50;
 
