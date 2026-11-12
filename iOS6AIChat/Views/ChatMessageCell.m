@@ -232,7 +232,9 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // acceptable (the final full-path render at completion restores
     // formatting). NON-streaming messages keep the 10000 threshold so
     // already-finished long messages still get markdown.
-    NSUInteger plainTextThreshold = fast ? 4000 : 10000;
+    // v261103-55: 4000→8000 — 用户报"全是白色分不清"，4000 字以上用 plain text
+    // 导致工具调用/思考/正文同色（textColor）。提高到 8000 大多数消息不会触发。
+    NSUInteger plainTextThreshold = fast ? 8000 : 10000;
     if (message.content.length > plainTextThreshold) {
         attr = [[[NSAttributedString alloc] initWithString:(message.content ?: @"")
                                                 attributes:@{NSFontAttributeName: base,
