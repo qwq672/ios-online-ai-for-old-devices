@@ -145,7 +145,7 @@ endif
 # colon `:` which would conflict if Theos also defined `clean:`).
 .PHONY: clean
 clean::
-        rm -rf .theos obj build packages Payload *.deb iOS6AIChat-unsigned.ipa
+	rm -rf .theos obj build packages Payload *.deb iOS6AIChat-unsigned.ipa
 
 # Pack an unsigned .ipa from the .app Theos just produced.
 # The .app is inside the staged .deb payload at .theos/_/Applications/
