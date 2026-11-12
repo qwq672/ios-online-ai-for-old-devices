@@ -475,7 +475,8 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         _generatedImageView = [[UIImageView alloc] initWithFrame:CGRectZero];
         _generatedImageView.contentMode = UIViewContentModeScaleAspectFit;
         _generatedImageView.clipsToBounds = YES;
-        _generatedImageView.layer.cornerRadius = 8.0f;
+        // v261103-53: 圆角统一 — 生图 8→10（和缩略图一致）
+        _generatedImageView.layer.cornerRadius = 10.0f;
         _generatedImageView.backgroundColor = [iOS6Theme codeBackgroundColor];
         _generatedImageView.hidden = YES;
         // v261025-8: tap → full-screen viewer (delegate hook).
@@ -801,7 +802,8 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         // 创建可折叠卡片 view
         UIView *cardView = [[[UIView alloc] initWithFrame:CGRectZero] autorelease];
         cardView.backgroundColor = [iOS6Theme thinkingBackgroundColor];
-        cardView.layer.cornerRadius = 8.0f;
+        // v261103-53: 圆角统一 — 卡片 8→10（和思考块/缩略图一致）
+        cardView.layer.cornerRadius = 10.0f;
         cardView.layer.borderWidth = 1.0f;
         // 保留 borderColor 的 UIColor
         UIColor *borderColor = [[iOS6Theme thinkingBorderColor] retain];
