@@ -951,12 +951,13 @@ static void AppendAttrString(NSMutableAttributedString *out,
         // v261103-39: tool 块轻量化 — DS 批评"沉重墓碑"
         // v261103-42: 进一步降色 — 用户说"混一起"
         // v261103-46: 再降色 + 加前缀 "· " 让视觉上明显是"旁白"
-        //   深色模式 #5A5A68，浅色模式 #999999（比 secondaryTextColor 更灰）
+        //   深色模式 #7A7A88，浅色模式 #999999（比 secondaryTextColor 更灰）
+        //   v261103-55: 深色提亮 0.35→0.48（原来太暗和背景分不清）
         NSString *body = [contentLines componentsJoinedByString:@" · "];
         if (body.length == 0) return;
         UIFont *toolFont = [UIFont italicSystemFontOfSize:baseFont.pointSize - 1] ?: baseFont;
         UIColor *fg = [iOS6Theme isDarkMode]
-            ? [UIColor colorWithWhite:0.35 alpha:1.0]   // #5A5A68 深色模式
+            ? [UIColor colorWithWhite:0.48 alpha:1.0]   // #7A7A88 深色模式（提亮）
             : [UIColor colorWithWhite:0.6 alpha:1.0];   // #999999 浅色模式
         AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
         AppendAttrString(out, @"· ", toolFont, fg, nil, 0, 0);  // v261103-46: 前缀
@@ -1144,31 +1145,15 @@ static void AppendAttrString(NSMutableAttributedString *out,
             if ((cp >= 0x1F300 && cp <= 0x1F9FF)) {
                 [out addAttribute:NSFontAttributeName value:emojiFont
                            range:NSMakeRange(i, 2)];
-                // v261103-32: emoji 后面插入一个零宽空格 (U+200B)
-                // 防止 emoji 后的字符与 emoji 重叠（iOS 6 字体宽度计算 bug）
-                // 只在下一个字符不是空格/换行/零宽空格时插入
-                if (i + 2 < len) {
-                    unichar nextC = [str characterAtIndex:i + 2];
-                    if (nextC != ' ' && nextC != '\n' && nextC != 0x200B) {
-                        // v261103-32: 插入零宽空格防止 emoji 后字符重叠
-                        [out replaceCharactersInRange:NSMakeRange(i + 2, 0) withString:@"\u200B"];
-                        len = str.length;  // 更新长度
-                    }
-                }
+                // v261103-55: 去掉零宽空格 U+200B — iOS 6 没有该 glyph 显示成方块
+                // 原来插 U+200B 防 emoji 后字符重叠，但 U+200B 本身显示成 tofu 方块
             }
             i += 2;
         } else {
             if (c >= 0x2600 && c <= 0x27BF) {
                 [out addAttribute:NSFontAttributeName value:emojiFont
                            range:NSMakeRange(i, 1)];
-                // v261103-32: BMP emoji 后也插入零宽空格
-                if (i + 1 < len) {
-                    unichar nextC = [str characterAtIndex:i + 1];
-                    if (nextC != ' ' && nextC != '\n' && nextC != 0x200B) {
-                        [out replaceCharactersInRange:NSMakeRange(i + 1, 0) withString:@"\u200B"];
-                        len = str.length;
-                    }
-                }
+                // v261103-55: 去掉 BMP emoji 后的零宽空格（同上）
             }
             i++;
         }

@@ -72,9 +72,9 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
         if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
             // v261025-33: tighter insets — bottom=1 prevents the empty
             // space below single-line text that was visible on both iOS.
-            // v261103-54: 水平 padding 6→12（胶囊两端需要更多空间）
+            // v261103-54: 水平 padding 6→9（胶囊两端需要空间但 12 太宽）
             [_textView performSelector:@selector(setTextContainerInset:)
-                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(2, 12, 1, 12)]];
+                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(2, 9, 1, 9)]];
         }
         // v261025-32: removed keyboard "Done" accessory button.
         // ChatVC already has tap-to-dismiss on the table view background.
