@@ -1452,11 +1452,7 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // 低估超过 20pt 时仍遮。32/36 多吸收一行（~17pt）。
     // v261103-40: 32/36 太大导致生成后大空白，回退到 26/30（折中）
     // v261103-42: _textView.hidden（穿插布局）时 safety/insetV=0，避免大空白
-    // v261112: 用共享核心计算（消除重复代码，和 heightForMessage 一致）
-    CGFloat bubbleHeight = [ChatMessageCell _coreBubbleHeightWithTextHeight:textRect.size.height
-                                                               textHidden:_textView.hidden
-                                                                useBubble:useBubble]
-                          + thinkingH + imagesH + genImgH + inlineSectionsH;
+    // v261112: bubbleHeight 用共享核心计算，但在 inlineSectionsH 之后（下方）
     CGFloat bubbleWidth;
     if (!useBubble) {
         bubbleWidth = self.bounds.size.width;  // AI: full width
@@ -1513,6 +1509,11 @@ static NSMutableSet *gStreamingMessageIDs = nil;
             }
         }
     }
+    // v261112: 用共享核心计算（消除重复代码，和 heightForMessage 一致）
+    CGFloat bubbleHeight = [ChatMessageCell _coreBubbleHeightWithTextHeight:textRect.size.height
+                                                               textHidden:_textView.hidden
+                                                                useBubble:useBubble]
+                          + thinkingH + imagesH + genImgH + inlineSectionsH;
     // bubbleHeight 已在上方用 _coreBubbleHeightWithTextHeight 算（v261112 重构）
     if (bubbleHeight < 40) bubbleHeight = 40;
 
