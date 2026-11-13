@@ -15,6 +15,7 @@
 @implementation ChatBubbleView
 
 @synthesize role=_role, cornerRadius=_cornerRadius, tailSize=_tailSize, drawBackground=_drawBackground;
+@synthesize documentPanel=_documentPanel;
 @synthesize fillColor=_fillColor, borderColor=_borderColor, shadowColor=_shadowColor;
 
 - (id)initWithFrame:(CGRect)frame
@@ -25,9 +26,24 @@
         _tailSize = CGSizeMake(12.0f, 6.0f);
         _role = BubbleRoleUser;
         _drawBackground = YES; // default: draw bubble background
+        _documentPanel = NO;
         [self _applyRoleColors];
     }
     return self;
+}
+
+- (void)setDocumentPanel:(BOOL)documentPanel
+{
+    if (_documentPanel == documentPanel) return;
+    _documentPanel = documentPanel;
+    [self setNeedsDisplay];
+}
+
+- (void)setCornerRadius:(CGFloat)cornerRadius
+{
+    if (_cornerRadius == cornerRadius) return;
+    _cornerRadius = cornerRadius;
+    [self setNeedsDisplay];
 }
 
 - (void)setRole:(BubbleRole)role
@@ -82,6 +98,58 @@
     [self setNeedsDisplay];
 }
 
+// v261114: AI document panel. Deliberately does NOT share the bubble path:
+// solid fill, no gradient/gloss/drop shadow/outline. iOS 6 uses a paper
+// surface (1px top inner shadow); iOS 7+ uses a flat surface with a subtle
+// left rail so the block reads as "content", not "a bubble without a tail".
+- (void)_drawDocumentPanelInRect:(CGRect)rect
+{
+    if (CGRectGetWidth(rect) < 12.0f || CGRectGetHeight(rect) < 12.0f) return;
+
+    CGRect body = CGRectInset(rect, 1.0f, 1.0f);
+    CGFloat r = _cornerRadius;
+    CGFloat maxR = MIN(body.size.width, body.size.height) / 2.0f;
+    if (r > maxR) r = maxR;
+    if (r < 0) r = 0;
+
+    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:body
+                                                       cornerRadius:r];
+    [_fillColor setFill];
+    [path fill];
+
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (!ctx) return;
+
+    BOOL flatUI = [iOS6Theme isFlatUI];
+    if (!flatUI) {
+        // Paper: a single 1px dark line just inside the top edge. No
+        // gradient, no white gloss, no outer border, no drop shadow.
+        CGContextSaveGState(ctx);
+        [path addClip];
+        CGFloat alpha = [iOS6Theme isDarkMode] ? 0.22f : 0.10f;
+        [[UIColor colorWithWhite:0.0f alpha:alpha] setFill];
+        CGContextFillRect(ctx, CGRectMake(CGRectGetMinX(body) + 1.0f,
+                                          CGRectGetMinY(body) + 1.0f,
+                                          body.size.width - 2.0f,
+                                          1.0f));
+        CGContextRestoreGState(ctx);
+    } else {
+        // Flat: 2px neutral rail at the document's left edge. Neutral grey,
+        // not tint — tint stays reserved for interactive elements.
+        CGContextSaveGState(ctx);
+        [path addClip];
+        UIColor *rail = [[iOS6Theme secondaryTextColor] colorWithAlphaComponent:0.22f];
+        [rail setFill];
+        CGFloat railX = CGRectGetMinX(body) + 3.0f;
+        CGFloat railY = CGRectGetMinY(body) + r + 2.0f;
+        CGFloat railH = body.size.height - 2.0f * (r + 2.0f);
+        if (railH > 0) {
+            CGContextFillRect(ctx, CGRectMake(railX, railY, 2.0f, railH));
+        }
+        CGContextRestoreGState(ctx);
+    }
+}
+
 - (void)drawRect:(CGRect)rect
 {
     // v261025-32: skip drawing when drawBackground=NO (AI messages use
@@ -89,6 +157,12 @@
     if (!_drawBackground) return;
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     if (!ctx) return;
+
+    // v261114: dedicated AI content surface — never the bubble path.
+    if (_documentPanel) {
+        [self _drawDocumentPanelInRect:self.bounds];
+        return;
+    }
 
     // v261025-4: PRE-RENDERED stretchable bubble. The gradient body,
     // fixed-height gloss band, inner highlight, hairline border, baked

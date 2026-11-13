@@ -997,10 +997,12 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     BubbleRole role = message.isUser ? BubbleRoleUser
                       : (isError ? BubbleRoleError : BubbleRoleAssistant);
     _bubble.role = role;
-    // v261025-33: AI normal = no bubble (drawBackground=NO).
-    // v261112-3: AI normal = 有淡色 panel 背景（GPT+DS 建议"AI 回答不裸奔"）
-    // AI 用 BubbleRoleAssistant + drawBackground=YES + 无 tail（panel 不是气泡）
+    // v261114: AI normal = dedicated document panel (solid surface, no
+    // tail, no gloss/shadow/outline). Error cards keep the error bubble.
+    // This is a separate drawing path, not a bubble with tailSize=(0,0).
     _bubble.drawBackground = YES;
+    _bubble.documentPanel = (role == BubbleRoleAssistant);
+    _bubble.cornerRadius = (role == BubbleRoleAssistant) ? 8.0f : 14.0f;
     if (isError) {
         _bubble.tailSize = CGSizeMake(0, 0);
     } else if (!message.isUser) {

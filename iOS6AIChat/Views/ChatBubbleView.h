@@ -24,6 +24,12 @@ typedef enum {
 // Used for AI messages in the new layout (Option ②: user-only bubbles).
 @property (nonatomic, assign) BOOL drawBackground;
 
+// v261114: AI document panel — solid fill, no tail, no gradient/gloss/
+// shadow/outline. iOS 6 adds a 1px top inner shadow; iOS 7+ uses a flat
+// surface with an optional left rail. This is a separate drawing path,
+// NOT a bubble with tailSize=(0,0).
+@property (nonatomic, assign) BOOL documentPanel;
+
 // Convex corner radius; default 14.
 @property (nonatomic, assign) CGFloat cornerRadius;
 
