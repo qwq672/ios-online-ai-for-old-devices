@@ -111,7 +111,7 @@ size_t tool_build_start_marker(const char* fn_name, const char* args,
     else if (strstr(fn_name, "get_image")) action = "正在解析图片";
 
     if (display[0]) {
-        return (size_t)snprintf(out, size, "\n\n:::tool\n%s"%s"…\n:::\n\n", action, display);
+        return (size_t)snprintf(out, size, "\n\n:::tool\n%s %s…\n:::\n\n", action, display);
     } else {
         return (size_t)snprintf(out, size, "\n\n:::tool\n%s…\n:::\n\n", action);
     }
@@ -140,7 +140,7 @@ size_t tool_build_done_marker(const char* fn_name, const char* args,
             display[62] = '\xa6';
             display[63] = '\0';
         }
-        return (size_t)snprintf(out, size, "\n:::tool\n%s"%s"\n:::\n", action, display);
+        return (size_t)snprintf(out, size, "\n:::tool\n%s %s\n:::\n", action, display);
     } else {
         return (size_t)snprintf(out, size, "\n:::tool\n%s\n:::\n", action);
     }
