@@ -1754,6 +1754,10 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     CGFloat pad = 8.0f;               // v261025-11: 12->8 (sync with _layoutInternal)
     CGFloat bubbleInnerVPad = 5.0f;   // v261025-11: 7->5
     CGFloat verticalPad = 3.0f;       // v261025-11: 6->3
+    // v261112-4: 提前定义 useBubble/buttonH（genImage 分支需要）
+    BOOL useBubble = message.isUser || [message.content hasPrefix:@"⚠️"];
+    BOOL hasActionButtons = (message.content.length > 0);
+    CGFloat buttonH = hasActionButtons ? 26 : 0;
     // v261024-16: unified width — MUST match _applyMessageInternal and
     // _layoutInternal so the row height reflects the rendered wrap.
     CGFloat availTextWidth = (message.isUser || [message.content hasPrefix:@"⚠️"])
@@ -1943,17 +1947,19 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     }
 
     // === v261025-8: generated-image messages ===
-    // Square image (we request 1024x1024) + caption + action buttons.
-    // Mirrors _layoutInternal's math exactly.
+    // v261112-4: 用共享核心计算（和 _layoutInternal 一致，消除 12pt 差异）
     if ([message isImageGenResult]) {
         CGFloat maxBubbleW = width - 2 * pad;
         maxBubbleW = MIN(maxBubbleW, 280.0f);
         CGFloat gimgW = maxBubbleW - 8;
-        CGFloat genImgH = gimgW;   // square estimate (AspectFit if not)
+        CGFloat genImgH = gimgW;   // square estimate
         CGFloat captionH = textRect.size.height;
         if (captionH < 20) captionH = 20;
-        CGFloat genBubbleHeight = genImgH + captionH + 2 * bubbleInnerVPad + 6 + 20;
-        CGFloat genResult = genBubbleHeight + 2 * verticalPad + 26;  // buttons
+        CGFloat coreH = [self _coreBubbleHeightWithTextHeight:captionH
+                                                  textHidden:NO
+                                                   useBubble:useBubble];
+        CGFloat genBubbleHeight = coreH + genImgH;
+        CGFloat genResult = genBubbleHeight + 2 * verticalPad + buttonH;
         if (genResult < 50) genResult = 50;
         [gHeightCache setObject:[NSNumber numberWithFloat:genResult] forKey:cacheKey];
         return genResult;
@@ -1966,9 +1972,7 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // regenerate/copy/variant-pager; user has edit).
     // v261025-6: user messages now have an edit button, so they need
     // the same 26pt action-button allowance as AI messages.
-    BOOL hasActionButtons = (message.content.length > 0);  // both roles
-    CGFloat buttonH = hasActionButtons ? 26 : 0;
-    BOOL useBubble = message.isUser || [message.content hasPrefix:@"⚠️"];
+    // v261112-4: useBubble/buttonH/hasActionButtons 已在上方定义（提前给 genImage 分支用）
     // v261025-33: CRITICAL — the UITextView's textContainerInset adds
     // vertical space INSIDE the text view that boundingRectWithSize does
     // NOT measure. AI inset=(4,4,4,4) → +8pt; user inset=(7,10,7,10) → +14pt.
