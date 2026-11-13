@@ -12,6 +12,7 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
 import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.TextView;
@@ -41,13 +42,16 @@ public class SettingsActivity extends Activity {
     private static final String KEY_TEMPERATURE = "temperature";
     private static final String KEY_MAX_TOKENS = "max_tokens";
     private static final String KEY_STREAM = "stream";
+    private static final String KEY_STREAMING_INTERVAL = "streamingInterval";  // v0.6: 流式刷新频率
+    private static final String KEY_DEEP_THINKING = "deep_thinking";  // v0.6: 深度思考
+    private static final String KEY_WEB_SEARCH = "web_search";  // v0.6: 联网搜索
 
     private EditText apiKeyField, baseURLField, modelField, promptField, maxTokensField;
-    private SeekBar temperatureSeek;
-    private TextView temperatureLabel;
-    private CheckBox streamCheckBox;
+    private SeekBar temperatureSeek, intervalSeek;  // v0.6: intervalSeek
+    private TextView temperatureLabel, intervalLabel;  // v0.6: intervalLabel
+    private CheckBox streamCheckBox, deepThinkingCheckBox, webSearchCheckBox;  // v0.6
     private Spinner themeSpinner;
-    private Button saveButton, resetButton;
+    private Button saveButton, resetButton, exportButton, importButton;  // v0.6: 导出/导入
 
     private SharedPreferences prefs;
     private int pendingThemeMode; // user's selection in the spinner (saved on Save)
@@ -71,6 +75,83 @@ public class SettingsActivity extends Activity {
         themeSpinner = (Spinner) findViewById(R.id.themeSpinner);
         saveButton = (Button) findViewById(R.id.saveButton);
         resetButton = (Button) findViewById(R.id.clearChatButton);
+
+        // v0.6: 新增控件（动态创建，不改 XML）
+        // 流式刷新频率
+        intervalSeek = new SeekBar(this);
+        intervalLabel = new TextView(this);
+        intervalSeek.setMax(840);  // 160-1000ms，范围 840
+        int intervalMs = prefs.getInt(KEY_STREAMING_INTERVAL, 300);
+        intervalSeek.setProgress(intervalMs - 160);
+        updateIntervalLabel(intervalMs);
+
+        // 深度思考 + 联网搜索
+        deepThinkingCheckBox = new CheckBox(this);
+        deepThinkingCheckBox.setText("深度思考");
+        deepThinkingCheckBox.setChecked(prefs.getBoolean(KEY_DEEP_THINKING, false));
+
+        webSearchCheckBox = new CheckBox(this);
+        webSearchCheckBox.setText("联网搜索");
+        webSearchCheckBox.setChecked(prefs.getBoolean(KEY_WEB_SEARCH, false));
+
+        // 导出/导入对话
+        exportButton = new Button(this);
+        exportButton.setText("导出对话");
+        importButton = new Button(this);
+        importButton.setText("导入对话（从剪贴板）");
+
+        // 把新控件加到布局里（动态加到 saveButton 前面）
+        LinearLayout mainLayout = (LinearLayout) saveButton.getParent();
+        int saveIdx = mainLayout.indexOfChild(saveButton);
+
+        // 流式频率
+        LinearLayout intervalLayout = new LinearLayout(this);
+        intervalLayout.setOrientation(LinearLayout.HORIZONTAL);
+        intervalLabel.setPadding(8, 0, 8, 0);
+        intervalLabel.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        intervalLayout.addView(intervalLabel, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 0.3f));
+        intervalLayout.addView(intervalSeek, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 0.7f));
+        mainLayout.addView(intervalLayout, saveIdx);
+
+        // 深度思考 + 联网搜索（水平排列）
+        LinearLayout toggleLayout = new LinearLayout(this);
+        toggleLayout.setOrientation(LinearLayout.HORIZONTAL);
+        toggleLayout.addView(deepThinkingCheckBox, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        toggleLayout.addView(webSearchCheckBox, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        mainLayout.addView(toggleLayout, saveIdx + 1);
+
+        // 导出/导入（水平排列）
+        LinearLayout ioLayout = new LinearLayout(this);
+        ioLayout.setOrientation(LinearLayout.HORIZONTAL);
+        ioLayout.addView(exportButton, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        ioLayout.addView(importButton, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        mainLayout.addView(ioLayout, saveIdx + 2);
+
+        // intervalSeek 回调
+        intervalSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onStartTrackingTouch(SeekBar sb) {}
+            @Override public void onStopTrackingTouch(SeekBar sb) {}
+            @Override
+            public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+                updateIntervalLabel(progress + 160);
+            }
+        });
+
+        // 导出按钮
+        exportButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                exportConversations();
+            }
+        });
+
+        // 导入按钮
+        importButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                importConversations();
+            }
+        });
 
         // Load existing values
         apiKeyField.setText(prefs.getString(KEY_API_KEY, ""));
@@ -163,10 +244,42 @@ public class SettingsActivity extends Activity {
 
     private void updateTemperatureLabel(int progress) {
         float t = progress / 10f;
-        // Use Locale.US so the decimal separator is always "." and the
-        // digits are always 0-9 (some default locales produce Arabic
-        // numerals which look weird in a tiny label).
         temperatureLabel.setText(String.format(java.util.Locale.US, "%.1f", t));
+    }
+
+    // v0.6: 流式频率标签
+    private void updateIntervalLabel(int ms) {
+        if (ms < 160) ms = 160;
+        if (ms > 1000) ms = 1000;
+        intervalLabel.setText(ms + "ms");
+    }
+
+    // v0.6: 导出对话（剪贴板）
+    private void exportConversations() {
+        String savedJson = prefs.getString("saved_conversation", "");
+        String json = "{\"version\":1,\"conversations\":[{\"id\":\"android\",\"title\":\"\u5bfc\u51fa\u5bf9\u8bdd\",\"messages\":" + (savedJson.length() > 0 ? savedJson : "[]") + "}]}";
+        android.content.ClipboardManager clip = (android.content.ClipboardManager) getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+        clip.setText(json);
+        Toast.makeText(this, "\u5bf9\u8bdd\u5df2\u5bfc\u51fa\u5230\u526a\u8d34\u677f\uff08" + json.length() + " \u5b57\u7b26\uff09", Toast.LENGTH_LONG).show();
+    }
+
+    // v0.6: 导入对话（从剪贴板）
+    private void importConversations() {
+        android.content.ClipboardManager clip = (android.content.ClipboardManager) getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+        CharSequence text = clip.getText();
+        if (text == null || text.length() == 0) {
+            Toast.makeText(this, "\u526a\u8d34\u677f\u4e3a\u7a7a", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String json = text.toString();
+        if (!json.startsWith("{") || !json.contains("\"messages\"")) {
+            Toast.makeText(this, "\u526a\u8d34\u677f\u5185\u5bb9\u4e0d\u662f\u6709\u6548\u7684\u5bf9\u8bdd JSON", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        SharedPreferences.Editor ed = prefs.edit();
+        ed.putString("saved_conversation", json);
+        ed.commit();
+        Toast.makeText(this, "\u5bf9\u8bdd\u5df2\u5bfc\u5165\uff08\u91cd\u542f app \u540e\u751f\u6548\uff09", Toast.LENGTH_LONG).show();
     }
 
     private void saveAll() {
@@ -178,12 +291,13 @@ public class SettingsActivity extends Activity {
         ed.putBoolean(KEY_STREAM, streamCheckBox.isChecked());
         ed.putInt(KEY_MAX_TOKENS, parseIntSafe(maxTokensField.getText().toString().trim(), 0));
         float temp = temperatureSeek.getProgress() / 10f;
-        // putFloat takes a float; cast to (float) for Java 7 compat.
         ed.putFloat(KEY_TEMPERATURE, temp);
         ed.putInt("theme_mode", pendingThemeMode);
+        // v0.6: 新增设置
+        ed.putInt(KEY_STREAMING_INTERVAL, intervalSeek.getProgress() + 160);
+        ed.putBoolean(KEY_DEEP_THINKING, deepThinkingCheckBox.isChecked());
+        ed.putBoolean(KEY_WEB_SEARCH, webSearchCheckBox.isChecked());
         ed.commit();
-        // Also write through ThemeManager so it takes effect immediately
-        // (the same SharedPreferences key — ThemeManager reads it).
     }
 
     private static int parseIntSafe(String s, int def) {
