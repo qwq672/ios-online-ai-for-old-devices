@@ -102,6 +102,10 @@
     // v261025-32: error role skips template — uses vector fallback with
     // red fill/border colors set in _applyRoleColors.
     if (self.role == BubbleRoleError) tmpl = nil;
+    // v261113: AI panel 不用 stretchable image（image 里有 tail，
+    // 设 tailSize=(0,0) 不会去掉 image 里 baked 的 tail）
+    // AI panel 走 iOS 7+ 扁平路径 或 iOS 6 vector fallback（都不画 tail）
+    if (self.role == BubbleRoleAssistant && _tailSize.width == 0) tmpl = nil;
     if (tmpl) {
         [tmpl drawInRect:self.bounds];
         return;
@@ -189,7 +193,7 @@
                         endAngle:M_PI
                        clockwise:YES];
     } else {
-        // Tail on bottom-left
+        // Tail on bottom-left (v261113: skip tail if tailSize.width==0)
         [path addLineToPoint:CGPointMake(body.origin.x + body.size.width,
                                           body.origin.y + body.size.height - r)];
         // Bottom-right corner
@@ -199,13 +203,15 @@
                       startAngle:0
                         endAngle:M_PI_2
                        clockwise:YES];
-        // Bottom edge leftward past tail base, with a tail nub on the left.
-        [path addLineToPoint:CGPointMake(body.origin.x + 22.0f,
-                                          body.origin.y + body.size.height)];
-        [path addLineToPoint:CGPointMake(body.origin.x + 4.0f,
-                                          body.origin.y + body.size.height + tailH)];
-        [path addLineToPoint:CGPointMake(body.origin.x + 14.0f,
-                                          body.origin.y + body.size.height)];
+        if (_tailSize.width > 0) {
+            // Tail nub on the left
+            [path addLineToPoint:CGPointMake(body.origin.x + 22.0f,
+                                              body.origin.y + body.size.height)];
+            [path addLineToPoint:CGPointMake(body.origin.x + 4.0f,
+                                              body.origin.y + body.size.height + tailH)];
+            [path addLineToPoint:CGPointMake(body.origin.x + 14.0f,
+                                              body.origin.y + body.size.height)];
+        }
         [path addLineToPoint:CGPointMake(body.origin.x + r,
                                           body.origin.y + body.size.height)];
         // Bottom-left corner
