@@ -855,20 +855,19 @@ static const uint8_t kNoiseCells[24] = {
     }
     BOOL dark = [self isDarkMode];
 
-    // Palette — v261103-45: 用户气泡改成灰色（和 bubbleUserColor 一致）
-    //   原 green (#A3E86C/#56C130) 是 DS 批评的"塑料感"来源。
-    //   v261103-32 改了 bubbleUserColor 为灰色但 stretchable image 硬编码绿色，
-    //   image 优先于 vector drawing → 灰色没生效 → 还是绿色塑料。
-    //   现在统一改成灰色渐变。
+    // v261103-45: 用户气泡改成灰色（和 bubbleUserColor 一致）
+    // v261112-3: AI 气泡改成淡色 panel（GPT+DS 建议"AI 回答不裸奔"）
+    //   AI panel：浅色模式 #F5F5F8→#E8E8EC（比背景稍亮，panel 感）
+    //             深色模式 #2C2C2E→#242426（比背景稍暗，凹陷感）
     NSString *topHex, *botHex, *borderHex;
     if (isUser) {
         topHex    = dark ? @"#3A3A3C" : @"#E5E5EA";
         botHex    = dark ? @"#2A2A2C" : @"#C8C8CE";
         borderHex = dark ? @"#4A4A4C" : @"#A8A8AE";
     } else {
-        topHex    = dark ? @"#2C2C2E" : @"#FFFFFF";
-        botHex    = dark ? @"#1C1C1E" : @"#E3E3E8";
-        borderHex = dark ? @"#3A3A3C" : @"#B9B9C0";
+        topHex    = dark ? @"#2C2C2E" : @"#F5F5F8";
+        botHex    = dark ? @"#242426" : @"#E8E8EC";
+        borderHex = dark ? @"#3A3A3C" : @"#D8D8DC";
     }
 
     // Build body+tail path (same construction as the legacy drawRect).
@@ -1339,12 +1338,13 @@ static const uint8_t kNoiseCells[24] = {
     CGContextAddPath(ctx, path.CGPath);
     CGContextClip(ctx);
 
-    // 3 色标绿色渐变（亮绿 → 中绿 → 深绿）
+    // 3 色标渐变（v261112-3: 绿色降饱和 — DS 批评"太醒目抢过聊天内容"）
+    // 原亮绿 → 中绿 → 深绿，改成哑光蓝灰渐变
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
     if (space) {
-        CGColorRef c0 = CGColorRetain([self colorWithHex:@"#ACF070"].CGColor);
-        CGColorRef c1 = CGColorRetain([self colorWithHex:@"#5AC830"].CGColor);
-        CGColorRef c2 = CGColorRetain([self colorWithHex:@"#3DA51E"].CGColor);
+        CGColorRef c0 = CGColorRetain([self colorWithHex:@"#5A7FAA"].CGColor);  // 哑光蓝顶
+        CGColorRef c1 = CGColorRetain([self colorWithHex:@"#4A6A8E"].CGColor);  // 中
+        CGColorRef c2 = CGColorRetain([self colorWithHex:@"#3A5A78"].CGColor);  // 深
         if (c0 && c1 && c2) {
             const void *vals[] = { c0, c1, c2 };
             CFArrayRef colors = CFArrayCreate(kCFAllocatorDefault, vals, 3,

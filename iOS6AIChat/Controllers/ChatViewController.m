@@ -253,7 +253,8 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                                     UIViewAutoresizingFlexibleHeight);
     _tableView.allowsSelectionDuringEditing = NO;
     // v261103-21: 底部 contentInset 确保最后一条消息不被遮挡
-    _tableView.contentInset = UIEdgeInsetsMake(0, 0, 12, 0);
+    // v261112-3: bottom inset 12→44（防最后一条消息被输入栏遮挡）
+    _tableView.contentInset = UIEdgeInsetsMake(0, 0, 44, 0);
     // 顶部也加一点，让第一条消息不紧贴顶部
     _tableView.scrollIndicatorInsets = UIEdgeInsetsMake(0, 0, 12, 0);
     // estimatedRowHeight is iOS 7+; on iOS 6 we just rely on the explicit

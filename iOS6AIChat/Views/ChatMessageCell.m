@@ -998,11 +998,13 @@ static NSMutableSet *gStreamingMessageIDs = nil;
                       : (isError ? BubbleRoleError : BubbleRoleAssistant);
     _bubble.role = role;
     // v261025-33: AI normal = no bubble (drawBackground=NO).
-    // AI error = bubble with no tail + red colors (drawBackground=YES).
-    // User = normal bubble (drawBackground=YES).
-    _bubble.drawBackground = message.isUser || isError;
+    // v261112-3: AI normal = 有淡色 panel 背景（GPT+DS 建议"AI 回答不裸奔"）
+    // AI 用 BubbleRoleAssistant + drawBackground=YES + 无 tail（panel 不是气泡）
+    _bubble.drawBackground = YES;
     if (isError) {
-        // Error bubble: no tail, just a rounded rect.
+        _bubble.tailSize = CGSizeMake(0, 0);
+    } else if (!message.isUser) {
+        // v261112-3: AI panel 无 tail（panel 不是气泡，不需要尖角）
         _bubble.tailSize = CGSizeMake(0, 0);
     } else {
         _bubble.tailSize = CGSizeMake(12, 6);

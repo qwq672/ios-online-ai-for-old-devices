@@ -72,9 +72,10 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
         if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
             // v261025-33: tighter insets — bottom=1 prevents the empty
             // space below single-line text that was visible on both iOS.
-            // v261103-54: 水平 padding 6→9（胶囊两端需要空间但 12 太宽）
+            // v261103-54: 水平 padding 9（胶囊两端需要空间）
+            // v261112-3: 垂直 padding 2/1→5/5（防文字上下被裁切）
             [_textView performSelector:@selector(setTextContainerInset:)
-                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(2, 9, 1, 9)]];
+                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(5, 9, 5, 9)]];
         }
         // v261025-32: removed keyboard "Done" accessory button.
         // ChatVC already has tap-to-dismiss on the table view background.
@@ -98,13 +99,21 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 
         // v261025-10: badge — small red circle on top-right of plus button
         // showing the count of active toggles. Hidden when count = 0.
+        // v261112-3: 改成拟物小红球（DS 建议"带渐变阴影的红球，不是扁平红点"）
         _plusBadge = [[UILabel alloc] initWithFrame:CGRectZero];
         _plusBadge.font = [UIFont boldSystemFontOfSize:10];
         _plusBadge.textColor = [UIColor whiteColor];
-        _plusBadge.backgroundColor = [UIColor redColor];
+        _plusBadge.backgroundColor = [UIColor colorWithRed:0.85f green:0.15f blue:0.15f alpha:1.0f];
         _plusBadge.textAlignment = NSTextAlignmentCenter;
-        _plusBadge.layer.cornerRadius = 8.0f;
+        _plusBadge.layer.cornerRadius = 9.0f;  // v261112-3: 8→9（更圆）
         _plusBadge.layer.masksToBounds = YES;
+        _plusBadge.layer.borderWidth = 1.0f;
+        _plusBadge.layer.borderColor = [UIColor colorWithRed:0.6f green:0.1f blue:0.1f alpha:1.0f].CGColor;
+        // 拟物高光（顶部内阴影模拟）
+        _plusBadge.layer.shadowColor = [UIColor whiteColor].CGColor;
+        _plusBadge.layer.shadowOffset = CGSizeMake(0, -1);
+        _plusBadge.layer.shadowRadius = 1.5f;
+        _plusBadge.layer.shadowOpacity = 0.5f;
         _plusBadge.hidden = YES;
         [self addSubview:_plusBadge];
 

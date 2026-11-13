@@ -1204,7 +1204,7 @@ titleForFooterInSection:(NSInteger)section
     if (row == 2) {
         cell.textLabel.text = NSLocalizedString(@"导出对话", nil);
         cell.textLabel.textColor = [iOS6Theme tintColor];
-        cell.textLabel.textAlignment = NSTextAlignmentLeft;
+        cell.textLabel.textAlignment = NSTextAlignmentLeft;  // v261112-3: 左对齐（和其他行一致）
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         return cell;
     }
@@ -1212,7 +1212,7 @@ titleForFooterInSection:(NSInteger)section
     if (row == 3) {
         cell.textLabel.text = NSLocalizedString(@"导入对话（从剪贴板）", nil);
         cell.textLabel.textColor = [iOS6Theme tintColor];
-        cell.textLabel.textAlignment = NSTextAlignmentLeft;
+        cell.textLabel.textAlignment = NSTextAlignmentLeft;  // v261112-3: 左对齐
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         return cell;
     }
