@@ -76,9 +76,9 @@
     [self _applyThemeToNavs:[NSArray arrayWithObject:chatNav]];
 
     // Status bar — dark bars need white glyphs, light (silver) bars need
-    // black glyphs. Switch with the theme.
-    application.statusBarStyle = [iOS6Theme isDarkMode]
-        ? UIStatusBarStyleBlackOpaque : UIStatusBarStyleDefault;
+    // black glyphs. On iOS 7+ this returns LightContent/Default; on iOS 6
+    // it keeps the legacy BlackOpaque/Default pair.
+    application.statusBarStyle = [iOS6Theme statusBarStyleForTheme];
 
     DrawerViewController *drawer =
         [[[DrawerViewController alloc] initWithMainViewController:chatNav] autorelease];
@@ -140,8 +140,7 @@
             [vc.view setNeedsDisplay];
         }
     }
-    [UIApplication sharedApplication].statusBarStyle = [iOS6Theme isDarkMode]
-        ? UIStatusBarStyleBlackOpaque : UIStatusBarStyleDefault;
+    [UIApplication sharedApplication].statusBarStyle = [iOS6Theme statusBarStyleForTheme];
 }
 
 - (void)applicationWillResignActive:(UIApplication *)application {}

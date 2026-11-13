@@ -343,11 +343,8 @@ enum {
             // pop; the v261025-5 crash family).
             _promptBorderUIColor = [[iOS6Theme inputFieldBorderColor] retain];
             _promptView.layer.borderColor = [_promptBorderUIColor CGColor];
-            if ([_promptView respondsToSelector:@selector(setTextContainerInset:)]) {
-                [_promptView performSelector:@selector(setTextContainerInset:)
-                                   withObject:[NSValue valueWithUIEdgeInsets:
-                                               UIEdgeInsetsMake(8, 8, 8, 8)]];
-            }
+            [iOS6Theme applyTextContainerInset:UIEdgeInsetsMake(8, 8, 8, 8)
+                                   toTextView:_promptView];
             if ([iOS6Theme isDarkMode] &&
                 [_promptView respondsToSelector:@selector(setKeyboardAppearance:)]) {
                 [_promptView setKeyboardAppearance:UIKeyboardAppearanceAlert];

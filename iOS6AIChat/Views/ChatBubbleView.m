@@ -71,7 +71,8 @@
             _borderColor = [[UIColor colorWithRed:0.85f green:0.30f blue:0.30f alpha:0.6f] retain];
         }
     } else {
-        _fillColor = [[iOS6Theme bubbleAssistantColor] retain];
+        // iOS 6: white glass card; iOS 7+: flat grouped surface.
+        _fillColor = [[iOS6Theme assistantPanelColor] retain];
         _borderColor = [[iOS6Theme bubbleAssistantBorderColor] retain];
     }
     _shadowColor = [[UIColor colorWithRed:0 green:0 blue:0 alpha:0.18f] retain];
@@ -97,8 +98,14 @@
     // the old code re-ran gradient + live shadow CoreGraphics on EVERY
     // frame of every bubble, which was the biggest scrolling cost on
     // iPhone 3GS.
-    UIImage *tmpl = [iOS6Theme stretchableBubbleImageForUser:
-                        (self.role == BubbleRoleUser)];
+    BOOL flatUI = [iOS6Theme isFlatUI];
+    // iOS 7+: never build/blit the iOS 6 glossy template (gradient + gloss
+    // + baked shadow). Flat design uses the vector path below.
+    UIImage *tmpl = nil;
+    if (!flatUI) {
+        tmpl = [iOS6Theme stretchableBubbleImageForUser:
+                    (self.role == BubbleRoleUser)];
+    }
     // v261025-32: error role skips template — uses vector fallback with
     // red fill/border colors set in _applyRoleColors.
     if (self.role == BubbleRoleError) tmpl = nil;
@@ -111,16 +118,53 @@
         return;
     }
 
-    // v261112-5: iOS 7+ 扁平渲染（纯色 + 圆角，无渐变/阴影/高光）
-    if (IsIOS7OrLater()) {
-        UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(self.bounds, 2, 2)
-                                                          cornerRadius:14.0f];
-        [_fillColor setFill];
-        [path fill];
-        if (_borderColor) {
-            [_borderColor setStroke];
-            [path setLineWidth:0.5f];
-            [path stroke];
+    // v261112-5 / v261113: iOS 7+ 扁平渲染 — solid fill + rounded body,
+    // optional flat (non-glossy) tail, no gradient/shadow/highlight.
+    if (flatUI) {
+        CGRect body = CGRectInset(self.bounds, 1.0f, 1.0f);
+        CGFloat tailH = (_tailSize.width > 0 && _tailSize.height > 0)
+            ? _tailSize.height : 0.0f;
+        body.size.height -= tailH;
+        if (body.size.height < 8.0f) body.size.height = 8.0f;
+        CGFloat r = _cornerRadius;
+        if (r > body.size.height / 2.0f) r = body.size.height / 2.0f;
+
+        if (tailH > 0) {
+            // Union of the rounded body and a flat tail triangle.
+            UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:body
+                                                               cornerRadius:r];
+            UIBezierPath *tail = [UIBezierPath bezierPath];
+            if (self.role == BubbleRoleUser) {
+                [tail moveToPoint:CGPointMake(CGRectGetMaxX(body) - 22.0f,
+                                              CGRectGetMaxY(body))];
+                [tail addLineToPoint:CGPointMake(CGRectGetMaxX(body) - 4.0f,
+                                                 CGRectGetMaxY(body) + tailH)];
+                [tail addLineToPoint:CGPointMake(CGRectGetMaxX(body) - 12.0f,
+                                                 CGRectGetMaxY(body))];
+            } else {
+                [tail moveToPoint:CGPointMake(CGRectGetMinX(body) + 22.0f,
+                                              CGRectGetMaxY(body))];
+                [tail addLineToPoint:CGPointMake(CGRectGetMinX(body) + 4.0f,
+                                                 CGRectGetMaxY(body) + tailH)];
+                [tail addLineToPoint:CGPointMake(CGRectGetMinX(body) + 12.0f,
+                                                 CGRectGetMaxY(body))];
+            }
+            [tail closePath];
+            [path appendPath:tail];
+            [_fillColor setFill];
+            [path fill];
+        } else {
+            // AI panel / error card: borderless-looking flat rounded card
+            // with a single hairline for edge definition on light surfaces.
+            UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:body
+                                                               cornerRadius:r];
+            [_fillColor setFill];
+            [path fill];
+            if (_borderColor) {
+                [_borderColor setStroke];
+                [path setLineWidth:0.5f];
+                [path stroke];
+            }
         }
         return;
     }

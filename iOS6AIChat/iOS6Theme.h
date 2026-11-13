@@ -48,6 +48,21 @@ typedef enum {
 + (BOOL)isDarkMode;
 + (void)setDarkMode:(BOOL)enabled;
 
+// YES on iOS 7+ → flat design language (no gloss, gradients, textures or
+// drop shadows). NO on iOS 6 → full skeuomorphic treatment.
++ (BOOL)isFlatUI;
+
+// Status-bar glyph style that matches the current bar palette on the
+// running OS (iOS 6 uses the legacy constants, iOS 7+ uses LightContent
+// for dark mode and Default for light mode).
++ (UIStatusBarStyle)statusBarStyleForTheme;
+
+// Safe wrapper for UITextView.textContainerInset (iOS 7+ API). Using
+// performSelector:withObject: with an NSValue is an ABI mismatch on ARM
+// (UIEdgeInsets is a struct) — this routes it through NSInvocation.
++ (void)applyTextContainerInset:(UIEdgeInsets)insets
+                     toTextView:(UITextView *)textView;
+
 // Font size scale (0.85x .. 1.5x). Persisted to NSUserDefaults.
 + (iOS6ThemeFontSize)fontSize;
 + (void)setFontSize:(iOS6ThemeFontSize)size;
@@ -68,6 +83,10 @@ typedef enum {
 + (UIColor *)bubbleUserBorderColor;
 + (UIColor *)bubbleAssistantColor;
 + (UIColor *)bubbleAssistantBorderColor;
+// AI answer panel fill. On iOS 6 this is the same white glass card as
+// bubbleAssistantColor; on iOS 7+ it is a flat card that stays visible on
+// the grey/dark flat chat backdrop without a shadow.
++ (UIColor *)assistantPanelColor;
 + (UIColor *)textColor;
 + (UIColor *)secondaryTextColor;
 + (UIColor *)codeBackgroundColor;

@@ -405,8 +405,8 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         _textView.editable = NO;
         _textView.scrollEnabled = NO;
         if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
-            [_textView performSelector:@selector(setTextContainerInset:)
-                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(7, 10, 7, 10)]];
+            [iOS6Theme applyTextContainerInset:UIEdgeInsetsMake(7, 10, 7, 10)
+                                   toTextView:_textView];
         }
         _textView.font = [UIFont systemFontOfSize:[iOS6Theme fontPointSizeForBase:15]];
         _textView.textColor = [iOS6Theme textColor];
@@ -1012,15 +1012,15 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     if (!message.isUser) {
         // Tighter text container inset for AI (no bubble padding).
         if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
-            [_textView performSelector:@selector(setTextContainerInset:)
-                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(4, 4, 4, 4)]];
+            [iOS6Theme applyTextContainerInset:UIEdgeInsetsMake(4, 4, 4, 4)
+                                   toTextView:_textView];
         }
     } else {
         // User: restore bubble-era text container inset.
         // v261103-52: 左右 padding 10→5（减少文字后面空白）
         if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
-            [_textView performSelector:@selector(setTextContainerInset:)
-                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(7, 5, 7, 5)]];
+            [iOS6Theme applyTextContainerInset:UIEdgeInsetsMake(7, 5, 7, 5)
+                                   toTextView:_textView];
         }
     }
 

@@ -259,8 +259,20 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     _tableView.scrollIndicatorInsets = UIEdgeInsetsMake(0, 0, 12, 0);
     // estimatedRowHeight is iOS 7+; on iOS 6 we just rely on the explicit
     // height-for-row delegate method.
-    if ([_tableView respondsToSelector:@selector(setEstimatedRowHeight:)]) {
-        [_tableView performSelector:@selector(setEstimatedRowHeight:) withObject:@(60)];
+    // v261113: setEstimatedRowHeight: takes a CGFloat struct — passing an
+    // NSNumber via performSelector:withObject: fed garbage into the ABI.
+    // Route it through NSInvocation so iOS 7+ gets a sane 80pt estimate.
+    SEL estSel = @selector(setEstimatedRowHeight:);
+    if ([_tableView respondsToSelector:estSel]) {
+        NSMethodSignature *sig = [_tableView methodSignatureForSelector:estSel];
+        if (sig) {
+            CGFloat estimated = 80.0f;
+            NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+            [inv setTarget:_tableView];
+            [inv setSelector:estSel];
+            [inv setArgument:&estimated atIndex:2];
+            [inv invoke];
+        }
     }
     // Set a sensible rowHeight hint for the table — reduces the number of
     // height-for-row calls during fast scrolling.
@@ -368,9 +380,13 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     // _emptyTitleLabel is still nil.
     if (_emptyTitleLabel) {
         _emptyTitleLabel.textColor = [iOS6Theme secondaryTextColor];
-        _emptyTitleLabel.shadowColor = [iOS6Theme isDarkMode]
-            ? [UIColor colorWithWhite:0.0f alpha:0.4f]
-            : [UIColor colorWithWhite:1.0f alpha:0.7f];
+        if (!IsIOS7OrLater()) {
+            _emptyTitleLabel.shadowColor = [iOS6Theme isDarkMode]
+                ? [UIColor colorWithWhite:0.0f alpha:0.4f]
+                : [UIColor colorWithWhite:1.0f alpha:0.7f];
+        } else {
+            _emptyTitleLabel.shadowColor = nil;
+        }
     }
     if (_emptyHintLabel) {
         _emptyHintLabel.textColor = [iOS6Theme secondaryTextColor];
@@ -517,10 +533,12 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
     _greetingLine1Label.textColor = [iOS6Theme textColor];
     _greetingLine1Label.textAlignment = NSTextAlignmentCenter;
     _greetingLine1Label.backgroundColor = [UIColor clearColor];
-    _greetingLine1Label.shadowColor = [iOS6Theme isDarkMode]
-        ? [UIColor colorWithWhite:0.0f alpha:0.4f]
-        : [UIColor colorWithWhite:1.0f alpha:0.7f];
-    _greetingLine1Label.shadowOffset = CGSizeMake(0, 1);
+    if (!IsIOS7OrLater()) {
+        _greetingLine1Label.shadowColor = [iOS6Theme isDarkMode]
+            ? [UIColor colorWithWhite:0.0f alpha:0.4f]
+            : [UIColor colorWithWhite:1.0f alpha:0.7f];
+        _greetingLine1Label.shadowOffset = CGSizeMake(0, 1);
+    }
     _greetingLine1Label.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
                                             UIViewAutoresizingFlexibleTopMargin |
                                             UIViewAutoresizingFlexibleBottomMargin);

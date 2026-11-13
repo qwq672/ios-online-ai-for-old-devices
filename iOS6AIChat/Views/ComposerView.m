@@ -69,14 +69,10 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
         _textView.layer.borderWidth = 1.0f;
         _fieldBorderUIColor = [[iOS6Theme composerFieldBorderColor] retain];
         _textView.layer.borderColor = [_fieldBorderUIColor CGColor];
-        if ([_textView respondsToSelector:@selector(setTextContainerInset:)]) {
-            // v261025-33: tighter insets — bottom=1 prevents the empty
-            // space below single-line text that was visible on both iOS.
-            // v261103-54: 水平 padding 9（胶囊两端需要空间）
-            // v261112-3: 垂直 padding 2/1→5/5（防文字上下被裁切）
-            [_textView performSelector:@selector(setTextContainerInset:)
-                             withObject:[NSValue valueWithUIEdgeInsets:UIEdgeInsetsMake(5, 9, 5, 9)]];
-        }
+        // v261113: struct-safe inset setter (performSelector:withObject:
+        // was passing NSValue bits as a UIEdgeInsets struct on ARM).
+        [iOS6Theme applyTextContainerInset:UIEdgeInsetsMake(5, 9, 5, 9)
+                               toTextView:_textView];
         // v261025-32: removed keyboard "Done" accessory button.
         // ChatVC already has tap-to-dismiss on the table view background.
         // The Done button wasted 44pt of vertical space above the keyboard.
@@ -211,6 +207,9 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
         [_textView setKeyboardAppearance:UIKeyboardAppearanceDefault];
     }
     [self refreshPlusButtonVisuals];
+    // Rebuild the send button chrome too — its flat fill / glass image is
+    // baked per theme and would otherwise keep the previous palette.
+    [self setIsStreaming:_isStreaming];
     [self setNeedsLayout];
 }
 

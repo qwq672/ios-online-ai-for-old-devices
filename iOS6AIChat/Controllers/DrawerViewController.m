@@ -220,16 +220,19 @@ static NSInteger const kMaxRecent = 6;
     _sheetView.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
                                    UIViewAutoresizingFlexibleHeight);
     _sheetView.backgroundColor = [iOS6Theme pinstripeBackground];
-    // One static shadow under the sheet's bottom edge — computed ONCE
-    // via shadowPath (never during scrolling), safe for the 3GS.
-    _sheetView.layer.shadowColor = [UIColor blackColor].CGColor;
-    _sheetView.layer.shadowOpacity = 0.5f;
-    _sheetView.layer.shadowRadius = 8.0f;
-    _sheetView.layer.shadowOffset = CGSizeMake(0.0f, 6.0f);
-    CGPathRef sheetShadow = CGPathCreateWithRect(
-        CGRectMake(-10.0f, H - 2.0f, W + 20.0f, 12.0f), NULL);
-    _sheetView.layer.shadowPath = sheetShadow;
-    CGPathRelease(sheetShadow);
+    if (!IsIOS7OrLater()) {
+        // iOS 6: one static shadow under the sheet's bottom edge — computed
+        // ONCE via shadowPath (never during scrolling), safe for the 3GS.
+        _sheetView.layer.shadowColor = [UIColor blackColor].CGColor;
+        _sheetView.layer.shadowOpacity = 0.5f;
+        _sheetView.layer.shadowRadius = 8.0f;
+        _sheetView.layer.shadowOffset = CGSizeMake(0.0f, 6.0f);
+        CGPathRef sheetShadow = CGPathCreateWithRect(
+            CGRectMake(-10.0f, H - 2.0f, W + 20.0f, 12.0f), NULL);
+        _sheetView.layer.shadowPath = sheetShadow;
+        CGPathRelease(sheetShadow);
+    }
+    // iOS 7+: flat sheet — no cast shadow.
     _sheetView.hidden = YES;
     [self.view addSubview:_sheetView];
 
@@ -268,12 +271,16 @@ static NSInteger const kMaxRecent = 6;
     [_navBar pushNavigationItem:item animated:NO];
 
     // --- Search slot -------------------------------------------------------
-    _searchSlot = [[UIImageView alloc] initWithFrame:CGRectMake(10, kSearchY, W - 20, kSearchH)];
+    // iOS 7 nav bar is 64pt tall (status 20 + 44 content); the old fixed
+    // kSearchY=60 tucked the search field under the bar. Shift it below.
+    CGFloat searchY = IsIOS7OrLater() ? 74.0f : kSearchY;
+    CGFloat tableY = searchY + kSearchH + 8.0f;
+    _searchSlot = [[UIImageView alloc] initWithFrame:CGRectMake(10, searchY, W - 20, kSearchH)];
     _searchSlot.image = [iOS6Theme stretchableRecessedSlotImage];
     _searchSlot.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [_sheetView addSubview:_searchSlot];
 
-    _searchField = [[UITextField alloc] initWithFrame:CGRectMake(14, kSearchY + 4, W - 28, kSearchH - 8)];
+    _searchField = [[UITextField alloc] initWithFrame:CGRectMake(14, searchY + 4, W - 28, kSearchH - 8)];
     _searchField.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     _searchField.backgroundColor = [UIColor clearColor];
     _searchField.font = [UIFont systemFontOfSize:15];
@@ -289,17 +296,21 @@ static NSInteger const kMaxRecent = 6;
     // v261025-5: table now fills ALL the space below the search slot down
     // to the sheet bottom — the bottom chips strip is gone, so there's no
     // reserved strip zone anymore.
-    CGFloat tableH = H - kTableY;
+    CGFloat tableH = H - tableY;
     if (tableH < 120) tableH = 120;   // tiny-screen guard
-    _menuTable = [[UITableView alloc] initWithFrame:CGRectMake(0, kTableY, W, tableH)
+    _menuTable = [[UITableView alloc] initWithFrame:CGRectMake(0, tableY, W, tableH)
                                              style:UITableViewStyleGrouped];
     _menuTable.dataSource = self;
     _menuTable.delegate = self;
     _menuTable.backgroundColor = [iOS6Theme pinstripeBackground];
     _menuTable.backgroundView = nil;
     _menuTable.opaque = NO;
-    _menuTable.rowHeight = kRowH;
-    _menuTable.separatorStyle = UITableViewCellSeparatorStyleNone;   // cards carry their own edges
+    // iOS 6: white cards carry their own edges → no system separators.
+    // iOS 7+: flat inset-grouped rows → native single-line separators.
+    _menuTable.separatorStyle = IsIOS7OrLater()
+        ? UITableViewCellSeparatorStyleSingleLine
+        : UITableViewCellSeparatorStyleNone;
+    _menuTable.separatorColor = [iOS6Theme hairlineColor];
     _menuTable.autoresizingMask = (UIViewAutoresizingFlexibleWidth |
                                    UIViewAutoresizingFlexibleHeight);
     [_sheetView addSubview:_menuTable];
@@ -343,7 +354,25 @@ static NSInteger const kMaxRecent = 6;
     // = dark translucent, BarStyleDefault = light translucent).
     _navBar.barStyle = [iOS6Theme isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
     _menuTable.backgroundColor = [iOS6Theme pinstripeBackground];
-    _searchSlot.image = [iOS6Theme stretchableRecessedSlotImage];
+    _menuTable.separatorColor = [iOS6Theme hairlineColor];
+    _menuTable.separatorStyle = IsIOS7OrLater()
+        ? UITableViewCellSeparatorStyleSingleLine
+        : UITableViewCellSeparatorStyleNone;
+    if (IsIOS7OrLater()) {
+        // iOS 7 search field: flat rounded grey capsule (the iOS 6 recessed
+        // slot image returns nil here, which previously left the field
+        // floating with no visible container at all).
+        _searchSlot.image = nil;
+        _searchSlot.backgroundColor = [iOS6Theme isDarkMode]
+            ? [iOS6Theme colorWithHex:@"#2C2C2E"]
+            : [iOS6Theme colorWithHex:@"#E9E9EB"];
+        _searchSlot.layer.cornerRadius = 10.0f;
+        _searchSlot.layer.masksToBounds = YES;
+    } else {
+        _searchSlot.backgroundColor = [UIColor clearColor];
+        _searchSlot.layer.cornerRadius = 0.0f;
+        _searchSlot.image = [iOS6Theme stretchableRecessedSlotImage];
+    }
     // v261025-5: _stripSlot removed (chips strip gone).
 
     _searchField.textColor = [iOS6Theme textColor];
@@ -386,6 +415,10 @@ static NSInteger const kMaxRecent = 6;
 - (void)_themeChanged
 {
     [self _styleSheet];
+    if (_open) {
+        [[UIApplication sharedApplication] setStatusBarStyle:[iOS6Theme statusBarStyleForTheme]
+                                                    animated:NO];
+    }
 }
 
 - (void)_onToggleRequest
@@ -413,10 +446,11 @@ static NSInteger const kMaxRecent = 6;
     // table so the new snapshot shows up in section kMenuSectionRecent.
     [self _rebuildRecentList];
     [_menuTable reloadData];
-    // White status text over the graphite leather bar (iOS 6 global
-    // status style — saved so close can restore the pre-open look).
+    // Status glyphs follow the current flat/skeuomorphic bar palette
+    // (iOS 7+ uses LightContent for dark mode instead of the deprecated
+    // BlackOpaque constant).
     _savedStatusBarStyle = [UIApplication sharedApplication].statusBarStyle;
-    [[UIApplication sharedApplication] setStatusBarStyle:UIStatusBarStyleBlackOpaque
+    [[UIApplication sharedApplication] setStatusBarStyle:[iOS6Theme statusBarStyleForTheme]
                                                 animated:NO];
     CGFloat H = _sheetView.bounds.size.height;
     if (H < 200) H = [[UIScreen mainScreen] bounds].size.height;
@@ -747,6 +781,12 @@ replacementString:(NSString *)string
 - (void)_installCardBackgroundOnCell:(UITableViewCell *)cell
 {
     if (!cell) return;
+    // iOS 7+: flat native grouped cells — no floating card texture.
+    if (IsIOS7OrLater()) {
+        cell.backgroundColor = [iOS6Theme bubbleAssistantColor];
+        cell.backgroundView = nil;
+        return;
+    }
     UIView *container = [[[UIView alloc] initWithFrame:CGRectZero] autorelease];
     container.backgroundColor = [UIColor clearColor];
     container.clipsToBounds = NO;
@@ -761,7 +801,15 @@ replacementString:(NSString *)string
 - (void)_applyCardBackgroundOnCell:(UITableViewCell *)cell
                          tableView:(UITableView *)tableView
 {
-    if (!cell || !cell.backgroundView) return;
+    if (!cell) return;
+    if (IsIOS7OrLater()) {
+        cell.backgroundColor = [iOS6Theme bubbleAssistantColor];
+        cell.contentView.backgroundColor = [UIColor clearColor];
+        cell.backgroundView = nil;
+        cell.selectedBackgroundView = nil;
+        return;
+    }
+    if (!cell.backgroundView) return;
     UIImageView *cardImg = (UIImageView *)[cell.backgroundView viewWithTag:777];
     if (![cardImg isKindOfClass:[UIImageView class]]) return;
     cardImg.image = [iOS6Theme stretchableCardBackgroundImage];
@@ -923,10 +971,12 @@ replacementString:(NSString *)string
         cell.textLabel.text = conv.displayTitle ?: @"(无标题)";
         cell.textLabel.font = [UIFont boldSystemFontOfSize:15];
         cell.textLabel.textColor = [iOS6Theme textColor];
-        cell.textLabel.shadowColor = [iOS6Theme isDarkMode]
-            ? [UIColor colorWithWhite:0.0f alpha:0.35f]
-            : [UIColor colorWithWhite:1.0f alpha:0.9f];
-        cell.textLabel.shadowOffset = CGSizeMake(0, 1);
+        if (!IsIOS7OrLater()) {
+            cell.textLabel.shadowColor = [iOS6Theme isDarkMode]
+                ? [UIColor colorWithWhite:0.0f alpha:0.35f]
+                : [UIColor colorWithWhite:1.0f alpha:0.9f];
+            cell.textLabel.shadowOffset = CGSizeMake(0, 1);
+        }
         cell.detailTextLabel.text = [self _relativeDateString:conv.updatedAt];
         cell.detailTextLabel.font = [UIFont systemFontOfSize:12];
         cell.detailTextLabel.textColor = [iOS6Theme secondaryTextColor];
@@ -952,10 +1002,12 @@ replacementString:(NSString *)string
     cell.textLabel.backgroundColor = [UIColor clearColor];
     cell.textLabel.opaque = NO;
     cell.textLabel.textColor = [iOS6Theme textColor];
-    cell.textLabel.shadowColor = [iOS6Theme isDarkMode]
-        ? [UIColor colorWithWhite:0.0f alpha:0.35f]
-        : [UIColor colorWithWhite:1.0f alpha:0.9f];
-    cell.textLabel.shadowOffset = CGSizeMake(0, 1);
+    if (!IsIOS7OrLater()) {
+        cell.textLabel.shadowColor = [iOS6Theme isDarkMode]
+            ? [UIColor colorWithWhite:0.0f alpha:0.35f]
+            : [UIColor colorWithWhite:1.0f alpha:0.9f];
+        cell.textLabel.shadowOffset = CGSizeMake(0, 1);
+    }
 
     // v261025-5: flat index — chat section row 0 → flat 0 (新对话);
     // manage section row N → flat N+1 (because chat section is just 1
@@ -977,7 +1029,8 @@ replacementString:(NSString *)string
 - (CGFloat)tableView:(UITableView *)tableView
 heightForRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    return kRowH;
+    // iOS 7 flat rows follow the native 44pt grouped-table rhythm.
+    return IsIOS7OrLater() ? 44.0f : kRowH;
 }
 
 - (NSString *)_titleForFlatIndex:(NSInteger)flat

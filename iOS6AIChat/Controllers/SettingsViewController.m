@@ -752,7 +752,11 @@ titleForFooterInSection:(NSInteger)section
 - (UISegmentedControl *)_themedSegmentedControlWithItems:(NSArray *)items
 {
     UISegmentedControl *seg = [[[UISegmentedControl alloc] initWithItems:items] autorelease];
-    seg.tintColor = [iOS6Theme controlBackgroundColor];
+    // iOS 6: light grey body + white selected pill.
+    // iOS 7+: flat native control tinted with the accent colour; using the
+    // grey control background here made the white selected label invisible.
+    seg.tintColor = IsIOS7OrLater() ? [iOS6Theme tintColor]
+                                    : [iOS6Theme controlBackgroundColor];
     UIColor *normalColor = [iOS6Theme textColor];
     UIColor *selectedColor = [UIColor whiteColor];
     // setTitleTextAttributes:forState: applies to ALL segments but only
@@ -1089,27 +1093,36 @@ titleForFooterInSection:(NSInteger)section
      forControlEvents:UIControlEventValueChanged];
     sp.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     CGRect f = cell.contentView.bounds;
-    // Container with rounded corners + dark bg.
-    UIView *stepperContainer = [[[UIView alloc] initWithFrame:CGRectMake(f.size.width - 102 - kPad, (kRowH - 31) / 2, 102, 31)] autorelease];
-    stepperContainer.backgroundColor = [iOS6Theme controlBackgroundColor];
-    stepperContainer.layer.cornerRadius = 6.0f;
-    stepperContainer.layer.borderWidth = 1.0f;
-    stepperContainer.layer.borderColor = [[[iOS6Theme hairlineColor] retain] CGColor];
-    // v261103-14: retained the UIColor so the CGColor doesn't dangle.
-    // The container is autoreleased (released when the cell is recycled),
-    // but the layer's CGColor might outlive the UIColor's autorelease.
-    // This leaks 1 UIColor per cell creation, but stepperContainer cells
-    // are rare (only the "结果数" row) so the leak is negligible.
-    stepperContainer.layer.masksToBounds = YES;
-    stepperContainer.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    sp.frame = CGRectMake(4, 1, 94, 29);
-    [stepperContainer addSubview:sp];
-    [cell.contentView addSubview:stepperContainer];
+    CGFloat stepperW = 102.0f;
+    if (IsIOS7OrLater()) {
+        // iOS 7+: native flat stepper — skip the iOS 6 embossed container
+        // (rounded box + hairline border) entirely.
+        sp.frame = CGRectMake(f.size.width - 94 - kPad, (kRowH - 29) / 2, 94, 29);
+        [cell.contentView addSubview:sp];
+        stepperW = 94.0f;
+    } else {
+        // Container with rounded corners + dark bg.
+        UIView *stepperContainer = [[[UIView alloc] initWithFrame:CGRectMake(f.size.width - 102 - kPad, (kRowH - 31) / 2, 102, 31)] autorelease];
+        stepperContainer.backgroundColor = [iOS6Theme controlBackgroundColor];
+        stepperContainer.layer.cornerRadius = 6.0f;
+        stepperContainer.layer.borderWidth = 1.0f;
+        stepperContainer.layer.borderColor = [[[iOS6Theme hairlineColor] retain] CGColor];
+        // v261103-14: retained the UIColor so the CGColor doesn't dangle.
+        // The container is autoreleased (released when the cell is recycled),
+        // but the layer's CGColor might outlive the UIColor's autorelease.
+        // This leaks 1 UIColor per cell creation, but stepperContainer cells
+        // are rare (only the "结果数" row) so the leak is negligible.
+        stepperContainer.layer.masksToBounds = YES;
+        stepperContainer.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        sp.frame = CGRectMake(4, 1, 94, 29);
+        [stepperContainer addSubview:sp];
+        [cell.contentView addSubview:stepperContainer];
+    }
 
     // Place numLabel between stepper and label.
     [numLabel sizeToFit];
     CGRect nlF = numLabel.frame;
-    nlF.origin.x = f.size.width - 102 - kPad - nlF.size.width - 8;
+    nlF.origin.x = f.size.width - stepperW - kPad - nlF.size.width - 8;
     nlF.origin.y = (kRowH - nlF.size.height) / 2;
     nlF.size.height = kRowH;
     numLabel.frame = nlF;

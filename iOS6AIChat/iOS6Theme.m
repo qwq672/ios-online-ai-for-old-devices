@@ -101,6 +101,36 @@ static NSString * const kHexDarkThinkingBorder   = @"#3A3A3C";   // v261103-39ï¼
     return [[NSUserDefaults standardUserDefaults] boolForKey:kUDKeyDarkMode];
 }
 
++ (BOOL)isFlatUI
+{
+    return IsIOS7OrLater();
+}
+
++ (UIStatusBarStyle)statusBarStyleForTheme
+{
+    if (IsIOS7OrLater()) {
+        // UIStatusBarStyleLightContent is iOS 7-only; the raw value (1)
+        // keeps this compiling against the iOS 6 SDK.
+        return [self isDarkMode] ? (UIStatusBarStyle)1 : UIStatusBarStyleDefault;
+    }
+    return [self isDarkMode] ? UIStatusBarStyleBlackOpaque : UIStatusBarStyleDefault;
+}
+
++ (void)applyTextContainerInset:(UIEdgeInsets)insets
+                     toTextView:(UITextView *)textView
+{
+    if (!textView) return;
+    SEL sel = @selector(setTextContainerInset:);
+    if (![textView respondsToSelector:sel]) return;   // iOS 6: no such API
+    NSMethodSignature *sig = [textView methodSignatureForSelector:sel];
+    if (!sig) return;
+    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+    [inv setTarget:textView];
+    [inv setSelector:sel];
+    [inv setArgument:&insets atIndex:2];
+    [inv invoke];
+}
+
 + (void)setDarkMode:(BOOL)enabled
 {
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kUDKeyDarkMode];
@@ -164,10 +194,28 @@ static NSString * const kHexDarkThinkingBorder   = @"#3A3A3C";   // v261103-39ï¼
 + (UIColor *)tabbarBottomColor     { return [self _colorLight:kHexLightTabbarBottom   dark:kHexDarkTabbarBottom]; }
 + (UIColor *)pinstripeColor        { return [self _colorLight:kHexLightPinstripe      dark:kHexDarkPinstripe]; }
 + (UIColor *)pinstripeBackground    { return [self _colorLight:kHexLightPinstripeBG   dark:kHexDarkPinstripeBG]; }
-+ (UIColor *)bubbleUserColor       { return [self _colorLight:kHexLightBubbleUser     dark:kHexDarkBubbleUser]; }
++ (UIColor *)bubbleUserColor
+{
+    // iOS 7+: flat grey bubble one step darker than the chat backdrop,
+    // so it reads without the iOS 6 gradient/gloss/border.
+    if (IsIOS7OrLater()) return [self _colorLight:@"#D1D1D6" dark:@"#3A3A3C"];
+    return [self _colorLight:kHexLightBubbleUser dark:kHexDarkBubbleUser];
+}
 + (UIColor *)bubbleUserBorderColor { return [self _colorLight:kHexLightBubbleUserB    dark:kHexDarkBubbleUserB]; }
 + (UIColor *)bubbleAssistantColor  { return [self _colorLight:kHexLightBubbleAI       dark:kHexDarkBubbleAI]; }
-+ (UIColor *)bubbleAssistantBorderColor { return [self _colorLight:kHexLightBubbleAIB dark:kHexDarkBubbleAIB]; }
++ (UIColor *)bubbleAssistantBorderColor
+{
+    // iOS 7+: hairline only â€” flat panels have no bevel edge.
+    if (IsIOS7OrLater()) return [self _colorLight:@"#E5E5EA" dark:@"#3A3A3C"];
+    return [self _colorLight:kHexLightBubbleAIB dark:kHexDarkBubbleAIB];
+}
++ (UIColor *)assistantPanelColor
+{
+    if (!IsIOS7OrLater()) return [self bubbleAssistantColor];
+    // iOS 7+: flat card â€” white on the #EDEDED backdrop (dark: raised grey
+    // on #070707), edge defined by a single hairline, no shadow.
+    return [self _colorLight:@"#FFFFFF" dark:@"#1C1C1E"];
+}
 + (UIColor *)textColor             { return [self _colorLight:kHexLightText           dark:kHexDarkText]; }
 + (UIColor *)secondaryTextColor    { return [self _colorLight:kHexLightTextSecondary   dark:kHexDarkTextSecondary]; }
 + (UIColor *)codeBackgroundColor   { return [self _colorLight:kHexLightCodeBG          dark:kHexDarkCodeBG]; }
@@ -197,6 +245,14 @@ static NSString * const kHexDarkThinkingBorder   = @"#3A3A3C";   // v261103-39ï¼
     if ([s hasPrefix:@"#"]) s = [s substringFromIndex:1];
     if (s.length != 6) return [UIColor blackColor];
 
+    // Cached so callers can safely keep the CGColor (e.g. layer.borderColor):
+    // previously each call returned a new autoreleased UIColor and its
+    // CGColor dangled as soon as the autorelease pool drained.
+    static NSMutableDictionary *cache = nil;
+    if (!cache) cache = [[NSMutableDictionary alloc] init];
+    UIColor *cached = [cache objectForKey:s];
+    if (cached) return cached;
+
     unsigned rgb = 0;
     NSScanner *sc = [NSScanner scannerWithString:s];
     [sc scanHexInt:&rgb];
@@ -204,7 +260,9 @@ static NSString * const kHexDarkThinkingBorder   = @"#3A3A3C";   // v261103-39ï¼
     CGFloat r = ((rgb >> 16) & 0xFF) / 255.0f;
     CGFloat g = ((rgb >> 8)  & 0xFF) / 255.0f;
     CGFloat b = ( rgb        & 0xFF) / 255.0f;
-    return [UIColor colorWithRed:r green:g blue:b alpha:1.0f];
+    UIColor *color = [UIColor colorWithRed:r green:g blue:b alpha:1.0f];
+    if (color) [cache setObject:color forKey:s];
+    return color;
 }
 
 + (NSString *)hexFromColor:(UIColor *)color
@@ -374,10 +432,12 @@ static NSString * const kHexDarkThinkingBorder   = @"#3A3A3C";   // v261103-39ï¼
         // the glyphs otherwise.
         label.backgroundColor = [UIColor clearColor];
         label.opaque = NO;
-        label.shadowColor = [self isDarkMode]
-            ? [UIColor colorWithWhite:0.0f alpha:0.6f]
-            : [UIColor colorWithWhite:1.0f alpha:0.8f];
-        label.shadowOffset = CGSizeMake(0, 1);
+        if (!IsIOS7OrLater()) {
+            label.shadowColor = [self isDarkMode]
+                ? [UIColor colorWithWhite:0.0f alpha:0.6f]
+                : [UIColor colorWithWhite:1.0f alpha:0.8f];
+            label.shadowOffset = CGSizeMake(0, 1);
+        }
         label.autoresizingMask = UIViewAutoresizingFlexibleWidth;
         [header addSubview:label];
     }
@@ -400,10 +460,12 @@ static NSString * const kHexDarkThinkingBorder   = @"#3A3A3C";   // v261103-39ï¼
         label.backgroundColor = [UIColor clearColor];
         label.opaque = NO;
         label.numberOfLines = 0;
-        label.shadowColor = [self isDarkMode]
-            ? [UIColor colorWithWhite:0.0f alpha:0.6f]
-            : [UIColor colorWithWhite:1.0f alpha:0.8f];
-        label.shadowOffset = CGSizeMake(0, 1);
+        if (!IsIOS7OrLater()) {
+            label.shadowColor = [self isDarkMode]
+                ? [UIColor colorWithWhite:0.0f alpha:0.6f]
+                : [UIColor colorWithWhite:1.0f alpha:0.8f];
+            label.shadowOffset = CGSizeMake(0, 1);
+        }
         label.autoresizingMask = UIViewAutoresizingFlexibleWidth;
         [footer addSubview:label];
     }
@@ -455,6 +517,13 @@ static NSString * const kHexDarkThinkingBorder   = @"#3A3A3C";   // v261103-39ï¼
 + (void)styleTabBarController:(UITabBarController *)tbc
 {
     if (!tbc) return;
+    // iOS 7+: native flat tab bar â€” never install the skeuomorphic
+    // gradient / bevel / selection-block images.
+    if (IsIOS7OrLater()) {
+        tbc.tabBar.barStyle = [self isDarkMode] ? UIBarStyleBlack : UIBarStyleDefault;
+        tbc.tabBar.tintColor = [self tintColor];
+        return;
+    }
     // Rich bar background â€” matches the App Store tab bar pixel structure:
     //   content edge â†’ 1px bright highlight â†’ 1px near-black bevel line â†’
     //   3-stop gradient (#454545 â†’ #2A2A2C â†’ #131313 in dark mode).
