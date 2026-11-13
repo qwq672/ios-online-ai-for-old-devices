@@ -5,12 +5,26 @@ android {
 
     defaultConfig {
         applicationId "com.awa.aichat"
-        // v261103: Android 2.3 (Gingerbread) — targets old devices that
-        // can't run modern AI chat apps (ChatGPT needs Android 6+).
-        minSdkVersion 9       // Android 2.3
-        targetSdkVersion 22   // Android 5.1 (avoids runtime permission model)
-        versionCode 2
-        versionName "0.2.0"
+        minSdkVersion 9
+        targetSdkVersion 22
+        versionCode 3
+        versionName "0.5.0"
+
+        // v261113: NDK — 共享 C 层（SSE 解析器）
+        externalNativeBuild {
+            cmake {
+                cppFlags ""
+                // armeabi-v7a 覆盖大多数 Android 2.3 设备
+                abiFilters 'armeabi-v7a', 'x86'
+            }
+        }
+    }
+
+    // v261113: CMake 构建 SSE 共享库
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+        }
     }
 
     sourceSets {
@@ -32,6 +46,4 @@ android {
 }
 
 dependencies {
-    // No external deps — pure Android SDK + org.json (built in).
-    // This keeps the APK tiny and compatible with Android 2.3.
 }
