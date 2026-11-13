@@ -104,10 +104,44 @@ public class MarkdownParser {
         SpannableStringBuilder sb = new SpannableStringBuilder();
         String[] lines = text.split("\n");
         boolean inCodeBlock = false;
+        boolean inToolBlock = false;
         StringBuilder codeBlockBuf = new StringBuilder();
+        StringBuilder toolBlockBuf = new StringBuilder();
+
+        // v0.4: tool call text 颜色（灰色，比正文暗）
+        int toolColor = dark ? 0xFF8C8C8C : 0xFF999999;
 
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i];
+
+            // v0.4: :::tool fence — 工具调用状态（灰色斜体 + "·" 前缀）
+            if (line.trim().equals(":::tool")) {
+                if (inToolBlock) {
+                    // Close — flush tool block
+                    if (toolBlockBuf.length() > 0) {
+                        String toolText = toolBlockBuf.toString().trim();
+                        if (toolText.endsWith("\n")) toolText = toolText.substring(0, toolText.length() - 1);
+                        String display = "· " + toolText.replace("\n", " · ");
+                        int start = sb.length();
+                        sb.append("\n").append(display).append("\n\n");
+                        int end = sb.length();
+                        sb.setSpan(new StyleSpan(android.graphics.Typeface.ITALIC), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        sb.setSpan(new ForegroundColorSpan(toolColor), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        sb.setSpan(new RelativeSizeSpan(0.9f), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    }
+                    toolBlockBuf.setLength(0);
+                    inToolBlock = false;
+                } else {
+                    inToolBlock = true;
+                    toolBlockBuf.setLength(0);
+                }
+                continue;
+            }
+
+            if (inToolBlock) {
+                toolBlockBuf.append(line).append("\n");
+                continue;
+            }
 
             // Code fence toggle
             if (line.trim().startsWith("```")) {
