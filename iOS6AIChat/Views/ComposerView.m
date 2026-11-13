@@ -99,21 +99,25 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
 
         // v261025-10: badge — small red circle on top-right of plus button
         // showing the count of active toggles. Hidden when count = 0.
-        // v261112-3: 改成拟物小红球（DS 建议"带渐变阴影的红球，不是扁平红点"）
+        // v261112-3: 改成拟物小红球（DS 建议）
+        // v261112-5: iOS 7+ 扁平化（无阴影/边框/高光）
         _plusBadge = [[UILabel alloc] initWithFrame:CGRectZero];
         _plusBadge.font = [UIFont boldSystemFontOfSize:10];
         _plusBadge.textColor = [UIColor whiteColor];
         _plusBadge.backgroundColor = [UIColor colorWithRed:0.85f green:0.15f blue:0.15f alpha:1.0f];
         _plusBadge.textAlignment = NSTextAlignmentCenter;
-        _plusBadge.layer.cornerRadius = 9.0f;  // v261112-3: 8→9（更圆）
+        _plusBadge.layer.cornerRadius = 9.0f;
         _plusBadge.layer.masksToBounds = YES;
-        _plusBadge.layer.borderWidth = 1.0f;
-        _plusBadge.layer.borderColor = [UIColor colorWithRed:0.6f green:0.1f blue:0.1f alpha:1.0f].CGColor;
-        // 拟物高光（顶部内阴影模拟）
-        _plusBadge.layer.shadowColor = [UIColor whiteColor].CGColor;
-        _plusBadge.layer.shadowOffset = CGSizeMake(0, -1);
-        _plusBadge.layer.shadowRadius = 1.5f;
-        _plusBadge.layer.shadowOpacity = 0.5f;
+        if (!IsIOS7OrLater()) {
+            // iOS 6: 拟物（边框 + 高光阴影）
+            _plusBadge.layer.borderWidth = 1.0f;
+            _plusBadge.layer.borderColor = [UIColor colorWithRed:0.6f green:0.1f blue:0.1f alpha:1.0f].CGColor;
+            _plusBadge.layer.shadowColor = [UIColor whiteColor].CGColor;
+            _plusBadge.layer.shadowOffset = CGSizeMake(0, -1);
+            _plusBadge.layer.shadowRadius = 1.5f;
+            _plusBadge.layer.shadowOpacity = 0.5f;
+        }
+        // iOS 7+: 扁平（纯色 + masksToBounds，无额外效果）
         _plusBadge.hidden = YES;
         [self addSubview:_plusBadge];
 

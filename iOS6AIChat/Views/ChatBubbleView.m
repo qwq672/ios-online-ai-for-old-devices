@@ -103,10 +103,21 @@
     // red fill/border colors set in _applyRoleColors.
     if (self.role == BubbleRoleError) tmpl = nil;
     if (tmpl) {
-        // The template's geometry mirrors the legacy drawRect: 2pt
-        // transparent margins + body + 6pt tail zone — i.e. it maps
-        // 1:1 onto the view's bounds.
         [tmpl drawInRect:self.bounds];
+        return;
+    }
+
+    // v261112-5: iOS 7+ 扁平渲染（纯色 + 圆角，无渐变/阴影/高光）
+    if (IsIOS7OrLater()) {
+        UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(self.bounds, 2, 2)
+                                                          cornerRadius:14.0f];
+        [_fillColor setFill];
+        [path fill];
+        if (_borderColor) {
+            [_borderColor setStroke];
+            [path setLineWidth:0.5f];
+            [path stroke];
+        }
         return;
     }
 
