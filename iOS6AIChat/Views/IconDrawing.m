@@ -42,6 +42,10 @@
 
     CGFloat w = size.width, h = size.height;
     CGFloat cx = w * 0.5f, cy = h * 0.5f;
+    // v261113: 统一线宽（DS 批评"粗细不一"）
+    // 所有图标用同一公式，视觉粗细一致
+    CGFloat stdLineW = MAX(1.5f, w * 0.10f);
+    CGContextSetLineWidth(ctx, stdLineW);
 
     switch (type) {
         case IconTypeLightbulb:   [self _drawLightbulb:ctx cx:cx cy:cy w:w h:h]; break;
