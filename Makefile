@@ -84,7 +84,8 @@ iOS6AIChat_PREFIX_HEADER = iOS6AIChat/iOS6AIChat-Prefix.pch
 # === Frameworks ==========================================================
 iOS6AIChat_FRAMEWORKS = UIKit Foundation CoreGraphics CFNetwork
 # v261103-25: mbedTLS 源文件直接编译（不用静态库）
-iOS6AIChat_C_FILES = $(shell ls mbedtls/src/*.c 2>/dev/null)
+# v261113: 共享 C 层（SSE 解析器等）
+iOS6AIChat_C_FILES = $(shell ls mbedtls/src/*.c 2>/dev/null) shared/sse.c
 # v261103-25: 显式加 MbedTLSHTTPClient.m (C_FILES 可能影响自动扫描)
 iOS6AIChat_OBJC_FILES = iOS6AIChat/Services/MbedTLSHTTPClient.m
 
@@ -102,7 +103,9 @@ iOS6AIChat_CFLAGS  = -fno-objc-arc -fobjc-legacy-dispatch -fobjc-exceptions \
         -Wno-error=unused-variable -Wno-unused-variable \
         -std=gnu99 \
         -IiOS6AIChat -IiOS6AIChat/Models -IiOS6AIChat/Services \
-        -IiOS6AIChat/Views -IiOS6AIChat/Controllers -IiOS6AIChat/Resources -Imbedtls/include -Imbedtls/include/mbedtls -Imbedtls/src
+        -IiOS6AIChat/Views -IiOS6AIChat/Controllers -IiOS6AIChat/Resources \
+        -Ishared \
+        -Imbedtls/include -Imbedtls/include/mbedtls -Imbedtls/src
 iOS6AIChat_LDFLAGS = -framework UIKit -framework Foundation -framework CoreGraphics -framework CFNetwork -framework Security
 
 # === Packaging ===========================================================
@@ -145,50 +148,50 @@ endif
 # colon `:` which would conflict if Theos also defined `clean:`).
 .PHONY: clean
 clean::
-	rm -rf .theos obj build packages Payload *.deb iOS6AIChat-unsigned.ipa
+        rm -rf .theos obj build packages Payload *.deb iOS6AIChat-unsigned.ipa
 
 # Pack an unsigned .ipa from the .app Theos just produced.
 # The .app is inside the staged .deb payload at .theos/_/Applications/
 # (for rootful scheme) or .theos/_/var/jb/Applications/ (for rootless).
 .PHONY: ipa clean-ipa show-app
 ipa: package
-	@echo "==> Locating staged .app bundle in .theos/_/"
-	@BUILT_APP=$$(find .theos/_ -name "iOS6AIChat.app" -type d 2>/dev/null | head -1); \
-	if [ -z "$$BUILT_APP" ]; then \
-	echo "Could not find iOS6AIChat.app — did 'make package' succeed?"; exit 1; \
-	fi; \
-	echo "==> Found $$BUILT_APP"; \
-	rm -rf Payload iOS6AIChat-unsigned.ipa; \
-	mkdir Payload; \
-	cp -R "$$BUILT_APP" Payload/; \
-	APP=Payload/iOS6AIChat.app; \
-	echo "==> Ensuring Info.plist is in the bundle (Theos sometimes forgets it)"; \
-	if [ ! -f "$$APP/Info.plist" ]; then \
-	cp iOS6AIChat/Resources/iOS6AIChat-Info.plist "$$APP/Info.plist"; \
-	fi; \
-	echo "==> Copying app icons into the bundle root"; \
-	for icon in Icon.png Icon@2x.png Icon-72.png Icon-72@2x.png lightbulb.png camera.png send.png; do \
-	if [ -f "iOS6AIChat/Resources/Icons/$$icon" ] && [ ! -f "$$APP/$$icon" ]; then \
-	cp "iOS6AIChat/Resources/Icons/$$icon" "$$APP/$$icon"; \
-	fi; \
-	done; \
-	echo "==> Converting Info.plist to binary format (iOS 6 prefers binary)"; \
-	if command -v plutil >/dev/null 2>&1; then \
-	plutil -convert binary1 "$$APP/Info.plist" 2>/dev/null || true; \
-	fi; \
-	echo "==> Ad-hoc re-signing binary with ldid (ensures it loads on jailbroken iOS)"; \
-	if command -v ldid >/dev/null 2>&1; then \
-	ldid -S "$$APP/iOS6AIChat" 2>/dev/null || true; \
-	fi; \
-	echo "==> Final .app contents:"; \
-	ls -la "$$APP"; \
-	echo "==> Zipping into iOS6AIChat-unsigned.ipa"; \
-	zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null; \
-	echo "==> Built iOS6AIChat-unsigned.ipa"; \
-	ls -la iOS6AIChat-unsigned.ipa
+        @echo "==> Locating staged .app bundle in .theos/_/"
+        @BUILT_APP=$$(find .theos/_ -name "iOS6AIChat.app" -type d 2>/dev/null | head -1); \
+        if [ -z "$$BUILT_APP" ]; then \
+        echo "Could not find iOS6AIChat.app — did 'make package' succeed?"; exit 1; \
+        fi; \
+        echo "==> Found $$BUILT_APP"; \
+        rm -rf Payload iOS6AIChat-unsigned.ipa; \
+        mkdir Payload; \
+        cp -R "$$BUILT_APP" Payload/; \
+        APP=Payload/iOS6AIChat.app; \
+        echo "==> Ensuring Info.plist is in the bundle (Theos sometimes forgets it)"; \
+        if [ ! -f "$$APP/Info.plist" ]; then \
+        cp iOS6AIChat/Resources/iOS6AIChat-Info.plist "$$APP/Info.plist"; \
+        fi; \
+        echo "==> Copying app icons into the bundle root"; \
+        for icon in Icon.png Icon@2x.png Icon-72.png Icon-72@2x.png lightbulb.png camera.png send.png; do \
+        if [ -f "iOS6AIChat/Resources/Icons/$$icon" ] && [ ! -f "$$APP/$$icon" ]; then \
+        cp "iOS6AIChat/Resources/Icons/$$icon" "$$APP/$$icon"; \
+        fi; \
+        done; \
+        echo "==> Converting Info.plist to binary format (iOS 6 prefers binary)"; \
+        if command -v plutil >/dev/null 2>&1; then \
+        plutil -convert binary1 "$$APP/Info.plist" 2>/dev/null || true; \
+        fi; \
+        echo "==> Ad-hoc re-signing binary with ldid (ensures it loads on jailbroken iOS)"; \
+        if command -v ldid >/dev/null 2>&1; then \
+        ldid -S "$$APP/iOS6AIChat" 2>/dev/null || true; \
+        fi; \
+        echo "==> Final .app contents:"; \
+        ls -la "$$APP"; \
+        echo "==> Zipping into iOS6AIChat-unsigned.ipa"; \
+        zip -r -X iOS6AIChat-unsigned.ipa Payload >/dev/null; \
+        echo "==> Built iOS6AIChat-unsigned.ipa"; \
+        ls -la iOS6AIChat-unsigned.ipa
 
 show-app: package
-	@find .theos/_ -name "iOS6AIChat.app" -type d -print -quit
+        @find .theos/_ -name "iOS6AIChat.app" -type d -print -quit
 
 clean-ipa:
-	rm -rf Payload iOS6AIChat-unsigned.ipa
+        rm -rf Payload iOS6AIChat-unsigned.ipa
