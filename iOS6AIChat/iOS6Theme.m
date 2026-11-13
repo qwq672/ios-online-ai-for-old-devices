@@ -58,9 +58,9 @@ static NSString * const kHexDarkBubbleUser      = @"#3A3A3C";  // v261103-32: �
 static NSString * const kHexDarkBubbleUserB     = @"#4A4A4C";  // 深灰 border
 static NSString * const kHexDarkBubbleAI        = @"#2C2C2E";  // v261103-39: 比背景亮一点区分气泡（was #1A1A1E）
 static NSString * const kHexDarkBubbleAIB       = @"#3A3A3C";  // v261103-39（was #2A2A2E）
-static NSString * const kHexDarkText            = @"#ECECF0";  // v261103-39: 提亮（was #D8D8E0）— DS 批评字不够亮
-static NSString * const kHexDarkTextSecondary   = @"#9A9AA8";  // v261103-39: 提亮（was #7A8298）
-static NSString * const kHexDarkCodeBG          = @"#2A2A2C";  // v261103-39（was #111111 近黑）
+static NSString * const kHexDarkText            = @"#ECECF0";  // v261103-39: 提亮
+static NSString * const kHexDarkTextSecondary   = @"#B0B0BC";  // v261113: 再提亮（was #9A9AA8）DS 批评灰字对比度不足
+static NSString * const kHexDarkCodeBG          = @"#2A2A2C";
 static NSString * const kHexDarkCodeBorder      = @"#3A3A3C";  // v261103-39（was #252525）
 
 // Additional dark/light form-control colors for dark mode UI fix.
@@ -82,7 +82,7 @@ static NSString * const kHexLightThinkingBorder  = @"#D0D0D8";  // 柔和边框
 static NSString * const kHexDarkInputBG          = @"#2C2C2E";   // v261103-39（was #111111）
 static NSString * const kHexDarkInputBorder      = @"#3A3A3C";   // v261103-39（was #252525）
 static NSString * const kHexDarkInputText        = @"#ECECF0";   // v261103-39: 提亮（was #D8D8E0）
-static NSString * const kHexDarkPlaceholder       = @"#6A6A78";   // v261103-39（was #7A8298）
+static NSString * const kHexDarkPlaceholder       = @"#8A8A98";   // v261113: 提亮（was #6A6A78）placeholder 太暗看不清
 static NSString * const kHexDarkControlBG        = @"#2C2C2E";   // v261103-39（was #050505）
 static NSString * const kHexDarkControlSel        = @"#3A5A8A";   // v261103-39: 哑光蓝选中（was #1E3A8A）
 static NSString * const kHexDarkControlNorm      = @"#2C2C2E";   // v261103-39（was #151515）

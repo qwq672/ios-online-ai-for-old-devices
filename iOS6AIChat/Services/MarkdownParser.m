@@ -957,7 +957,7 @@ static void AppendAttrString(NSMutableAttributedString *out,
         if (body.length == 0) return;
         UIFont *toolFont = [UIFont italicSystemFontOfSize:baseFont.pointSize - 1] ?: baseFont;
         UIColor *fg = [iOS6Theme isDarkMode]
-            ? [UIColor colorWithWhite:0.48 alpha:1.0]   // #7A7A88 深色模式（提亮）
+            ? [UIColor colorWithWhite:0.55 alpha:1.0]   // #8C8C8C 深色模式（v261113 提亮）
             : [UIColor colorWithWhite:0.6 alpha:1.0];   // #999999 浅色模式
         AppendAttrString(out, @"\n", toolFont, fg, nil, 0, 0);
         AppendAttrString(out, @"· ", toolFont, fg, nil, 0, 0);  // v261103-46: 前缀
