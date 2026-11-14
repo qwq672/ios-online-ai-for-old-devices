@@ -1,0 +1,41 @@
+name: Build UWP App
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'uwp/**'
+      - '.github/workflows/build-uwp.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1
+
+      - name: Restore NuGet packages
+        run: msbuild uwp/AIAnyWhere.sln /t:Restore /p:Configuration=Release
+
+      - name: Build UWP (.appx)
+        run: msbuild uwp/AIAnyWhere.sln /p:Configuration=Release /p:AppxBundle=Always /p:AppxBundlePlatforms="x86" /p:AppxPackageDir="AppPackages"
+
+      - name: Upload .appx
+        uses: actions/upload-artifact@v4
+        with:
+          name: AIAnyWhere-uwp-appx
+          path: uwp/AppPackages/**/*.appx
+
+      - name: Attach to release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: uwp/AppPackages/**/*.appx
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

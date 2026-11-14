@@ -1,0 +1,28 @@
+<Page
+    x:Class="AIAnyWhere.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+
+    <ScrollViewer Padding="24,16">
+        <StackPanel Spacing="12" MaxWidth="600">
+            <TextBlock Text="设置" FontSize="24" FontWeight="Bold"/>
+
+            <TextBlock Text="API Key" FontSize="14"/>
+            <TextBox x:Name="ApiKeyBox" PlaceholderText="sk-..."/>
+
+            <TextBlock Text="Base URL" FontSize="14"/>
+            <TextBox x:Name="BaseUrlBox" PlaceholderText="https://api.openai.com/v1"/>
+
+            <TextBlock Text="模型" FontSize="14"/>
+            <TextBox x:Name="ModelBox" PlaceholderText="gpt-3.5-turbo"/>
+
+            <TextBlock Text="系统提示词" FontSize="14"/>
+            <TextBox x:Name="PromptBox" PlaceholderText="You are a helpful assistant." AcceptsReturn="True" MinHeight="60"/>
+
+            <ToggleSwitch x:Name="StreamSwitch" Header="流式输出" IsOn="True"/>
+
+            <Button x:Name="SaveBtn" Content="保存" Click="SaveBtn_Click"/>
+        </StackPanel>
+    </ScrollViewer>
+</Page>
