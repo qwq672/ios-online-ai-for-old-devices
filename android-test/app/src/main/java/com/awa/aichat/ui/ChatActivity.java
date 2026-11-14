@@ -102,6 +102,9 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
         networkService = new NetworkService();
         networkService.setListener(this);
 
+        // v0.6: 会话持久化 — 从磁盘加载上次对话
+        loadConversation();
+
         // Check if API key is set
         String apiKey = prefs.getString(KEY_API_KEY, "");
         if (apiKey == null || apiKey.length() == 0) {
@@ -305,6 +308,56 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
     }
 
     private int lastAppliedThemeMode = ThemeManager.THEME_AUTO;
+
+    // v0.6: 会话持久化
+    private void loadConversation() {
+        String json = prefs.getString("saved_messages", "");
+        if (json == null || json.length() == 0) return;
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray(json);
+            for (int i = 0; i < arr.length(); i++) {
+                org.json.JSONObject obj = arr.getJSONObject(i);
+                int role = obj.getInt("role");
+                String content = obj.optString("content", "");
+                String thinking = obj.optString("thinking", "");
+                boolean error = obj.optBoolean("error", false);
+                Message m = new Message(role, content);
+                m.thinking = thinking;
+                m.error = error;
+                adapter.add(m);
+            }
+            if (adapter.getCount() > 0) {
+                listView.setSelection(adapter.getCount() - 1);
+            }
+        } catch (Exception e) {
+            android.util.Log.w("ChatActivity", "load conv failed: " + e.getMessage());
+        }
+    }
+
+    // v0.6: 保存对话到磁盘
+    private void saveConversation() {
+        try {
+            List<Message> msgs = adapter.getMessages();
+            org.json.JSONArray arr = new org.json.JSONArray();
+            for (Message m : msgs) {
+                org.json.JSONObject obj = new org.json.JSONObject();
+                obj.put("role", m.role);
+                obj.put("content", m.content == null ? "" : m.content);
+                obj.put("thinking", m.thinking == null ? "" : m.thinking);
+                obj.put("error", m.error);
+                arr.put(obj);
+            }
+            prefs.edit().putString("saved_messages", arr.toString()).commit();
+        } catch (Exception e) {
+            android.util.Log.w("ChatActivity", "save conv failed: " + e.getMessage());
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        saveConversation();  // v0.6: 退出时保存
+    }
 
     private void recreateCompat() {
         // recreate() requires API 11 (Honeycomb). Our minSdk is 9, so on
