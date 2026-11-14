@@ -64,12 +64,19 @@ public class NetworkService {
         void onThinking(String thinkingText);
         void onFinish(String fullText, String thinking);
         void onError(String message);
+        void onToolCallStarted();  // v0.6: 工具调用开始
+        void onToolCallDone(String marker);  // v0.6: 工具调用完成标记
     }
 
     private Listener listener;
     private volatile boolean cancelled = false;
-    private volatile HttpURLConnection connection;  // v261103-35 fix #11: volatile 防 cancel 竞态
+    private volatile HttpURLConnection connection;
     private Thread streamThread;
+
+    // v0.6: 功能开关
+    public boolean enableDeepThinking = false;
+    public boolean enableWebSearch = false;
+    public String searchKey = "";  // Tavily API key
 
     // Accumulated text + thinking
     private final StringBuilder accumulated = new StringBuilder();
@@ -160,6 +167,33 @@ public class NetworkService {
         body.put("temperature", (double) temperature);
         if (maxTokens > 0) {
             body.put("max_tokens", maxTokens);
+        }
+
+        // v0.6: 深度思考 — 发送 thinking 参数（部分 API 支持）
+        if (enableDeepThinking) {
+            body.put("thinking", new JSONObject().put("type", "enabled"));
+            body.put("reasoning_effort", "high");
+        }
+
+        // v0.6: 联网搜索 — 发送 tools 数组（如果有搜索 key）
+        if (enableWebSearch && searchKey != null && searchKey.length() > 0) {
+            JSONArray tools = new JSONArray();
+            tools.put(new JSONObject()
+                .put("type", "function")
+                .put("function", new JSONObject()
+                    .put("name", "tavily_search")
+                    .put("description", "Search the web for current information.")
+                    .put("parameters", new JSONObject()
+                        .put("type", "object")
+                        .put("properties", new JSONObject()
+                            .put("query", new JSONObject().put("type", "string").put("description", "Search query"))
+                        )
+                        .put("required", new JSONArray().put("query"))
+                    )
+                )
+            );
+            body.put("tools", tools);
+            body.put("tool_choice", "auto");
         }
 
         String bodyStr = body.toString();

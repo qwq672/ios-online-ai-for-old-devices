@@ -202,6 +202,11 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
         int maxTokens = prefs.getInt(KEY_MAX_TOKENS, 0);
         boolean stream = prefs.getBoolean(KEY_STREAM, true);
 
+        // v0.6: 深度思考 + 联网搜索（从设置读取）
+        networkService.enableDeepThinking = prefs.getBoolean("deep_thinking", false);
+        networkService.enableWebSearch = prefs.getBoolean("web_search", false);
+        networkService.searchKey = prefs.getString("tavily_key", "");
+
         // Build message list (exclude the placeholder "…" AI message)
         List<Message> apiMessages = new ArrayList<Message>();
         apiMessages.addAll(adapter.getMessages());
@@ -216,14 +221,12 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
 
     @Override
     public void onChunk(String fullText) {
-        // Already on main thread (NetworkService posts via mainHandler).
         adapter.updateLast(fullText);
         listView.setSelection(adapter.getCount() - 1);
     }
 
     @Override
     public void onThinking(String thinkingText) {
-        // Show thinking text in the AI bubble (above content).
         adapter.updateLastThinking(thinkingText);
         listView.setSelection(adapter.getCount() - 1);
     }
@@ -233,7 +236,7 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
         isStreaming = false;
         sendButton.setText("发送");
         if (fullText == null || fullText.length() == 0) {
-            adapter.updateLast("⚠️ 空回复");
+            adapter.updateLast("[错误] 空回复");
         }
         listView.setSelection(adapter.getCount() - 1);
     }
@@ -242,11 +245,20 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
     public void onError(String message) {
         isStreaming = false;
         sendButton.setText("发送");
-        // v0.3: 不用 ⚠️ emoji（Android 2.3 无 emoji 字体显示成方块），
-        // 用纯文本前缀。NetworkService.friendlyError 已翻译成中文。
         String shown = message == null ? "未知错误" : message;
         adapter.markLastError("[错误] " + shown);
         listView.setSelection(adapter.getCount() - 1);
+    }
+
+    // v0.6: 工具调用回调（空实现，后续接入卡片显示）
+    @Override
+    public void onToolCallStarted() {
+        // TODO: 显示"正在调用工具..."
+    }
+
+    @Override
+    public void onToolCallDone(String marker) {
+        // TODO: 显示工具调用完成标记
     }
 
     @Override
