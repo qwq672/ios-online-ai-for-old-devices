@@ -12,7 +12,7 @@
         </Grid.RowDefinitions>
 
         <!-- 顶部栏 -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Padding="12,8">
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="12,8">
             <TextBlock Text="AIAnyWhere" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
             <Button x:Name="SettingsBtn" Content="设置" Margin="12,0,0,0" Click="SettingsBtn_Click"/>
         </StackPanel>
@@ -32,7 +32,7 @@
         </ListView>
 
         <!-- 底部输入栏 -->
-        <Grid Grid.Row="2" Padding="12,8">
+        <Grid Grid.Row="2" Margin="12,8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>

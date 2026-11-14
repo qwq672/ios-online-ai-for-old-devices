@@ -28,8 +28,8 @@ namespace AIAnyWhere.Services
             try
             {
                 string endpoint = baseURL.TrimEnd('/');
-                if (!endpoint.EndsWith("/chat/completions"))
-                    endpoint += "/v1/chat/completions";
+                if (!endpoint.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
+                    endpoint += "/chat/completions";
 
                 var body = new
                 {
@@ -43,7 +43,7 @@ namespace AIAnyWhere.Services
                 req.Content = new StringContent(json, Encoding.UTF8, "application/json");
                 req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
                 req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
-                req.Headers.Add("User-Agent", "AIAnyWhere/0.1 UWP");
+                req.Headers.TryAddWithoutValidation("User-Agent", "AIAnyWhere/0.1 UWP");
 
                 var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
                 if (!resp.IsSuccessStatusCode)

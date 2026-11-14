@@ -1,5 +1,7 @@
 using System;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
@@ -50,6 +52,12 @@ namespace AIAnyWhere
             var apiMsgs = new System.Collections.Generic.List<ChatMessage>(messages);
             apiMsgs.RemoveAt(apiMsgs.Count - 1); // 移除 AI 占位
 
+            string systemPrompt = settings.Values["system_prompt"] as string;
+            if (!string.IsNullOrWhiteSpace(systemPrompt))
+            {
+                apiMsgs.Insert(0, new ChatMessage { Role = "system", Content = systemPrompt });
+            }
+
             _ = networkService.StreamChatAsync(baseURL, apiKey, model, apiMsgs);
         }
 
@@ -93,10 +101,39 @@ namespace AIAnyWhere
         }
     }
 
-    public class ChatMessage
+    public class ChatMessage : INotifyPropertyChanged
     {
-        public string Role { get; set; } = "";
-        public string Content { get; set; } = "";
+        private string role = "";
+        private string content = "";
+
+        public string Role
+        {
+            get { return role; }
+            set
+            {
+                if (role == value) return;
+                role = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public string Content
+        {
+            get { return content; }
+            set
+            {
+                if (content == value) return;
+                content = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        private void OnPropertyChanged([CallerMemberName] string propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
     }
 
     public class NetworkListener
