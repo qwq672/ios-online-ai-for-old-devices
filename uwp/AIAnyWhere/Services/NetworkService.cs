@@ -31,10 +31,15 @@ namespace AIAnyWhere.Services
                 if (!endpoint.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
                     endpoint += "/chat/completions";
 
+                var payload = new List<object>();
+                foreach (var message in messages)
+                {
+                    payload.Add(new { role = message.Role, content = message.Content });
+                }
                 var body = new
                 {
                     model = model,
-                    messages = messages.ConvertAll(m => new { role = m.Role, content = m.Content }),
+                    messages = payload,
                     stream = true
                 };
                 string json = JsonConvert.SerializeObject(body);
