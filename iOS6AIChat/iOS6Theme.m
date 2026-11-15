@@ -18,6 +18,29 @@
 // UserDefaults keys.
 static NSString * const kUDKeyDarkMode  = @"theme.darkMode";
 static NSString * const kUDKeyFontSize = @"theme.fontSize";
+static NSString * const kUDKeyAccentColor = @"theme.accentColor";  // v261116-5
+
+// v261116-5: 6 预设主题色 — 亮色 / 暗色提亮
+// 默认蓝沿用原 kHexLightTint/kHexDarkTint 值，其他 5 色为新加
+static NSString * const kAccentLight[] = {
+    @"#4A6FA5",  // blue (默认，沿用原哑光蓝)
+    @"#10B981",  // green
+    @"#F97316",  // orange
+    @"#EC4899",  // pink
+    @"#8B5CF6",  // purple
+    @"#14B8A6"   // teal
+};
+static NSString * const kAccentDark[] = {
+    @"#7A9AC8",  // blue (沿用原亮哑光蓝)
+    @"#34D399",  // green
+    @"#FB923C",  // orange
+    @"#F472B6",  // pink
+    @"#A78BFA",  // purple
+    @"#2DD4BF"   // teal
+};
+static NSString * const kAccentColorNames[] = {
+    @"蓝色", @"绿色", @"橙色", @"粉色", @"紫色", @"青色"
+};
 
 // Font size multipliers.
 static CGFloat const kFontScale[] = { 0.85f, 1.0f, 1.15f, 1.3f, 1.5f };
@@ -168,6 +191,38 @@ static NSString * const kHexDarkThinkingBorder   = @"#3A3A3C";   // v261103-39�
                         object:nil];
 }
 
+// v261116-5: 6 预设主题色 — 实现
++ (iOS6ThemeAccentColor)accentColorIndex
+{
+    NSInteger v = [[NSUserDefaults standardUserDefaults] integerForKey:kUDKeyAccentColor];
+    if (v < 0 || v > iOS6ThemeColorTeal) return iOS6ThemeColorBlue;
+    return (iOS6ThemeAccentColor)v;
+}
+
++ (void)setAccentColorIndex:(iOS6ThemeAccentColor)idx
+{
+    if (idx < 0 || idx > iOS6ThemeColorTeal) idx = iOS6ThemeColorBlue;
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)idx forKey:kUDKeyAccentColor];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    // 通知所有 view 刷新（tintColor 变了，所有依赖它的 view 都要重绘）
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:@"iOS6ThemeDidChangeNotification"
+                        object:nil];
+}
+
++ (NSArray *)accentColorNames
+{
+    return [NSArray arrayWithObjects:kAccentColorNames[0], kAccentColorNames[1],
+                                            kAccentColorNames[2], kAccentColorNames[3],
+                                            kAccentColorNames[4], kAccentColorNames[5], nil];
+}
+
++ (NSString *)accentColorName:(iOS6ThemeAccentColor)idx
+{
+    if (idx < 0 || idx > iOS6ThemeColorTeal) return kAccentColorNames[0];
+    return kAccentColorNames[idx];
+}
+
 + (CGFloat)fontPointSizeForBase:(CGFloat)base
 {
     iOS6ThemeFontSize fs = [self fontSize];
@@ -187,7 +242,12 @@ static NSString * const kHexDarkThinkingBorder   = @"#3A3A3C";   // v261103-39�
             : [self colorWithHex:lightHex];
 }
 
-+ (UIColor *)tintColor             { return [self _colorLight:kHexLightTint           dark:kHexDarkTint]; }
++ (UIColor *)tintColor {
+    // v261116-5: 根据 accentColorIndex 返回对应预设色
+    iOS6ThemeAccentColor idx = [self accentColorIndex];
+    if (idx < 0 || idx > iOS6ThemeColorTeal) idx = iOS6ThemeColorBlue;
+    return [self _colorLight:kAccentLight[idx] dark:kAccentDark[idx]];
+}
 + (UIColor *)navbarTopColor        { return [self _colorLight:kHexLightNavbarTop      dark:kHexDarkNavbarTop]; }
 + (UIColor *)navbarBottomColor     { return [self _colorLight:kHexLightNavbarBottom   dark:kHexDarkNavbarBottom]; }
 + (UIColor *)tabbarTopColor        { return [self _colorLight:kHexLightTabbarTop      dark:kHexDarkTabbarTop]; }

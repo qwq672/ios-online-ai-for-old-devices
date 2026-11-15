@@ -527,7 +527,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 {
     NSInteger logical = [self _logicalSectionForDisplayed:section];
     switch (logical) {
-        case kSectionTheme:     return 4;  // dark mode, font size, image compression, show suggestions
+        case kSectionTheme:     return 5;  // v261116-5: +1 主题色（dark mode, font size, image compression, show suggestions, accent color）
         // v261103-2: removed kSectionTransit (was 3 rows: useTransit / Transit URL / 中转搜索).
         case kSectionDirect:     return 2;
         // v261025-8: 模型管理入口（模型/生图模型/能力开关全部集中在
@@ -884,6 +884,26 @@ titleForFooterInSection:(NSInteger)section
         CGRect f = cell.contentView.bounds;
         sw.frame = CGRectMake(f.size.width - 79 - kPad, (kRowH - 27) / 2, 79, 27);
         [cell.contentView addSubview:sw];
+        return cell;
+    }
+    if (row == 4) {
+        // v261116-5: 主题色选择（6 预设色，UISegmentedControl 太挤，用按钮）
+        [cell.contentView addSubview:[self _labelWithText:NSLocalizedString(@"主题色", nil)]];
+        // 当前颜色名 + 圆点指示器
+        iOS6ThemeAccentColor curIdx = [iOS6Theme accentColorIndex];
+        NSString *curName = [iOS6Theme accentColorName:curIdx];
+
+        // 创建一个按钮显示当前色 + 名称
+        UIButton *colorBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        CGRect f = cell.contentView.bounds;
+        colorBtn.frame = CGRectMake(f.size.width - 140 - kPad, (kRowH - 30) / 2, 140, 30);
+        [colorBtn setTitle:curName forState:UIControlStateNormal];
+        [colorBtn setTitleColor:[iOS6Theme tintColor] forState:UIControlStateNormal];
+        colorBtn.titleLabel.font = [UIFont systemFontOfSize:14];
+        colorBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        [colorBtn addTarget:self action:@selector(_accentColorPick:)
+          forControlEvents:UIControlEventTouchUpInside];
+        [cell.contentView addSubview:colorBtn];
         return cell;
     }
     return cell;
@@ -1639,14 +1659,49 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     [_tableView reloadData];
 }
 
+// v261116-5: 主题色选择 — UIActionSheet（iOS 6 兼容）
+// iOS 6 上 UIAlertView 不支持单选，用 UIActionSheet 列出 6 个颜色
+- (IBAction)_accentColorPick:(UIButton *)btn
+{
+    NSArray *names = [iOS6Theme accentColorNames];
+
+    UIActionSheet *sheet = [[[UIActionSheet alloc]
+        initWithTitle:NSLocalizedString(@"选择主题色", nil)
+        delegate:self
+        cancelButtonTitle:NSLocalizedString(@"取消", nil)
+        destructiveButtonTitle:nil
+        otherButtonTitles:nil] autorelease];
+    // 按顺序加 6 个颜色选项
+    for (NSInteger i = 0; i < (NSInteger)[names count]; i++) {
+        [sheet addButtonWithTitle:[names objectAtIndex:i]];
+    }
+    sheet.cancelButtonIndex = [names count];  // 最后一个是"取消"
+    sheet.tag = 460;  // v261116-5: 主题色 action sheet 标识
+    [sheet showInView:self.view];
+}
+
 // v261103-2: removed _transitToggleChanged: — transit toggle deleted
 // along with the 中转服务器 section. Chat always goes direct now.
 
 // v261025-8: provider picker sheet (tag 450). iOS 6 cancel occupies
 // index 0; provider options live at 1..N (6 providers + 自定义 at 7).
+// v261116-5: tag 460 = 主题色选择
 - (void)actionSheet:(UIActionSheet *)actionSheet
 clickedButtonAtIndex:(NSInteger)buttonIndex
 {
+    if (actionSheet.tag == 460) {
+        // v261116-5: 主题色回调
+        if (buttonIndex == actionSheet.cancelButtonIndex) return;
+        NSArray *names = [iOS6Theme accentColorNames];
+        if (buttonIndex < 0 || buttonIndex >= (NSInteger)[names count]) return;
+        iOS6ThemeAccentColor newIdx = (iOS6ThemeAccentColor)buttonIndex;
+        if (newIdx == [iOS6Theme accentColorIndex]) return;
+        [iOS6Theme setAccentColorIndex:newIdx];
+        [[NSNotificationCenter defaultCenter] postNotificationName:iOS6ThemeDidChangeNotification
+                                                              object:nil];
+        [_tableView reloadData];
+        return;
+    }
     if (actionSheet.tag != 450) return;
     if (buttonIndex == actionSheet.cancelButtonIndex) return;
     NSArray *providers = [SettingsViewController availableProviderIDs];

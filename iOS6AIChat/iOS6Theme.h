@@ -70,6 +70,21 @@ typedef enum {
 // Convenience — returns base * scale, rounded to nearest 0.5pt.
 + (CGFloat)fontPointSizeForBase:(CGFloat)base;
 
+// v261116-5: 6 预设主题色
+typedef enum {
+    iOS6ThemeColorBlue   = 0,  // 默认蓝
+    iOS6ThemeColorGreen  = 1,  // 森林绿
+    iOS6ThemeColorOrange = 2,  // 暖橙
+    iOS6ThemeColorPink   = 3,  // 樱花粉
+    iOS6ThemeColorPurple = 4,  // 优雅紫
+    iOS6ThemeColorTeal   = 5   // 青绿
+} iOS6ThemeAccentColor;
+
++ (iOS6ThemeAccentColor)accentColorIndex;
++ (void)setAccentColorIndex:(iOS6ThemeAccentColor)idx;
++ (NSArray *)accentColorNames;  // 6 个中文名
++ (NSString *)accentColorName:(iOS6ThemeAccentColor)idx;
+
 // === Colours (auto-switches with dark mode) =============================
 
 + (UIColor *)tintColor;              // accent / buttons / links
