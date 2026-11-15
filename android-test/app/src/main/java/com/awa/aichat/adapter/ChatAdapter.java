@@ -130,6 +130,12 @@ public class ChatAdapter extends BaseAdapter {
             bubble.setLayoutParams(bubbleLp);
             bubble.setPadding(padH, padV, padH, padV);
 
+            // v0.6: 思考折叠 — toggle 按钮 + 可展开 thinking 文字
+            Button thinkingToggle = new Button(context);
+            thinkingToggle.setTextSize(12);
+            thinkingToggle.setPadding(8, 2, 8, 2);
+            thinkingToggle.setVisibility(View.GONE);
+
             TextView thinking = new TextView(context);
             thinking.setTextSize(13);
             LinearLayout.LayoutParams tLp = new LinearLayout.LayoutParams(
@@ -146,6 +152,7 @@ public class ChatAdapter extends BaseAdapter {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
             content.setLayoutParams(cLp);
 
+            bubble.addView(thinkingToggle);
             bubble.addView(thinking);
             bubble.addView(content);
             root.addView(spacer);
@@ -153,6 +160,7 @@ public class ChatAdapter extends BaseAdapter {
             h.root = root;
             h.spacer = spacer;
             h.bubble = bubble;
+            h.thinkingToggle = thinkingToggle;
             h.thinking = thinking;
             h.content = content;
             convertView = root;
@@ -204,13 +212,34 @@ public class ChatAdapter extends BaseAdapter {
         h.spacer.setLayoutParams(spacerLp);
         h.bubble.setLayoutParams(bubbleLp);
 
-        // Thinking text.
+        // Thinking text — v0.6: 可折叠卡片
         String thinking = msg.thinking == null ? "" : msg.thinking;
         if (thinking.length() > 0) {
-            h.thinking.setVisibility(View.VISIBLE);
-            // v0.3: 不用 💭 emoji（Android 2.3 无 emoji 字体显示成方块），改纯文本
+            h.thinkingToggle.setVisibility(View.VISIBLE);
+            h.thinkingToggle.setText("思考 · 点击展开");
+            h.thinking.setVisibility(View.GONE);
             h.thinking.setText("[思考] " + thinking);
+            // v0.6: toggle 点击展开/收起
+            final TextView thinkingView = h.thinking;
+            final Button toggleBtn = h.thinkingToggle;
+            final String thinkText = thinking;
+            h.thinkingToggle.setOnClickListener(new View.OnClickListener() {
+                private boolean expanded = false;
+                @Override
+                public void onClick(View v) {
+                    expanded = !expanded;
+                    if (expanded) {
+                        thinkingView.setVisibility(View.VISIBLE);
+                        thinkingView.setText("[思考] " + thinkText);
+                        toggleBtn.setText("思考 · 点击收起");
+                    } else {
+                        thinkingView.setVisibility(View.GONE);
+                        toggleBtn.setText("思考 · 点击展开");
+                    }
+                }
+            });
         } else {
+            h.thinkingToggle.setVisibility(View.GONE);
             h.thinking.setVisibility(View.GONE);
         }
 
@@ -230,6 +259,7 @@ public class ChatAdapter extends BaseAdapter {
         LinearLayout root;
         View spacer;
         LinearLayout bubble;
+        Button thinkingToggle;  // v0.6
         TextView thinking;
         TextView content;
     }
