@@ -5,24 +5,81 @@
     Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
 
     <ScrollViewer Padding="24,16">
-        <StackPanel Spacing="12" MaxWidth="600">
-            <TextBlock Text="设置" FontSize="24" FontWeight="Bold"/>
+        <StackPanel Spacing="12" MaxWidth="640">
+            <TextBlock Text="设置" FontSize="24" FontWeight="Bold" Margin="0,0,0,8"/>
 
-            <TextBlock Text="API Key" FontSize="14"/>
-            <TextBox x:Name="ApiKeyBox" PlaceholderText="sk-..."/>
+            <!-- 主题 -->
+            <Border Background="{ThemeResource SystemControlBackgroundAltMediumBrush}"
+                    CornerRadius="8" Padding="12,8">
+                <StackPanel>
+                    <TextBlock Text="外观" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                    <ToggleSwitch x:Name="DarkSwitch" Header="深色主题" OnContent="深色" OffContent="浅色"/>
+                </StackPanel>
+            </Border>
 
-            <TextBlock Text="Base URL" FontSize="14"/>
-            <TextBox x:Name="BaseUrlBox" PlaceholderText="https://api.openai.com/v1"/>
+            <!-- 服务商 -->
+            <Border Background="{ThemeResource SystemControlBackgroundAltMediumBrush}"
+                    CornerRadius="8" Padding="12,8">
+                <StackPanel>
+                    <TextBlock Text="服务商" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                    <ComboBox x:Name="ProviderCombo" Header="选择服务商" MinWidth="280"
+                              SelectionChanged="ProviderCombo_SelectionChanged"/>
+                </StackPanel>
+            </Border>
 
-            <TextBlock Text="模型" FontSize="14"/>
-            <TextBox x:Name="ModelBox" PlaceholderText="gpt-3.5-turbo"/>
+            <!-- API -->
+            <Border Background="{ThemeResource SystemControlBackgroundAltMediumBrush}"
+                    CornerRadius="8" Padding="12,8">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="API" FontSize="14" FontWeight="SemiBold"/>
 
-            <TextBlock Text="系统提示词" FontSize="14"/>
-            <TextBox x:Name="PromptBox" PlaceholderText="You are a helpful assistant." AcceptsReturn="True" MinHeight="60"/>
+                    <TextBlock Text="API Key" FontSize="13" Margin="0,4,0,0"/>
+                    <TextBox x:Name="ApiKeyBox" PlaceholderText="sk-..." IsPasswordCharRevealMode="Visible"/>
 
-            <ToggleSwitch x:Name="StreamSwitch" Header="流式输出" IsOn="True"/>
+                    <TextBlock Text="Base URL" FontSize="13" Margin="0,4,0,0"/>
+                    <TextBox x:Name="BaseUrlBox" PlaceholderText="https://api.openai.com/v1"/>
 
-            <Button x:Name="SaveBtn" Content="保存" Click="SaveBtn_Click"/>
+                    <TextBlock Text="模型" FontSize="13" Margin="0,4,0,0"/>
+                    <TextBox x:Name="ModelBox" PlaceholderText="gpt-3.5-turbo"/>
+                </StackPanel>
+            </Border>
+
+            <!-- 模型参数 -->
+            <Border Background="{ThemeResource SystemControlBackgroundAltMediumBrush}"
+                    CornerRadius="8" Padding="12,8">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="模型参数" FontSize="14" FontWeight="SemiBold"/>
+
+                    <TextBlock Text="温度 (0 - 2，越高越随机)" FontSize="13" Margin="0,4,0,0"/>
+                    <Slider x:Name="TempSlider" Minimum="0" Maximum="2" StepFrequency="0.1" Value="0.7"/>
+
+                    <TextBlock Text="Max Tokens (0 表示不限制)" FontSize="13" Margin="0,4,0,0"/>
+                    <TextBox x:Name="MaxTokensBox" PlaceholderText="0" InputScope="Number"/>
+                </StackPanel>
+            </Border>
+
+            <!-- 高级 -->
+            <Border Background="{ThemeResource SystemControlBackgroundAltMediumBrush}"
+                    CornerRadius="8" Padding="12,8">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="高级" FontSize="14" FontWeight="SemiBold"/>
+                    <ToggleSwitch x:Name="StreamSwitch" Header="流式输出" OnContent="开" OffContent="关"/>
+                    <ToggleSwitch x:Name="ThinkingSwitch" Header="显示思考" OnContent="开" OffContent="关"/>
+                    <TextBlock Text="系统提示词" FontSize="13" Margin="0,4,0,0"/>
+                    <TextBox x:Name="PromptBox" PlaceholderText="You are a helpful assistant."
+                             AcceptsReturn="True" MinHeight="60" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <!-- 按钮 -->
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                <Button x:Name="SaveBtn" Content="保存" Click="SaveBtn_Click"
+                        Background="#0078D7" Foreground="White" MinWidth="100"/>
+                <Button x:Name="BackBtn" Content="返回" Click="BackBtn_Click" MinWidth="100"/>
+            </StackPanel>
+
+            <TextBlock Text="AIAnyWhere UWP v0.2 · 文件保存在 LocalFolder/conversations/"
+                       FontSize="11" Foreground="Gray" Margin="0,12,0,0"/>
         </StackPanel>
     </ScrollViewer>
 </Page>

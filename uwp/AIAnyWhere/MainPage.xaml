@@ -2,9 +2,15 @@
     x:Class="AIAnyWhere.MainPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:AIAnyWhere"
     Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
 
-    <Grid>
+    <Page.Resources>
+        <local:BoolToVisibilityConverter x:Key="VisConv"/>
+        <local:GridLengthStarConverter x:Key="StarConv"/>
+    </Page.Resources>
+
+    <Grid x:Name="RootGrid">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -12,33 +18,84 @@
         </Grid.RowDefinitions>
 
         <!-- 顶部栏 -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="12,8">
-            <TextBlock Text="AIAnyWhere" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
-            <Button x:Name="SettingsBtn" Content="设置" Margin="12,0,0,0" Click="SettingsBtn_Click"/>
-        </StackPanel>
+        <Grid Grid.Row="0" Padding="12,8" Background="{ThemeResource SystemControlBackgroundAltMediumBrush}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="AIAnyWhere" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
+            <Button Grid.Column="1" x:Name="ClearBtn" Content="清空" Margin="0,0,8,0" Click="ClearBtn_Click"/>
+            <Button Grid.Column="2" x:Name="HistoryBtn" Content="历史" Margin="0,0,8,0" Click="HistoryBtn_Click"/>
+            <Button Grid.Column="3" x:Name="ThemeBtn" Content="主题" Margin="0,0,8,0" Click="ThemeBtn_Click"/>
+            <Button Grid.Column="4" x:Name="SettingsBtn" Content="设置" Click="SettingsBtn_Click"/>
+        </Grid>
 
         <!-- 消息列表 -->
-        <ListView x:Name="MessageList" Grid.Row="1" Padding="12,0">
+        <ListView x:Name="MessageList" Grid.Row="1" Padding="12,8">
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                    <Setter Property="Padding" Value="0,2"/>
+                    <Setter Property="MinHeight" Value="0"/>
+                </Style>
+            </ListView.ItemContainerStyle>
             <ListView.ItemTemplate>
                 <DataTemplate>
-                    <Border CornerRadius="8" Padding="12,8" Margin="0,4">
-                        <StackPanel>
-                            <TextBlock Text="{Binding Role}" FontSize="11" Foreground="Gray" Margin="0,0,0,2"/>
-                            <TextBlock Text="{Binding Content}" FontSize="15" TextWrapping="Wrap"/>
-                        </StackPanel>
-                    </Border>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{Binding LeftSpacerWidth, Converter={StaticResource StarConv}}"/>
+                            <ColumnDefinition Width="{Binding BubbleWidth, Converter={StaticResource StarConv}}"/>
+                            <ColumnDefinition Width="{Binding RightSpacerWidth, Converter={StaticResource StarConv}}"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="1" Background="{Binding BubbleBackground}"
+                                CornerRadius="10" Padding="12,8" BorderThickness="0"
+                                Margin="0,2" HorizontalAlignment="Stretch">
+                            <StackPanel>
+                                <!-- 思考折叠 -->
+                                <Border Visibility="{Binding ThinkingVisibility}"
+                                        Background="#22000000" CornerRadius="6" Padding="8,4" Margin="0,0,0,6">
+                                    <StackPanel>
+                                        <Button Content="{Binding ThinkingToggleText}"
+                                                FontSize="12" Padding="6,2" Background="Transparent"
+                                                BorderThickness="0" Click="ThinkingToggle_Click"
+                                                Tag="{Binding}"/>
+                                        <TextBlock Text="{Binding Thinking}"
+                                                   FontSize="12" TextWrapping="Wrap"
+                                                   Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
+                                                   FontStyle="Italic"
+                                                   Visibility="{Binding ThinkingContentVisibility, Converter={StaticResource VisConv}}"
+                                                   Margin="4,4,0,0"/>
+                                    </StackPanel>
+                                </Border>
+                                <!-- 内容 — TextBlock，支持流式更新 -->
+                                <TextBlock Text="{Binding Content}" FontSize="15"
+                                           TextWrapping="Wrap" LineHeight="22"
+                                           Foreground="{Binding ContentForeground}"/>
+                                <!-- 角色 -->
+                                <TextBlock Text="{Binding RoleDisplay}" FontSize="10"
+                                           Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
+                                           Margin="0,4,0,0" Opacity="0.6"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
                 </DataTemplate>
             </ListView.ItemTemplate>
         </ListView>
 
         <!-- 底部输入栏 -->
-        <Grid Grid.Row="2" Margin="12,8">
+        <Grid Grid.Row="2" Padding="12,8" Background="{ThemeResource SystemControlBackgroundAltMediumBrush}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBox x:Name="InputBox" Grid.Column="0" PlaceholderText="输入消息..." AcceptsReturn="True" MaxHeight="100"/>
-            <Button x:Name="SendBtn" Grid.Column="1" Content="发送" Margin="8,0,0,0" Click="SendBtn_Click"/>
+            <TextBox x:Name="InputBox" Grid.Column="0" PlaceholderText="输入消息... (Enter 发送, Shift+Enter 换行)"
+                     AcceptsReturn="True" MaxHeight="120" TextWrapping="Wrap"
+                     KeyDown="InputBox_KeyDown"/>
+            <Button x:Name="SendBtn" Grid.Column="1" Content="发送" Margin="8,0,0,0" Click="SendBtn_Click"
+                    MinWidth="80" Background="#0078D7" Foreground="White"/>
         </Grid>
     </Grid>
 </Page>

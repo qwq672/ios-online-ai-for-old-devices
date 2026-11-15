@@ -77,6 +77,9 @@
     <Compile Include="MainPage.xaml.cs" />
     <Compile Include="SettingsPage.xaml.cs" />
     <Compile Include="Services\NetworkService.cs" />
+    <Compile Include="Services\MarkdownRenderer.cs" />
+    <Compile Include="Services\SettingsStore.cs" />
+    <Compile Include="Services\ConversationStore.cs" />
   </ItemGroup>
   <ItemGroup>
     <AppxManifest Include="Package.appxmanifest">
