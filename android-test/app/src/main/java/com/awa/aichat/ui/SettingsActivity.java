@@ -50,6 +50,8 @@ public class SettingsActivity extends Activity {
     private SeekBar temperatureSeek, intervalSeek;  // v0.6: intervalSeek
     private TextView temperatureLabel, intervalLabel;  // v0.6: intervalLabel
     private CheckBox streamCheckBox, deepThinkingCheckBox, webSearchCheckBox;  // v0.6
+    private CheckBox _mbedtlsCheckBox;  // v261116-7: nullable (仅当 native 支持)
+    private String _useMbedTlsKey;
     private Spinner themeSpinner;
     private Button saveButton, resetButton, exportButton, importButton;  // v0.6: 导出/导入
 
@@ -120,12 +122,23 @@ public class SettingsActivity extends Activity {
         toggleLayout.addView(webSearchCheckBox, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         mainLayout.addView(toggleLayout, saveIdx + 1);
 
+        // v261116-7: mbedTLS 切换（仅当 native 库支持时显示）
+        if (com.awa.aichat.network.MbedTLSClient.hasMbedTLS()) {
+            CheckBox mbedtlsCheckBox = new CheckBox(this);
+            mbedtlsCheckBox.setText("使用 mbedTLS (Android 2.3 TLS 1.2)");
+            mbedtlsCheckBox.setChecked(prefs.getBoolean("use_mbedtls", false));
+            mainLayout.addView(mbedtlsCheckBox, saveIdx + 2);
+            // 调整后续 addView 的 saveIdx
+            _mbedtlsCheckBox = mbedtlsCheckBox;
+            _useMbedTlsKey = "use_mbedtls";
+        }
+
         // 导出/导入（水平排列）
         LinearLayout ioLayout = new LinearLayout(this);
         ioLayout.setOrientation(LinearLayout.HORIZONTAL);
         ioLayout.addView(exportButton, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         ioLayout.addView(importButton, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        mainLayout.addView(ioLayout, saveIdx + 2);
+        mainLayout.addView(ioLayout, saveIdx + 3);
 
         // intervalSeek 回调
         intervalSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -356,6 +369,9 @@ public class SettingsActivity extends Activity {
         ed.putInt(KEY_STREAMING_INTERVAL, intervalSeek.getProgress() + 160);
         ed.putBoolean(KEY_DEEP_THINKING, deepThinkingCheckBox.isChecked());
         ed.putBoolean(KEY_WEB_SEARCH, webSearchCheckBox.isChecked());
+        if (_mbedtlsCheckBox != null && _useMbedTlsKey != null) {
+            ed.putBoolean(_useMbedTlsKey, _mbedtlsCheckBox.isChecked());
+        }
         ed.commit();
     }
 

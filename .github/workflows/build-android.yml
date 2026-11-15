@@ -46,6 +46,17 @@ jobs:
           /tmp/gradle-6.1.1/bin/gradle wrapper --gradle-version 6.1.1
           echo "sdk.dir=$ANDROID_HOME" > local.properties
 
+      - name: Download mbedTLS source (for TLS 1.2 on Android 2.3)
+        working-directory: android-test
+        run: |
+          # v261116-7: mbedTLS v2.28.9 LTS（和 iOS 端一致的版本）
+          # 解压到 /tmp/mbedtls，CMake 通过 MBEDTLS_SRC_DIR 环境变量找到
+          wget -q https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/mbedtls-2.28.9.tar.gz -O /tmp/mbedtls.tar.gz
+          mkdir -p /tmp/mbedtls-src
+          tar -xzf /tmp/mbedtls.tar.gz -C /tmp/mbedtls-src --strip-components=1
+          echo "MBEDTLS_SRC_DIR=/tmp/mbedtls-src" >> $GITHUB_ENV
+          ls /tmp/mbedtls-src/include/mbedtls/version.h && echo "mbedTLS source OK"
+
       - name: Build debug APK
         working-directory: android-test
         run: |

@@ -11,6 +11,18 @@ android {
         targetSdkVersion 22   // Android 5.1 (avoids runtime permission model)
         versionCode 8
         versionName "0.6.5"
+
+        // v261116-7: NDK 配置（共享 C 层 + mbedTLS）
+        ndk {
+            abiFilters 'armeabi-v7a', 'x86'  // 老设备 ARM + 模拟器 x86
+        }
+        externalNativeBuild {
+            cmake {
+                // 传递 mbedTLS 源码路径（环境变量在 CI 中设置）
+                arguments "-DMBEDTLS_SRC_DIR=$System.env.MBEDTLS_SRC_DIR"
+                cppFlags "-std=c++11"
+            }
+        }
     }
 
     sourceSets {
@@ -18,6 +30,12 @@ android {
             java.srcDirs = ['src/main/java']
             res.srcDirs = ['src/main/res']
             manifest.srcFile 'src/main/AndroidManifest.xml'
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
         }
     }
 
