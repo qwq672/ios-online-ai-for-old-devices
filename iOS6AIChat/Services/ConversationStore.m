@@ -43,6 +43,8 @@ static NSString * const kConvFileExtension     = @"conv";
                                   withIntermediateDirectories:YES
                                                    attributes:nil
                                                         error:NULL];
+        // v261116-3: serial queue 异步落盘，保序避免并发写同一文件竞态
+        self.saveQueue = dispatch_queue_create("com.aianywhere.convsave", DISPATCH_QUEUE_SERIAL);
         [self _loadAll];
     }
     return self;
@@ -75,7 +77,18 @@ static NSString * const kConvFileExtension     = @"conv";
     if (!conversation) return;
     NSString *path = [_conversationsDir stringByAppendingPathComponent:
                       [conversation.conversationID stringByAppendingPathExtension:kConvFileExtension]];
-    [NSKeyedArchiver archiveRootObject:conversation toFile:path];
+
+    // v261116-3: 异步落盘 — 旧实现 [NSKeyedArchiver archiveRootObject:toFile:] 同步
+    // 在主线程执行，长对话（>200 条消息）落盘 200-500ms 卡 UI
+    // 用 serial queue 保序，避免并发写同一文件产生竞态
+    Conversation *convCopy = [conversation copy];  // 浅拷贝避免后续修改竞态
+    dispatch_async(self.saveQueue, ^{
+        @try {
+            [NSKeyedArchiver archiveRootObject:convCopy toFile:path];
+        } @catch (NSException *e) {
+            NSLog(@"ConversationStore save failed: %@", e);
+        }
+    });
 
     // Refresh in-memory copy.
     NSUInteger idx = NSNotFound;
@@ -153,6 +166,8 @@ static NSString * const kConvFileExtension     = @"conv";
 {
     [_mutableConversations release];
     [_conversationsDir release];
+    // v261116-3: 释放 saveQueue（MRC retain property）
+    [_saveQueue release];
     [super dealloc];
 }
 

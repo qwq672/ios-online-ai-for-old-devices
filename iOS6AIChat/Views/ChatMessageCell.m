@@ -636,6 +636,12 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // v261025-8: reset the 生图 result view.
     _generatedImageView.hidden = YES;
     _generatedImageView.image = nil;
+    // v261116-3: 重置 _message 和 _bubble.role/documentPanel
+    // 旧实现 prepareForReuse 没清这两个，快速滚动 + cellForRow 应用 nil 消息时
+    // 旧 role/panel 残留导致浅色文字画在深色气泡上（或反之）
+    self.message = nil;
+    _bubble.role = BubbleRoleAssistant;
+    _bubble.documentPanel = NO;
 }
 
 - (void)_setCurrentMessageKey:(NSString *)key

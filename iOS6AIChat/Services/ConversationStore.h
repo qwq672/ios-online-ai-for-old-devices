@@ -16,6 +16,7 @@
 + (instancetype)sharedStore;
 
 @property (nonatomic, readonly) NSArray *conversations;       // sorted by updatedAt desc
+@property (nonatomic, retain) dispatch_queue_t saveQueue;     // v261116-3: serial async 落盘 queue
 
 - (Conversation *)conversationWithID:(NSString *)conversationID;
 - (void)saveConversation:(Conversation *)conversation;

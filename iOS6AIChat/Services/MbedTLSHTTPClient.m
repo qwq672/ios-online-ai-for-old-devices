@@ -300,24 +300,40 @@
     mbedtls_ssl_set_bio(&ssl, &server_fd, mbedtls_net_send, mbedtls_net_recv, mbedtls_net_recv_timeout);
 
     // 6. TLS 握手
+    // v261116-3: 加 usleep 退避 — 旧实现 WANT_READ/WANT_WRITE 直接重试握手无 sleep
+    // 老 iOS CPU 拉满，3GS/4S 发热降频
     while ((ret = mbedtls_ssl_handshake(&ssl)) != 0) {
         if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
             [self _failWithError:[NSString stringWithFormat:@"ssl_handshake failed: %d", ret]];
             goto cleanup;
         }
         if (self.cancelled) goto cleanup;
+        usleep(1000);  // v261116-3: WANT_READ/WANT_WRITE 退避
     }
 
     if (self.cancelled) goto cleanup;
 
     // 7. 发送 HTTP 请求
     size_t written = 0;
+    int wantWriteCount = 0;  // v261116-3: 连续 WANT_WRITE 计数
     while (written < [fullRequest length]) {
         if (self.cancelled) goto cleanup;  // v261103-31: cancel 检查
         ret = mbedtls_ssl_write(&ssl, (const unsigned char *)[fullRequest bytes] + written,
                                  [fullRequest length] - written);
         if (ret == MBEDTLS_ERR_SSL_WANT_WRITE || ret == MBEDTLS_ERR_SSL_WANT_READ) {
-            usleep(1000);  // v261103-31: 防忙等（跟 ssl_read 一致）
+            // v261116-3: 连续 N 次 WANT_WRITE 后用更长 sleep 替代 1ms 轮询
+            // 避免服务器持续拥塞时 CPU 100%
+            wantWriteCount++;
+            if (wantWriteCount > 50) {
+                usleep(10000);  // 10ms — 服务器拥塞时退避
+            } else {
+                usleep(1000);
+            }
+            if (wantWriteCount > 1000) {
+                // 30 秒（1000 × 10ms + 50 × 1ms ≈ 10s）仍卡 WANT_WRITE → 放弃
+                [self _failWithError:@"ssl_write 超时（连续 WANT_WRITE）"];
+                goto cleanup;
+            }
             continue;
         }
         if (ret <= 0) {
@@ -325,6 +341,7 @@
             goto cleanup;
         }
         written += ret;
+        wantWriteCount = 0;  // 成功写入重置计数
     }
 
     // 8. 循环读取响应（SSE 流式）
@@ -437,6 +454,19 @@ cleanup:
     mbedtls_ctr_drbg_free(&ctr_drbg);
     mbedtls_x509_crt_free(&cacert);
     mbedtls_net_free(&server_fd);
+
+    // v261116-3: retain cycle 修复 — NSThread 强引用 target=self，self.networkThread 又 retain thread
+    // 必须在 _runRequest 末尾置 nil 才能打破 cycle，否则每次请求泄漏 client + thread 对象
+    // 在主线程异步执行，避免 self 在 runLoop 内被自释放（thread dealloc 需在 main thread 外的安全时机）
+    [self performSelectorOnMainThread:@selector(_clearNetworkThread)
+                           withObject:nil
+                        waitUntilDone:NO];
+}
+
+// v261116-3: 主线程清理 networkThread，打破 retain cycle
+- (void)_clearNetworkThread
+{
+    self.networkThread = nil;
 }
 
 #pragma mark - 主线程回调
