@@ -74,17 +74,15 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
         sendButton = (Button) findViewById(R.id.sendButton);
 
         // v0.6: 胶囊按钮（和 iOS 一致，两端半圆）
+        final ChatActivity self = this;
         sendButton.post(new Runnable() {
             @Override
             public void run() {
-                float density = getResources().getDisplayMetrics().density;
                 int h = sendButton.getHeight();
                 if (h > 0) {
-                    sendButton.setBackgroundResource(android.R.drawable.btn_default);
-                    // 用代码设圆角（Android 2.3 没有 GradientDrawable XML）
                     android.graphics.drawable.GradientDrawable shape = new android.graphics.drawable.GradientDrawable();
                     shape.setCornerRadius(h / 2.0f);
-                    int accent = ThemeManager.isDark(this) ? 0xFF7A9AC8 : 0xFF4A6FA5;
+                    int accent = ThemeManager.isDark(self) ? 0xFF7A9AC8 : 0xFF4A6FA5;
                     shape.setColor(accent);
                     sendButton.setBackgroundDrawable(shape);
                     sendButton.setTextColor(0xFFFFFFFF);
