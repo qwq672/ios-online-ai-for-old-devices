@@ -105,11 +105,15 @@ public class MarkdownParser {
         String[] lines = text.split("\n");
         boolean inCodeBlock = false;
         boolean inToolBlock = false;
+        boolean inTable = false;
         StringBuilder codeBlockBuf = new StringBuilder();
         StringBuilder toolBlockBuf = new StringBuilder();
+        StringBuilder tableBuf = new StringBuilder();  // v0.6: 表格缓冲
 
         // v0.4: tool call text 颜色（灰色，比正文暗）
         int toolColor = dark ? 0xFF8C8C8C : 0xFF999999;
+        // v0.6: 表格竖线颜色
+        int vlineColor = dark ? 0xFF3A3A3C : 0xFFD8D8D8;
 
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i];
@@ -141,6 +145,42 @@ public class MarkdownParser {
             if (inToolBlock) {
                 toolBlockBuf.append(line).append("\n");
                 continue;
+            }
+
+            // v0.6: 表格检测（| 开头 + | 结尾）
+            if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
+                if (!inTable) {
+                    inTable = true;
+                    tableBuf.setLength(0);
+                }
+                // 跳过分隔行（|---|---|）
+                if (line.trim().replaceAll("[|\\-\\s:]", "").length() == 0) {
+                    continue;
+                }
+                // 解析单元格 + 加竖线
+                String body = line.trim();
+                if (body.startsWith("|")) body = body.substring(1);
+                if (body.endsWith("|")) body = body.substring(0, body.length() - 1);
+                String[] cells = body.split("\\|");
+                int lineStart = sb.length();
+                for (int c = 0; c < cells.length; c++) {
+                    if (c > 0) {
+                        int vs = sb.length();
+                        sb.append(" \u2502 ");
+                        sb.setSpan(new ForegroundColorSpan(vlineColor), vs, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    }
+                    appendInline(sb, cells[c].trim(), codeBg, accent);
+                }
+                sb.append("\n");
+                // 检查下一行是否还是表格
+                if (i + 1 >= lines.length || !lines[i + 1].trim().startsWith("|")) {
+                    inTable = false;
+                    sb.append("\n");
+                }
+                continue;
+            }
+            if (inTable) {
+                inTable = false;
             }
 
             // Code fence toggle
@@ -270,7 +310,8 @@ public class MarkdownParser {
      */
     private static void appendInline(SpannableStringBuilder sb, String text,
                                      int codeBg, int accent) {
-        Pattern p = Pattern.compile("(\\*\\*(.+?)\\*\\*)|(\\*(.+?)\\*)|(`(.+?)`)|(\\[(.+?)\\]\\((.+?)\\))");
+        // v0.6: 加图片 ![alt](url) 和表格分隔线支持
+        Pattern p = Pattern.compile("(\\*\\*(.+?)\\*\\*)|(\\*(.+?)\\*)|(`(.+?)`)|(\\[(.+?)\\]\\((.+?)\\))|(!\\[(.+?)\\]\\((.+?)\\))");
         Matcher m = p.matcher(text);
         int lastEnd = 0;
 
@@ -285,6 +326,8 @@ public class MarkdownParser {
             String code = m.group(6);
             String linkText = m.group(8);
             String linkUrl = m.group(9);
+            String imgAlt = m.group(11);
+            String imgUrl = m.group(12);
 
             if (bold != null) {
                 int start = sb.length();
@@ -300,6 +343,21 @@ public class MarkdownParser {
                 sb.setSpan(new TypefaceSpan("monospace"), start, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
                 sb.setSpan(new BackgroundColorSpan(codeBg), start, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
                 sb.setSpan(new ForegroundColorSpan(accent), start, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            } else if (imgAlt != null && imgUrl != null) {
+                // v0.6: 图片 — data:image URL 显示 [图片]，HTTP URL 显示链接
+                int start = sb.length();
+                if (imgUrl.startsWith("data:image")) {
+                    sb.append("[图片]");
+                    sb.setSpan(new ForegroundColorSpan(accent), start, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    sb.setSpan(new StyleSpan(Typeface.ITALIC), start, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                } else {
+                    // HTTP URL — 显示 alt 或 "图片" 作为链接
+                    String display = imgAlt.length() > 0 ? imgAlt : "图片";
+                    sb.append(display);
+                    sb.setSpan(new URLSpan(imgUrl), start, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    sb.setSpan(new ForegroundColorSpan(accent), start, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    sb.setSpan(new UnderlineSpan(), start, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                }
             } else if (linkText != null) {
                 int start = sb.length();
                 sb.append(linkText);
