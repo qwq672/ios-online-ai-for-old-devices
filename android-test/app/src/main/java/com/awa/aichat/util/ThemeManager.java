@@ -25,6 +25,8 @@ import android.os.Build;
  *                 follows uiMode on >= API 23)
  *   THEME_LIGHT — always light
  *   THEME_DARK  — always dark
+ *
+ * v0.6.5: 6 preset accent colors (blue/green/orange/pink/purple/teal).
  */
 public final class ThemeManager {
 
@@ -32,8 +34,40 @@ public final class ThemeManager {
     public static final int THEME_LIGHT = 1;
     public static final int THEME_DARK  = 2;
 
+    // v0.6.5: 6 预设主题色
+    public static final int COLOR_BLUE   = 0;  // 默认蓝 #3B82F6
+    public static final int COLOR_GREEN  = 1;  // 森林绿 #10B981
+    public static final int COLOR_ORANGE = 2;  // 暖橙 #F97316
+    public static final int COLOR_PINK   = 3;  // 樱花粉 #EC4899
+    public static final int COLOR_PURPLE = 4;  // 优雅紫 #8B5CF6
+    public static final int COLOR_TEAL   = 5;  // 青绿 #14B8A6
+
     private static final String PREFS = "aichat_prefs";
     private static final String KEY_THEME = "theme_mode";
+    private static final String KEY_ACCENT_COLOR = "accent_color";
+
+    // 亮色主题下的 accent 颜色
+    private static final int[] ACCENT_LIGHT = new int[] {
+        0xFF3B82F6,  // blue
+        0xFF10B981,  // green
+        0xFFF97316,  // orange
+        0xFFEC4899,  // pink
+        0xFF8B5CF6,  // purple
+        0xFF14B8A6   // teal
+    };
+    // 暗色主题下提亮的 accent 颜色（避免对比度不足）
+    private static final int[] ACCENT_DARK = new int[] {
+        0xFF5B9BFF,  // blue
+        0xFF34D399,  // green
+        0xFFFB923C,  // orange
+        0xFFF472B6,  // pink
+        0xFFA78BFA,  // purple
+        0xFF2DD4BF   // teal
+    };
+
+    private static final String[] COLOR_NAMES = new String[] {
+        "蓝色", "绿色", "橙色", "粉色", "紫色", "青色"
+    };
 
     private ThemeManager() {} // no instances
 
@@ -48,6 +82,42 @@ public final class ThemeManager {
         SharedPreferences.Editor ed = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit();
         ed.putInt(KEY_THEME, mode);
         ed.commit();
+    }
+
+    // v0.6.5: 获取/设置 accent 颜色索引
+    public static int getAccentColorIndex(Context ctx) {
+        if (ctx == null) return COLOR_BLUE;
+        SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        return p.getInt(KEY_ACCENT_COLOR, COLOR_BLUE);
+    }
+
+    public static void setAccentColorIndex(Context ctx, int idx) {
+        if (ctx == null) return;
+        if (idx < 0 || idx >= ACCENT_LIGHT.length) idx = COLOR_BLUE;
+        SharedPreferences.Editor ed = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit();
+        ed.putInt(KEY_ACCENT_COLOR, idx);
+        ed.commit();
+    }
+
+    /** v0.6.5: 获取当前 accent 颜色（ARGB int） */
+    public static int getAccentColor(Context ctx) {
+        int idx = getAccentColorIndex(ctx);
+        return isDark(ctx) ? ACCENT_DARK[idx] : ACCENT_LIGHT[idx];
+    }
+
+    public static String[] getColorNames() { return COLOR_NAMES; }
+    public static int getColorCount() { return ACCENT_LIGHT.length; }
+    public static String getColorName(int idx) {
+        if (idx < 0 || idx >= COLOR_NAMES.length) return "蓝色";
+        return COLOR_NAMES[idx];
+    }
+    public static int getAccentLight(int idx) {
+        if (idx < 0 || idx >= ACCENT_LIGHT.length) return ACCENT_LIGHT[0];
+        return ACCENT_LIGHT[idx];
+    }
+    public static int getAccentDark(int idx) {
+        if (idx < 0 || idx >= ACCENT_DARK.length) return ACCENT_DARK[0];
+        return ACCENT_DARK[idx];
     }
 
     /** True if the effective theme (after resolving AUTO) is dark. */

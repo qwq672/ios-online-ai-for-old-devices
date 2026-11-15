@@ -67,10 +67,22 @@ public class MarkdownParser {
     private static int darkBlockBg  = 0xFF000000;
     private static int lightBlockFg = 0xFFE8E8E8;
     private static int darkBlockFg  = 0xFFE8E8E8;
+    // v0.6.5: accent 默认蓝色 — parse() 调用方可通过 setAccentColors 覆盖
     private static int lightAccent  = 0xFF3B82F6;
     private static int darkAccent   = 0xFF5B9BFF;
     private static int lightQuote   = 0xFF666666;
     private static int darkQuote    = 0xFF9090A0;
+
+    // v0.6.5: 设置 accent 颜色（从 ThemeManager 注入）+ 清空缓存
+    public static void setAccentColors(int light, int dark) {
+        if (lightAccent == light && darkAccent == dark) return;  // 无变化
+        lightAccent = light;
+        darkAccent = dark;
+        // 颜色变了，旧缓存失效
+        synchronized (CACHE_LOCK) {
+            CACHE.clear();
+        }
+    }
 
     /** Stream-friendly cached parse — re-renders only when content changed. */
     public static SpannableStringBuilder parseCached(String text, boolean dark) {

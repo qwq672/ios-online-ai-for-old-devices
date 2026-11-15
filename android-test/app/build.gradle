@@ -9,8 +9,8 @@ android {
         // can't run modern AI chat apps (ChatGPT needs Android 6+).
         minSdkVersion 9       // Android 2.3
         targetSdkVersion 22   // Android 5.1 (avoids runtime permission model)
-        versionCode 7
-        versionName "0.6.4"
+        versionCode 8
+        versionName "0.6.5"
     }
 
     sourceSets {

@@ -74,6 +74,7 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
         sendButton = (Button) findViewById(R.id.sendButton);
 
         // v0.6: 胶囊按钮（和 iOS 一致，两端半圆）
+        // v0.6.5: 使用 ThemeManager 的 accent 颜色（6 预设色）
         final ChatActivity self = this;
         sendButton.post(new Runnable() {
             @Override
@@ -82,7 +83,7 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
                 if (h > 0) {
                     android.graphics.drawable.GradientDrawable shape = new android.graphics.drawable.GradientDrawable();
                     shape.setCornerRadius(h / 2.0f);
-                    int accent = ThemeManager.isDark(self) ? 0xFF7A9AC8 : 0xFF4A6FA5;
+                    int accent = ThemeManager.getAccentColor(self);
                     shape.setColor(accent);
                     sendButton.setBackgroundDrawable(shape);
                     sendButton.setTextColor(0xFFFFFFFF);

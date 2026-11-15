@@ -50,6 +50,9 @@ public class ChatAdapter extends BaseAdapter {
         this.padH = (int) (24 * density + 0.5f);
         this.padV = (int) (14 * density + 0.5f);
         this.cornerRadius = (int) (8 * density + 0.5f);
+        // v0.6.5: 注入 accent 颜色到 MarkdownParser
+        int idx = ThemeManager.getAccentColorIndex(ctx);
+        MarkdownParser.setAccentColors(ThemeManager.getAccentLight(idx), ThemeManager.getAccentDark(idx));
     }
 
     // v0.6.4: 缓存 dark theme 5 秒，避免 ListView 滚动时每行都读 SharedPreferences

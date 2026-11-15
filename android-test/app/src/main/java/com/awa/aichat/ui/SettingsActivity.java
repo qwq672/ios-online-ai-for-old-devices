@@ -200,6 +200,38 @@ public class SettingsActivity extends Activity {
             }
         });
 
+        // v0.6.5: 主题色选择（6 预设色）
+        Button colorPickerBtn = new Button(this);
+        colorPickerBtn.setText("主题色: " + ThemeManager.getColorName(ThemeManager.getAccentColorIndex(this)));
+        colorPickerBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                final String[] names = ThemeManager.getColorNames();
+                int current = ThemeManager.getAccentColorIndex(SettingsActivity.this);
+                new AlertDialog.Builder(SettingsActivity.this)
+                    .setTitle("选择主题色")
+                    .setSingleChoiceItems(names, current, new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface d, int which) {
+                            ThemeManager.setAccentColorIndex(SettingsActivity.this, which);
+                            colorPickerBtn.setText("主题色: " + names[which]);
+                            Toast.makeText(SettingsActivity.this, "主题色已切换，返回后生效", Toast.LENGTH_SHORT).show();
+                            d.dismiss();
+                        }
+                    })
+                    .setNegativeButton("取消", null)
+                    .show();
+            }
+        });
+        // 加到主题下方（找 themeSpinner 父布局）
+        try {
+            if (themeSpinner.getParent() instanceof android.view.ViewGroup) {
+                ((android.view.ViewGroup) themeSpinner.getParent()).addView(colorPickerBtn);
+            }
+        } catch (Exception e) {
+            android.util.Log.w("Settings", "color picker add failed: " + e.getMessage());
+        }
+
         saveButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
