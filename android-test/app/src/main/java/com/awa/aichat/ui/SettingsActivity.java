@@ -256,7 +256,7 @@ public class SettingsActivity extends Activity {
 
     // v0.6: 导出对话（剪贴板）
     private void exportConversations() {
-        String savedJson = prefs.getString("saved_conversation", "");
+        String savedJson = prefs.getString("saved_messages", "");
         String json = "{\"version\":1,\"conversations\":[{\"id\":\"android\",\"title\":\"\u5bfc\u51fa\u5bf9\u8bdd\",\"messages\":" + (savedJson.length() > 0 ? savedJson : "[]") + "}]}";
         android.content.ClipboardManager clip = (android.content.ClipboardManager) getSystemService(android.content.Context.CLIPBOARD_SERVICE);
         clip.setText(json);
@@ -276,10 +276,37 @@ public class SettingsActivity extends Activity {
             Toast.makeText(this, "\u526a\u8d34\u677f\u5185\u5bb9\u4e0d\u662f\u6709\u6548\u7684\u5bf9\u8bdd JSON", Toast.LENGTH_SHORT).show();
             return;
         }
+        String messagesJson = extractMessagesArray(json);
+        if (messagesJson == null) {
+            Toast.makeText(this, "\u65e0\u6cd5\u89e3\u6790 messages \u5b57\u6bb5", Toast.LENGTH_SHORT).show();
+            return;
+        }
         SharedPreferences.Editor ed = prefs.edit();
-        ed.putString("saved_conversation", json);
-        ed.commit();
+        ed.putString("saved_messages", messagesJson);
+        ed.apply();
         Toast.makeText(this, "\u5bf9\u8bdd\u5df2\u5bfc\u5165\uff08\u91cd\u542f app \u540e\u751f\u6548\uff09", Toast.LENGTH_LONG).show();
+    }
+
+    // v0.6.4: 从外层 JSON 提取 messages 数组字符串
+    private String extractMessagesArray(String json) {
+        try {
+            org.json.JSONObject root = new org.json.JSONObject(json);
+            if (root.has("conversations")) {
+                org.json.JSONArray convs = root.getJSONArray("conversations");
+                if (convs.length() > 0) {
+                    org.json.JSONObject first = convs.getJSONObject(0);
+                    if (first.has("messages")) {
+                        return first.getJSONArray("messages").toString();
+                    }
+                }
+            }
+            if (root.has("messages")) {
+                return root.getJSONArray("messages").toString();
+            }
+            return null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void saveAll() {

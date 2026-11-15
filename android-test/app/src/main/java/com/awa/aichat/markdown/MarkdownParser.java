@@ -36,6 +36,10 @@ import java.util.regex.Pattern;
  */
 public class MarkdownParser {
 
+    // v0.6.4: Pattern 提为 static final — 避免每行重新编译 regex（性能修复）
+    private static final Pattern NUM_LIST_RE = Pattern.compile("^(\\d+)\\.\\s");
+    private static final Pattern INLINE_RE = Pattern.compile("(\\*\\*(.+?)\\*\\*)|(\\*(.+?)\\*)|(`(.+?)`)|(\\[(.+?)\\]\\((.+?)\\))|(!\\[(.+?)\\]\\((.+?)\\))");
+
     // v0.3: LRU cache of recently rendered spans. Key = length|dark, value = parsed.
     // We don't key on the full text because that would hold strong refs
     // to potentially huge strings; length-based invalidation is good
@@ -255,8 +259,8 @@ public class MarkdownParser {
                 continue;
             }
 
-            // Numbered list items (e.g. "1. xxx")
-            Matcher numList = Pattern.compile("^(\\d+)\\.\\s").matcher(line);
+            // Numbered list items (e.g. "1. xxx") — v0.6.4: 用 static Pattern
+            Matcher numList = NUM_LIST_RE.matcher(line);
             if (numList.find()) {
                 appendInline(sb, numList.group(0) + " ", codeBg, accent);
                 appendInline(sb, line.substring(numList.end()), codeBg, accent);
@@ -310,9 +314,8 @@ public class MarkdownParser {
      */
     private static void appendInline(SpannableStringBuilder sb, String text,
                                      int codeBg, int accent) {
-        // v0.6: 加图片 ![alt](url) 和表格分隔线支持
-        Pattern p = Pattern.compile("(\\*\\*(.+?)\\*\\*)|(\\*(.+?)\\*)|(`(.+?)`)|(\\[(.+?)\\]\\((.+?)\\))|(!\\[(.+?)\\]\\((.+?)\\))");
-        Matcher m = p.matcher(text);
+        // v0.6.4: 用 static Pattern，避免每行重新编译 regex
+        Matcher m = INLINE_RE.matcher(text);
         int lastEnd = 0;
 
         while (m.find()) {

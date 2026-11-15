@@ -119,8 +119,10 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
         networkService = new NetworkService();
         networkService.setListener(this);
 
-        // v0.6: 会话持久化 — 从磁盘加载上次对话
-        loadConversation();
+        // v0.6.4: 仅当未从 savedInstanceState 恢复时才从磁盘加载（避免双重堆叠）
+        if (savedInstanceState == null) {
+            loadConversation();
+        }
 
         // Check if API key is set
         String apiKey = prefs.getString(KEY_API_KEY, "");
@@ -364,7 +366,8 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
                 obj.put("error", m.error);
                 arr.put(obj);
             }
-            prefs.edit().putString("saved_messages", arr.toString()).commit();
+            // v0.6.4: apply() 替代 commit() — 异步落盘，避免主线程同步 I/O 卡顿
+            prefs.edit().putString("saved_messages", arr.toString()).apply();
         } catch (Exception e) {
             android.util.Log.w("ChatActivity", "save conv failed: " + e.getMessage());
         }

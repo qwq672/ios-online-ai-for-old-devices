@@ -17,6 +17,8 @@ public class Message {
     public String thinking;
     public boolean error;
     public long timestamp;
+    // v0.6.4: 思考折叠状态存到 Message — 避免 ViewHolder 复用时丢失展开态
+    public boolean thinkingExpanded;
 
     public Message(int role, String content) {
         this.role = role;
@@ -24,6 +26,7 @@ public class Message {
         this.thinking = "";
         this.error = false;
         this.timestamp = System.currentTimeMillis();
+        this.thinkingExpanded = false;
     }
 
     public Message(int role, String content, boolean error) {

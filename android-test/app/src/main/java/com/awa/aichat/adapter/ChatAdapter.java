@@ -40,6 +40,9 @@ public class ChatAdapter extends BaseAdapter {
     private final Context context;
     private final List<Message> messages = new ArrayList<Message>();
     private final int padH, padV, cornerRadius;
+    // v0.6.4: 缓存 dark theme — 避免 getView 每次读 SharedPreferences
+    private boolean cachedDark;
+    private long cachedDarkAt;
 
     public ChatAdapter(Context ctx) {
         this.context = ctx;
@@ -47,6 +50,16 @@ public class ChatAdapter extends BaseAdapter {
         this.padH = (int) (24 * density + 0.5f);
         this.padV = (int) (14 * density + 0.5f);
         this.cornerRadius = (int) (8 * density + 0.5f);
+    }
+
+    // v0.6.4: 缓存 dark theme 5 秒，避免 ListView 滚动时每行都读 SharedPreferences
+    private boolean isDarkCached() {
+        long now = System.currentTimeMillis();
+        if (now - cachedDarkAt > 5000) {
+            cachedDark = ThemeManager.isDark(context);
+            cachedDarkAt = now;
+        }
+        return cachedDark;
     }
 
     public void add(Message msg) {
@@ -170,7 +183,7 @@ public class ChatAdapter extends BaseAdapter {
             h = (Holder) convertView.getTag();
         }
 
-        boolean dark = ThemeManager.isDark(context);
+        boolean dark = isDarkCached();
 
         // Pick colors.
         int bgColorRes, fgColorRes, thinkColorRes;
@@ -213,30 +226,20 @@ public class ChatAdapter extends BaseAdapter {
         h.spacer.setLayoutParams(spacerLp);
         h.bubble.setLayoutParams(bubbleLp);
 
-        // Thinking text — v0.6: 可折叠卡片
+        // Thinking text — v0.6.4: 状态存到 Message，避免 ViewHolder 复用陷阱
         String thinking = msg.thinking == null ? "" : msg.thinking;
         if (thinking.length() > 0) {
             h.thinkingToggle.setVisibility(View.VISIBLE);
-            h.thinkingToggle.setText("思考 · 点击展开");
-            h.thinking.setVisibility(View.GONE);
+            h.thinking.setVisibility(msg.thinkingExpanded ? View.VISIBLE : View.GONE);
+            h.thinkingToggle.setText(msg.thinkingExpanded ? "思考 · 点击收起" : "思考 · 点击展开");
             h.thinking.setText("[思考] " + thinking);
-            // v0.6: toggle 点击展开/收起
-            final TextView thinkingView = h.thinking;
-            final Button toggleBtn = h.thinkingToggle;
-            final String thinkText = thinking;
+            // v0.6.4: 不再用 final 局部变量捕获，直接操作 Message
+            final Message boundMsg = msg;
             h.thinkingToggle.setOnClickListener(new View.OnClickListener() {
-                private boolean expanded = false;
                 @Override
                 public void onClick(View v) {
-                    expanded = !expanded;
-                    if (expanded) {
-                        thinkingView.setVisibility(View.VISIBLE);
-                        thinkingView.setText("[思考] " + thinkText);
-                        toggleBtn.setText("思考 · 点击收起");
-                    } else {
-                        thinkingView.setVisibility(View.GONE);
-                        toggleBtn.setText("思考 · 点击展开");
-                    }
+                    boundMsg.thinkingExpanded = !boundMsg.thinkingExpanded;
+                    notifyDataSetChanged();
                 }
             });
         } else {

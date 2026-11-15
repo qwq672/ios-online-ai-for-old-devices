@@ -108,6 +108,13 @@ public class NetworkService {
                     if (cancelled) return;
                     Log.e(TAG, "stream error", e);
                     notifyError(friendlyError(e));
+                } finally {
+                    // v0.6.4: 资源泄漏修复 — 任何路径都 disconnect
+                    // 防止 socket 泄漏（HTTP 4xx、readLine 抛 IOException、cancelled）
+                    if (connection != null) {
+                        try { connection.disconnect(); } catch (Exception ignored) {}
+                        connection = null;
+                    }
                 }
             }
         }, "AIChat-Stream");
