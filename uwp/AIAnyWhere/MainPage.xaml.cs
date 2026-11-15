@@ -105,6 +105,7 @@ namespace AIAnyWhere
     {
         private string role = "";
         private string content = "";
+        private string thinking = "";  // v0.2: thinking 支持
 
         public string Role
         {
@@ -128,6 +129,17 @@ namespace AIAnyWhere
             }
         }
 
+        public string Thinking
+        {
+            get { return thinking; }
+            set
+            {
+                if (thinking == value) return;
+                thinking = value;
+                OnPropertyChanged();
+            }
+        }
+
         public event PropertyChangedEventHandler PropertyChanged;
 
         private void OnPropertyChanged([CallerMemberName] string propertyName = null)
@@ -141,6 +153,7 @@ namespace AIAnyWhere
         private MainPage page;
         public NetworkListener(MainPage p) { page = p; }
         public void OnChunk(string fullText) => page.OnChunk(fullText);
+        public void OnThinking(string thinking) { }  // v0.2: 后续 UI 接入
         public void OnFinish() => page.OnFinish();
         public void OnError(string msg) => page.OnError(msg);
     }

@@ -15,6 +15,7 @@ namespace AIAnyWhere.Services
         public NetworkListener Listener { get; set; }
         private CancellationTokenSource cts;
         private HttpClient client;
+        private StringBuilder thinkingAccumulated = new StringBuilder();  // v0.2: thinking 支持
 
         public NetworkService()
         {
@@ -83,6 +84,17 @@ namespace AIAnyWhere.Services
                                     {
                                         accumulated.Append(content.ToString());
                                         Listener?.OnChunk(accumulated.ToString());
+                                    }
+                                    // v0.2: reasoning_content / thinking 支持
+                                    var reasoning = delta["reasoning_content"];
+                                    if (reasoning == null || reasoning.Type == JTokenType.Null)
+                                        reasoning = delta["reasoning"];
+                                    if (reasoning == null || reasoning.Type == JTokenType.Null)
+                                        reasoning = delta["thinking"];
+                                    if (reasoning != null && reasoning.Type != JTokenType.Null)
+                                    {
+                                        thinkingAccumulated.Append(reasoning.ToString());
+                                        Listener?.OnThinking(thinkingAccumulated.ToString());
                                     }
                                 }
                             }
