@@ -42,6 +42,16 @@ typedef enum {
     MD_NODE_BLANK,         // 空行
 } md_node_type;
 
+/* v261116-6: 行内节点类型 */
+typedef enum {
+    MD_INLINE_TEXT,        // 普通文字
+    MD_INLINE_BOLD,        // **bold**
+    MD_INLINE_ITALIC,      // *italic*
+    MD_INLINE_CODE,        // `code`
+    MD_INLINE_LINK,        // [text](url)
+    MD_INLINE_IMAGE,       // ![alt](url)
+} md_inline_type;
+
 /* AST 节点 */
 typedef struct md_node {
     md_node_type type;
@@ -51,6 +61,15 @@ typedef struct md_node {
     const char* lang;       // 代码块语言（NULL = 无）
     struct md_node* next;   // 链表下一节点
 } md_node;
+
+/* v261116-6: 行内节点 */
+typedef struct md_inline_node {
+    md_inline_type type;
+    const char* text;       // 文字内容（已分配，需 free）
+    const char* url;        // 链接 URL（仅 LINK/IMAGE 有）
+    const char* alt;        // 图片 alt（仅 IMAGE 有）
+    struct md_inline_node* next;
+} md_inline_node;
 
 /**
  * 解析 Markdown 文本 → AST 节点链表
@@ -68,6 +87,24 @@ void md_free(md_node* head);
  * 统计节点数量
  */
 int md_count(const md_node* head);
+
+/**
+ * v261116-6: 解析行内 Markdown → 行内节点链表
+ * 支持: **bold**, *italic*, `code`, [text](url), ![alt](url)
+ * @param text  单行文本（不含块级 markdown 语法）
+ * @return 行内节点链表头（NULL = 失败/空）
+ */
+md_inline_node* md_parse_inline(const char* text);
+
+/**
+ * v261116-6: 释放行内节点链表
+ */
+void md_inline_free(md_inline_node* head);
+
+/**
+ * v261116-6: 统计行内节点数量
+ */
+int md_inline_count(const md_inline_node* head);
 
 #ifdef __cplusplus
 }
