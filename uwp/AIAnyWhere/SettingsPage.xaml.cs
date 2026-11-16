@@ -21,7 +21,7 @@ namespace AIAnyWhere
             DarkSwitch.IsOn = SettingsStore.DarkTheme;
             StreamSwitch.IsOn = SettingsStore.Stream;
             ThinkingSwitch.IsOn = SettingsStore.ShowThinking;
-            ApiKeyBox.Text = SettingsStore.ApiKey;
+            ApiKeyBox.Password = SettingsStore.ApiKey;
             BaseUrlBox.Text = SettingsStore.BaseUrl;
             ModelBox.Text = SettingsStore.Model;
             PromptBox.Text = SettingsStore.SystemPrompt;
@@ -46,7 +46,7 @@ namespace AIAnyWhere
             SettingsStore.SetBool("dark_theme", DarkSwitch.IsOn);
             SettingsStore.SetBool("stream", StreamSwitch.IsOn);
             SettingsStore.SetBool("show_thinking", ThinkingSwitch.IsOn);
-            SettingsStore.Set("api_key", ApiKeyBox.Text.Trim());
+            SettingsStore.Set("api_key", ApiKeyBox.Password.Trim());
             SettingsStore.Set("base_url", BaseUrlBox.Text.Trim());
             SettingsStore.Set("model", ModelBox.Text.Trim());
             SettingsStore.Set("system_prompt", PromptBox.Text.Trim());

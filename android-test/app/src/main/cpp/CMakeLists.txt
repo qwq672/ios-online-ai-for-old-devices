@@ -21,6 +21,11 @@ endif()
 if(EXISTS "${MBEDTLS_SRC_DIR}/CMakeLists.txt")
     message(STATUS "mbedTLS source found at ${MBEDTLS_SRC_DIR}, building with TLS support")
 
+    # v261116-8: 关闭 mbedTLS tests + programs — 只编 library
+    # 否则 tests/src/psa_exercise_key.c 的 -Werror 会因字符串初始化警告失败
+    set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+
     # 编译 mbedTLS 静态库
     add_subdirectory(${MBEDTLS_SRC_DIR} ${CMAKE_BINARY_DIR}/mbedtls_build EXCLUDE_FROM_ALL)
 

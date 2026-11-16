@@ -214,7 +214,8 @@ public class SettingsActivity extends Activity {
         });
 
         // v0.6.5: 主题色选择（6 预设色）
-        Button colorPickerBtn = new Button(this);
+        // v261116-8: 修复 Java 1.7 编译错误 — 内部类访问局部变量必须 final
+        final Button colorPickerBtn = new Button(this);
         colorPickerBtn.setText("主题色: " + ThemeManager.getColorName(ThemeManager.getAccentColorIndex(this)));
         colorPickerBtn.setOnClickListener(new View.OnClickListener() {
             @Override
