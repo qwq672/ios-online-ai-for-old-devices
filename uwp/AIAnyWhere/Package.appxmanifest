@@ -38,17 +38,6 @@
         <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
         <uap:SplashScreen Image="Assets\SplashScreen.png" />
       </uap:VisualElements>
-      <!-- v261116-12: WinUI (Microsoft.UI.Xaml) 控件注册 -->
-      <Extensions>
-        <Extension Category="windows.activatableClass.inProcessServer">
-          <InProcessServer>
-            <Path>Microsoft.UI.Xaml.dll</Path>
-            <ActivatableClass ActivatableClassId="Microsoft.UI.Xaml.Application" ThreadingModel="both" />
-            <ActivatableClass ActivatableClassId="Microsoft.UI.Xaml.Controls.NavigationView" ThreadingModel="both" />
-            <ActivatableClass ActivatableClassId="Microsoft.UI.Xaml.Controls.NavigationViewItem" ThreadingModel="both" />
-          </InProcessServer>
-        </Extension>
-      </Extensions>
     </Application>
   </Applications>
 
