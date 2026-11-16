@@ -18,7 +18,12 @@ namespace AIAnyWhere
 
         private void LoadSettings()
         {
-            DarkSwitch.IsOn = SettingsStore.DarkTheme;
+            // v261116-10: 主题三选一
+            int themeMode = SettingsStore.ThemeMode;
+            ThemeSystemRadio.IsChecked = (themeMode == 0);
+            ThemeLightRadio.IsChecked = (themeMode == 1);
+            ThemeDarkRadio.IsChecked = (themeMode == 2);
+
             StreamSwitch.IsOn = SettingsStore.Stream;
             ThinkingSwitch.IsOn = SettingsStore.ShowThinking;
             ApiKeyBox.Password = SettingsStore.ApiKey;
@@ -43,7 +48,14 @@ namespace AIAnyWhere
 
         private void SaveBtn_Click(object sender, RoutedEventArgs e)
         {
-            SettingsStore.SetBool("dark_theme", DarkSwitch.IsOn);
+            // v261116-10: 主题三选一
+            int themeMode = 0;
+            if (ThemeLightRadio.IsChecked == true) themeMode = 1;
+            else if (ThemeDarkRadio.IsChecked == true) themeMode = 2;
+            SettingsStore.SetThemeMode(themeMode);
+            // 立即应用主题（无需重启）
+            App.ReapplyTheme();
+
             SettingsStore.SetBool("stream", StreamSwitch.IsOn);
             SettingsStore.SetBool("show_thinking", ThinkingSwitch.IsOn);
             SettingsStore.Set("api_key", ApiKeyBox.Password.Trim());

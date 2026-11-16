@@ -10,92 +10,133 @@
         <local:GridLengthStarConverter x:Key="StarConv"/>
     </Page.Resources>
 
-    <Grid x:Name="RootGrid">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
+    <!-- v261116-10: NavigationView 汉堡菜单 — UWP 标准导航控件
+         自动适配 PC（展开侧边栏）和手机（覆盖式）
+         自带 Acrylic 背景效果（UWP 设计语言核心元素） -->
+    <NavigationView x:Name="NavView"
+                    IsBackEnabled="False"
+                    IsSettingsVisible="False"
+                    PaneDisplayMode="Auto"
+                    OpenPaneLength="280"
+                    CompactPaneLength="48"
+                    SelectionChanged="NavView_SelectionChanged"
+                    Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <NavigationView.MenuItems>
+            <NavigationViewItem Tag="chat" Icon="Message" Content="聊天"/>
+            <NavigationViewItem Tag="history" Icon="Clock" Content="历史"/>
+        </NavigationView.MenuItems>
+        <NavigationView.FooterMenuItems>
+            <NavigationViewItem Tag="settings" Icon="Setting" Content="设置"/>
+        </NavigationView.FooterMenuItems>
 
-        <!-- 顶部栏 -->
-        <Grid Grid.Row="0" Padding="12,8" Background="{ThemeResource SystemControlBackgroundAltMediumBrush}">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Text="AIAnyWhere" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
-            <Button Grid.Column="1" x:Name="ClearBtn" Content="清空" Margin="0,0,8,0" Click="ClearBtn_Click"/>
-            <Button Grid.Column="2" x:Name="HistoryBtn" Content="历史" Margin="0,0,8,0" Click="HistoryBtn_Click"/>
-            <Button Grid.Column="3" x:Name="ThemeBtn" Content="主题" Margin="0,0,8,0" Click="ThemeBtn_Click"/>
-            <Button Grid.Column="4" x:Name="SettingsBtn" Content="设置" Click="SettingsBtn_Click"/>
-        </Grid>
+        <!-- 主内容区 -->
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
-        <!-- 消息列表 -->
-        <ListView x:Name="MessageList" Grid.Row="1" Padding="12,8">
-            <ListView.ItemContainerStyle>
-                <Style TargetType="ListViewItem">
-                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                    <Setter Property="Padding" Value="0,2"/>
-                    <Setter Property="MinHeight" Value="0"/>
-                </Style>
-            </ListView.ItemContainerStyle>
-            <ListView.ItemTemplate>
-                <DataTemplate>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="{Binding LeftSpacerWidth, Converter={StaticResource StarConv}}"/>
-                            <ColumnDefinition Width="{Binding BubbleWidth, Converter={StaticResource StarConv}}"/>
-                            <ColumnDefinition Width="{Binding RightSpacerWidth, Converter={StaticResource StarConv}}"/>
-                        </Grid.ColumnDefinitions>
-                        <Border Grid.Column="1" Background="{Binding BubbleBackground}"
-                                CornerRadius="10" Padding="12,8" BorderThickness="0"
-                                Margin="0,2" HorizontalAlignment="Stretch">
-                            <StackPanel>
-                                <!-- 思考折叠 -->
-                                <Border Visibility="{Binding ThinkingVisibility}"
-                                        Background="#22000000" CornerRadius="6" Padding="8,4" Margin="0,0,0,6">
-                                    <StackPanel>
-                                        <Button Content="{Binding ThinkingToggleText}"
-                                                FontSize="12" Padding="6,2" Background="Transparent"
-                                                BorderThickness="0" Click="ThinkingToggle_Click"
-                                                Tag="{Binding}"/>
-                                        <TextBlock Text="{Binding Thinking}"
-                                                   FontSize="12" TextWrapping="Wrap"
-                                                   Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
-                                                   FontStyle="Italic"
-                                                   Visibility="{Binding ThinkingContentVisibility, Converter={StaticResource VisConv}}"
-                                                   Margin="4,4,0,0"/>
-                                    </StackPanel>
-                                </Border>
-                                <!-- 内容 — TextBlock，支持流式更新 -->
-                                <TextBlock Text="{Binding Content}" FontSize="15"
-                                           TextWrapping="Wrap" LineHeight="22"
-                                           Foreground="{Binding ContentForeground}"/>
-                                <!-- 角色 -->
-                                <TextBlock Text="{Binding RoleDisplay}" FontSize="10"
+            <!-- 聊天视图（默认） -->
+            <ListView x:Name="MessageList" Grid.Row="0" Padding="12,8"
+                      SelectionMode="None"
+                      IsItemClickEnabled="False">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Setter Property="Padding" Value="0,2"/>
+                        <Setter Property="MinHeight" Value="0"/>
+                    </Setter>
+                </ListView.ItemContainerStyle>
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="{Binding LeftSpacerWidth, Converter={StaticResource StarConv}}"/>
+                                <ColumnDefinition Width="{Binding BubbleWidth, Converter={StaticResource StarConv}}"/>
+                                <ColumnDefinition Width="{Binding RightSpacerWidth, Converter={StaticResource StarConv}}"/>
+                            </Grid.ColumnDefinitions>
+                            <!-- v261116-10: UWP 风格气泡 — 4px 微圆角，系统颜色
+                                 右键/长按弹出 MenuFlyout（UWP 标准上下文菜单） -->
+                            <Border Grid.Column="1" Background="{Binding BubbleBackground}"
+                                    CornerRadius="4" Padding="12,8" BorderThickness="0"
+                                    Margin="0,2" HorizontalAlignment="Stretch">
+                                <Border.ContextFlyout>
+                                    <MenuFlyout>
+                                        <MenuFlyoutItem Text="复制" Click="CopyMessage_Click" Tag="{Binding}"/>
+                                        <MenuFlyoutItem Text="重新生成" Click="RegenerateMessage_Click" Tag="{Binding}"/>
+                                        <MenuFlyoutItem Text="删除" Click="DeleteMessage_Click" Tag="{Binding}"/>
+                                    </MenuFlyout>
+                                </Border.ContextFlyout>
+                                <StackPanel>
+                                    <!-- 思考折叠 -->
+                                    <Border Visibility="{Binding ThinkingVisibility}"
+                                            Background="{ThemeResource SystemControlBackgroundAltLowBrush}"
+                                            CornerRadius="4" Padding="8,4" Margin="0,0,0,6">
+                                        <StackPanel>
+                                            <Button Content="{Binding ThinkingToggleText}"
+                                                    FontSize="12" Padding="6,2" Background="Transparent"
+                                                    BorderThickness="0" Click="ThinkingToggle_Click"
+                                                    Tag="{Binding}"/>
+                                            <TextBlock Text="{Binding Thinking}"
+                                                       FontSize="12" TextWrapping="Wrap"
+                                                       Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
+                                                       FontStyle="Italic"
+                                                       Visibility="{Binding ThinkingContentVisibility, Converter={StaticResource VisConv}}"
+                                                       Margin="4,4,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <!-- 内容 -->
+                                    <TextBlock Text="{Binding Content}" FontSize="15"
+                                               TextWrapping="Wrap" LineHeight="22"
+                                               Foreground="{Binding ContentForeground}"/>
+                                    <!-- 角色时间 -->
+                                    <TextBlock Text="{Binding RoleDisplay}" FontSize="10"
+                                               Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
+                                               Margin="0,4,0,0" Opacity="0.6"/>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+
+            <!-- 历史视图（在 ListView 之上，按需显示） -->
+            <Grid x:Name="HistoryPanel" Grid.Row="0" Visibility="Collapsed" Padding="12,8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Text="历史对话" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,12"/>
+                <ListView x:Name="HistoryList" Grid.Row="1" SelectionMode="Single"
+                          IsItemClickEnabled="True"
+                          ItemClick="HistoryList_ItemClick">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Padding="8,6">
+                                <TextBlock Text="{Binding title}" FontWeight="SemiBold" FontSize="14" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding subtitle}" FontSize="11"
                                            Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
-                                           Margin="0,4,0,0" Opacity="0.6"/>
+                                           Margin="0,2,0,0"/>
                             </StackPanel>
-                        </Border>
-                    </Grid>
-                </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Grid>
 
-        <!-- 底部输入栏 -->
-        <Grid Grid.Row="2" Padding="12,8" Background="{ThemeResource SystemControlBackgroundAltMediumBrush}">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBox x:Name="InputBox" Grid.Column="0" PlaceholderText="输入消息... (Enter 发送, Shift+Enter 换行)"
-                     AcceptsReturn="True" MaxHeight="120" TextWrapping="Wrap"
-                     KeyDown="InputBox_KeyDown"/>
-            <Button x:Name="SendBtn" Grid.Column="1" Content="发送" Margin="8,0,0,0" Click="SendBtn_Click"
-                    MinWidth="80" Background="#0078D7" Foreground="White"/>
+            <!-- 底部输入栏 — UWP 风格用 AccentButtonStyle 发送按钮 -->
+            <Grid Grid.Row="1" Padding="12,8" Background="{ThemeResource SystemControlBackgroundAltMediumBrush}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="InputBox" Grid.Column="0"
+                         PlaceholderText="输入消息... (Enter 发送, Shift+Enter 换行)"
+                         AcceptsReturn="True" MaxHeight="120" TextWrapping="Wrap"
+                         KeyDown="InputBox_KeyDown"/>
+                <Button x:Name="SendBtn" Grid.Column="1" Content="发送" Margin="8,0,0,0"
+                        Click="SendBtn_Click" MinWidth="80"
+                        Style="{ThemeResource AccentButtonStyle}"/>
+            </Grid>
         </Grid>
-    </Grid>
+    </NavigationView>
 </Page>

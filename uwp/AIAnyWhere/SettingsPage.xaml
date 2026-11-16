@@ -8,12 +8,18 @@
         <StackPanel MaxWidth="640">
             <TextBlock Text="设置" FontSize="24" FontWeight="Bold" Margin="0,0,0,8"/>
 
-            <!-- 主题 -->
+            <!-- 主题 — v261116-10: 三选一（跟随系统/浅色/深色），UWP 标准行为 -->
             <Border Background="{ThemeResource SystemControlBackgroundAltMediumBrush}"
-                    CornerRadius="8" Padding="12,8">
+                    CornerRadius="4" Padding="12,8" Margin="0,0,0,8">
                 <StackPanel>
                     <TextBlock Text="外观" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,6"/>
-                    <ToggleSwitch x:Name="DarkSwitch" Header="深色主题" OnContent="深色" OffContent="浅色"/>
+                    <TextBlock Text="主题" FontSize="13" Margin="0,4,0,0"/>
+                    <RadioButton x:Name="ThemeSystemRadio" Content="跟随系统" GroupName="Theme" Margin="0,4,0,0"/>
+                    <RadioButton x:Name="ThemeLightRadio" Content="浅色" GroupName="Theme" Margin="0,4,0,0"/>
+                    <RadioButton x:Name="ThemeDarkRadio" Content="深色" GroupName="Theme" Margin="0,4,0,0"/>
+                    <TextBlock Text="UWP 应用标准：跟随系统主题（与 Groove 音乐等一致）"
+                               FontSize="11" Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
+                               Margin="0,4,0,0" TextWrapping="Wrap"/>
                 </StackPanel>
             </Border>
 

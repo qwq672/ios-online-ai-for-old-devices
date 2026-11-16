@@ -16,11 +16,20 @@ namespace AIAnyWhere.Services
         public static string Model => Get("model", "gpt-3.5-turbo");
         public static string SystemPrompt => Get("system_prompt", "You are a helpful assistant.");
         public static bool Stream => GetBool("stream", true);
-        public static bool DarkTheme => GetBool("dark_theme", false);
+        public static bool DarkTheme => GetBool("dark_theme", false);  // 兼容旧版
+        public static int ThemeMode => GetInt("theme_mode", 0);  // v261116-10: 0=跟随系统, 1=浅色, 2=深色
         public static int MaxTokens => GetInt("max_tokens", 0);
         public static double Temperature => GetDouble("temperature", 0.7);
         public static string Provider => Get("provider", "openai");
         public static bool ShowThinking => GetBool("show_thinking", true);
+
+        // v261116-10: 主题模式设置
+        public static void SetThemeMode(int mode)
+        {
+            SetInt("theme_mode", mode);
+            // 同时更新旧版 dark_theme 字段（兼容性）
+            SetBool("dark_theme", mode == 2);
+        }
 
         public static void Set(string key, string value)
         {

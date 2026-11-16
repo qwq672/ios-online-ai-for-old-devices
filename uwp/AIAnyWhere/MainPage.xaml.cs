@@ -5,9 +5,9 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Windows.UI;
-using Windows.UI.Text;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
+using Windows.UI.Xaml.Input;
 using Windows.UI.Xaml.Media;
 using AIAnyWhere.Services;
 
@@ -25,14 +25,80 @@ namespace AIAnyWhere
             MessageList.ItemsSource = messages;
             networkService = new NetworkService();
             networkService.Listener = new NetworkListener(this);
-            ApplyTheme();
+            // 默认选中聊天项
+            foreach (var item in NavView.MenuItems)
+            {
+                if (item is NavigationViewItem nvi && (string)nvi.Tag == "chat")
+                {
+                    NavView.SelectedItem = nvi;
+                    break;
+                }
+            }
         }
 
-        private void ApplyTheme()
+        // === NavigationView 切换 ===
+        private void NavView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
         {
-            bool dark = SettingsStore.DarkTheme;
-            RootGrid.RequestedTheme = dark ? ElementTheme.Dark : ElementTheme.Light;
-            foreach (var m in messages) m.Dark = dark;
+            if (args.SelectedItem == null) return;
+            var nvi = args.SelectedItem as NavigationViewItem;
+            if (nvi == null) return;
+            string tag = nvi.Tag as string;
+            switch (tag)
+            {
+                case "chat":
+                    MessageList.Visibility = Visibility.Visible;
+                    HistoryPanel.Visibility = Visibility.Collapsed;
+                    break;
+                case "history":
+                    MessageList.Visibility = Visibility.Collapsed;
+                    HistoryPanel.Visibility = Visibility.Visible;
+                    LoadHistoryList();
+                    break;
+                case "settings":
+                    Frame.Navigate(typeof(SettingsPage));
+                    // 导航后清空选中（避免返回时仍是设置选中态）
+                    NavView.SelectedItem = null;
+                    break;
+            }
+        }
+
+        // === 历史对话列表 ===
+        private async void LoadHistoryList()
+        {
+            HistoryList.Items.Clear();
+            var convs = await ConversationStore.ListConversationsAsync();
+            foreach (var c in convs)
+            {
+                var dt = DateTimeOffset.FromUnixTimeSeconds(c.timestamp).LocalDateTime;
+                HistoryList.Items.Add(new
+                {
+                    title = c.title,
+                    subtitle = dt.ToString("yyyy-MM-dd HH:mm") + "  · " + c.messages.Count + " 条",
+                    id = c.id
+                });
+            }
+            if (HistoryList.Items.Count == 0)
+            {
+                HistoryList.Items.Add(new { title = "暂无历史对话", subtitle = "发送消息后会自动保存", id = "" });
+            }
+        }
+
+        private async void HistoryList_ItemClick(object sender, ItemClickEventArgs e)
+        {
+            dynamic item = e.ClickedItem;
+            if (item == null) return;
+            string id = item.id;
+            if (string.IsNullOrEmpty(id)) return;
+            await LoadConversationAsync(id);
+            // 切换回聊天视图
+            foreach (var nvi in NavView.MenuItems)
+            {
+                if (nvi is NavigationViewItem navItem && (string)navItem.Tag == "chat")
+                {
+                    NavView.SelectedItem = navItem;
+                    break;
+                }
+            }
         }
 
         private void SendBtn_Click(object sender, RoutedEventArgs e) { DoSend(); }
@@ -61,16 +127,15 @@ namespace AIAnyWhere
             string text = InputBox.Text.Trim();
             if (string.IsNullOrEmpty(text)) return;
 
-            var userMsg = new ChatMessage { Role = "user", Content = text, IsUser = true, Dark = SettingsStore.DarkTheme };
+            var userMsg = new ChatMessage { Role = "user", Content = text, IsUser = true };
             messages.Add(userMsg);
 
-            var aiMsg = new ChatMessage { Role = "assistant", Content = "正在思考...", Dark = SettingsStore.DarkTheme };
+            var aiMsg = new ChatMessage { Role = "assistant", Content = "正在思考..." };
             messages.Add(aiMsg);
 
             InputBox.Text = "";
             isStreaming = true;
             SendBtn.Content = "停止";
-            SendBtn.Background = new SolidColorBrush(Color.FromArgb(255, 220, 80, 80));
 
             string apiKey = SettingsStore.ApiKey;
             string baseURL = SettingsStore.BaseUrl;
@@ -97,94 +162,80 @@ namespace AIAnyWhere
             ScrollToBottom();
         }
 
-        private void SettingsBtn_Click(object sender, RoutedEventArgs e)
+        // === MenuFlyout 事件 ===
+        private void CopyMessage_Click(object sender, RoutedEventArgs e)
         {
-            Frame.Navigate(typeof(SettingsPage));
-        }
-
-        private void ThemeBtn_Click(object sender, RoutedEventArgs e)
-        {
-            SettingsStore.SetBool("dark_theme", !SettingsStore.DarkTheme);
-            ApplyTheme();
-        }
-
-        private void ClearBtn_Click(object sender, RoutedEventArgs e)
-        {
-            if (messages.Count > 0)
+            if (sender is MenuFlyoutItem item && item.Tag is ChatMessage msg)
             {
-                messages.Clear();
+                var content = msg.Content ?? "";
+                var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
+                package.SetText(content);
+                Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+                ShowToast("已复制到剪贴板");
             }
         }
 
-        private async void HistoryBtn_Click(object sender, RoutedEventArgs e)
+        private void RegenerateMessage_Click(object sender, RoutedEventArgs e)
         {
-            var dialog = new ContentDialog
+            if (isStreaming)
             {
-                Title = "历史对话",
-                PrimaryButtonText = "关闭",
-                DefaultButton = ContentDialogButton.Primary,
-                Width = 480
-            };
-            var panel = new StackPanel { Padding = new Thickness(0, 12, 0, 0) };
-            var convs = await ConversationStore.ListConversationsAsync();
-            if (convs.Count == 0)
-            {
-                panel.Children.Add(new TextBlock
-                {
-                    Text = "暂无历史对话",
-                    Margin = new Thickness(0, 20, 0, 0),
-                    HorizontalAlignment = HorizontalAlignment.Center
-                });
+                ShowToast("正在生成中，请先停止");
+                return;
             }
-            else
+            if (!(sender is MenuFlyoutItem item) || !(item.Tag is ChatMessage msg)) return;
+            // 找到这条 AI 消息，往前找最近一条 user 消息作为新请求
+            int idx = messages.IndexOf(msg);
+            if (idx < 0) return;
+            // 删除当前 AI 消息及之后所有消息
+            while (messages.Count > idx)
             {
-                var list = new ListView { SelectionMode = ListViewSelectionMode.Single, MaxHeight = 400 };
-                foreach (var c in convs)
+                messages.RemoveAt(idx);
+            }
+            // 找上一条 user 消息
+            string lastUserText = "";
+            for (int i = messages.Count - 1; i >= 0; i--)
+            {
+                if (messages[i].IsUser)
                 {
-                    var itemPanel = new StackPanel { Padding = new Thickness(8, 6, 8, 6), Tag = c };
-                    itemPanel.Children.Add(new TextBlock { Text = c.title, FontWeight = FontWeights.SemiBold, FontSize = 14, TextWrapping = TextWrapping.Wrap });
-                    var dt = DateTimeOffset.FromUnixTimeSeconds(c.timestamp).LocalDateTime;
-                    itemPanel.Children.Add(new TextBlock
-                    {
-                        Text = dt.ToString("yyyy-MM-dd HH:mm") + "  · " + c.messages.Count + " 条",
-                        FontSize = 11,
-                        Foreground = new SolidColorBrush(Colors.Gray),
-                        Margin = new Thickness(0, 2, 0, 0)
-                    });
-                    list.Items.Add(itemPanel);
+                    lastUserText = messages[i].Content;
+                    // 删除这条 user 消息（重新发送）
+                    messages.RemoveAt(i);
+                    break;
                 }
-                list.SelectionChanged += async (s, args) =>
-                {
-                    if (list.SelectedItem is StackPanel sp && sp.Tag is ConversationStore.StoredConversation sc)
-                    {
-                        await LoadConversationAsync(sc.id);
-                        dialog.Hide();
-                    }
-                };
-                panel.Children.Add(list);
             }
-            dialog.Content = panel;
-            await dialog.ShowAsync();
+            if (string.IsNullOrEmpty(lastUserText))
+            {
+                ShowToast("找不到上一条用户消息");
+                return;
+            }
+            // 重新发送
+            InputBox.Text = lastUserText;
+            DoSend();
         }
 
-        private async Task LoadConversationAsync(string id)
+        private void DeleteMessage_Click(object sender, RoutedEventArgs e)
         {
-            var conv = await ConversationStore.LoadConversationAsync(id);
-            if (conv == null) return;
-            messages.Clear();
-            bool dark = SettingsStore.DarkTheme;
-            foreach (var m in conv.messages)
+            if (sender is MenuFlyoutItem item && item.Tag is ChatMessage msg)
             {
-                messages.Add(new ChatMessage
-                {
-                    Role = m.role,
-                    Content = m.content ?? "",
-                    Thinking = m.thinking ?? "",
-                    IsUser = (m.role == "user"),
-                    Dark = dark
-                });
+                messages.Remove(msg);
+                ShowToast("已删除");
             }
-            ScrollToBottom();
+        }
+
+        private void ShowToast(string text)
+        {
+            // 简单状态提示 — 用 StatusBar 风格（这里用 InAppNotification 替代不实际，
+            // 简化为 InputBox placeholder 短暂显示）
+            var originalPlaceholder = InputBox.PlaceholderText;
+            InputBox.PlaceholderText = text;
+            Task.Delay(2000).ContinueWith(_ =>
+            {
+                _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
+                {
+                    if (InputBox.PlaceholderText == text)
+                        InputBox.PlaceholderText = originalPlaceholder;
+                });
+            });
         }
 
         private void ThinkingToggle_Click(object sender, RoutedEventArgs e)
@@ -236,7 +287,6 @@ namespace AIAnyWhere
             {
                 isStreaming = false;
                 SendBtn.Content = "发送";
-                SendBtn.Background = new SolidColorBrush(Color.FromArgb(255, 0, 120, 215));
 
                 if (messages.Count >= 2)
                 {
@@ -267,7 +317,6 @@ namespace AIAnyWhere
             {
                 isStreaming = false;
                 SendBtn.Content = "发送";
-                SendBtn.Background = new SolidColorBrush(Color.FromArgb(255, 0, 120, 215));
                 if (messages.Count > 0)
                 {
                     var last = messages[messages.Count - 1];
@@ -275,6 +324,24 @@ namespace AIAnyWhere
                     last.Content = "[错误] " + message;
                 }
             });
+        }
+
+        private async Task LoadConversationAsync(string id)
+        {
+            var conv = await ConversationStore.LoadConversationAsync(id);
+            if (conv == null) return;
+            messages.Clear();
+            foreach (var m in conv.messages)
+            {
+                messages.Add(new ChatMessage
+                {
+                    Role = m.role,
+                    Content = m.content ?? "",
+                    Thinking = m.thinking ?? "",
+                    IsUser = (m.role == "user"),
+                });
+            }
+            ScrollToBottom();
         }
     }
 
@@ -285,7 +352,6 @@ namespace AIAnyWhere
         private string thinking = "";
         private bool isUser;
         private bool isError;
-        private bool dark;
         private bool thinkingExpanded;
 
         public bool IsUser
@@ -313,18 +379,6 @@ namespace AIAnyWhere
                 OnPropertyChanged("BubbleBackground");
                 OnPropertyChanged("ContentForeground");
                 OnPropertyChanged("RoleDisplay");
-            }
-        }
-
-        public bool Dark
-        {
-            get { return dark; }
-            set
-            {
-                dark = value;
-                OnPropertyChanged();
-                OnPropertyChanged("BubbleBackground");
-                OnPropertyChanged("ContentForeground");
             }
         }
 
@@ -364,23 +418,33 @@ namespace AIAnyWhere
             }
         }
 
-        // === Spacer 宽度（用 GridLengthStarConverter 转 GridLength）===
+        // === Spacer 宽度 ===
         public string LeftSpacerWidth => isUser ? "*" : "0";
         public string RightSpacerWidth => isUser ? "0" : "*";
         public string BubbleWidth => "*";
 
+        // v261116-10: UWP 原生颜色 — 用系统主题资源，不用硬编码 RGB
+        // 用户消息：SystemAccentColor（系统强调色，深色/浅色自适应）
+        // AI 消息：SystemControlBackgroundAltMediumBrush（系统次级背景）
+        // 错误消息：SystemControlErrorBackgroundBrush
         public Brush BubbleBackground
         {
             get
             {
-                Color bg;
                 if (isError)
-                    bg = dark ? Color.FromArgb(255, 70, 30, 30) : Color.FromArgb(255, 252, 220, 220);
+                {
+                    return (Brush)Application.Current.Resources["SystemControlErrorBackgroundBrush"];
+                }
                 else if (isUser)
-                    bg = dark ? Color.FromArgb(255, 40, 80, 60) : Color.FromArgb(255, 220, 248, 198);
+                {
+                    // 用户气泡用系统 accent 色
+                    return (Brush)Application.Current.Resources["SystemControlBackgroundAccentBrush"];
+                }
                 else
-                    bg = dark ? Color.FromArgb(255, 38, 38, 42) : Color.FromArgb(255, 248, 248, 248);
-                return new SolidColorBrush(bg);
+                {
+                    // AI 气泡用次级背景色（深色模式自动变深，浅色模式自动变浅）
+                    return (Brush)Application.Current.Resources["SystemControlBackgroundAltMediumBrush"];
+                }
             }
         }
 
@@ -389,8 +453,16 @@ namespace AIAnyWhere
             get
             {
                 if (isError)
-                    return new SolidColorBrush(dark ? Color.FromArgb(255, 255, 180, 180) : Color.FromArgb(255, 180, 30, 30));
-                return new SolidColorBrush(dark ? Color.FromArgb(255, 240, 240, 240) : Color.FromArgb(255, 30, 30, 30));
+                {
+                    return (Brush)Application.Current.Resources["SystemControlErrorTextForegroundBrush"];
+                }
+                if (isUser)
+                {
+                    // 用户气泡上是 accent 色背景，文字用白色（对比度足够）
+                    return new SolidColorBrush(Colors.White);
+                }
+                // AI 气泡用系统文字色（深色模式白，浅色模式黑）
+                return (Brush)Application.Current.Resources["SystemControlForegroundBaseHighBrush"];
             }
         }
 
@@ -431,19 +503,6 @@ namespace AIAnyWhere
             if (value is bool b) return b ? Visibility.Visible : Visibility.Collapsed;
             if (value is Visibility v) return v;
             return Visibility.Collapsed;
-        }
-        public object ConvertBack(object value, Type targetType, object parameter, string language)
-        {
-            throw new NotImplementedException();
-        }
-    }
-
-    public class BoolToAlignmentConverter : Windows.UI.Xaml.Data.IValueConverter
-    {
-        public object Convert(object value, Type targetType, object parameter, string language)
-        {
-            if (value is bool b) return b ? HorizontalAlignment.Right : HorizontalAlignment.Left;
-            return HorizontalAlignment.Left;
         }
         public object ConvertBack(object value, Type targetType, object parameter, string language)
         {
