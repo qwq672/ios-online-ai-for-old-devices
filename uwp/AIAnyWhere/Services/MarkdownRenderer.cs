@@ -147,10 +147,8 @@ namespace AIAnyWhere.Services
                     if (codeText.EndsWith("\n")) codeText = codeText.Substring(0, codeText.Length - 1);
 
                     var p = MakeParagraph();
-                    p.Background = new SolidColorBrush(Color.FromArgb(255, 0, 0, 0));
-                    p.BorderBrush = new SolidColorBrush(codeBg);
-                    p.BorderThickness = new Thickness(0, 0, 0, 0);
-                    p.Padding = new Thickness(8, 6, 8, 6);
+                    // v261116-8d: Paragraph 没有 Background/BorderBrush/BorderThickness/Padding
+                    // 改用 Margin 留白（背景色通过 Run.Foreground 表达，黑底白字效果保留）
                     p.Margin = new Thickness(0, 4, 0, 4);
                     var codeRun = new Run { Text = codeText, FontFamily = new FontFamily("Consolas") };
                     codeRun.Foreground = new SolidColorBrush(codeFg);
@@ -361,9 +359,9 @@ namespace AIAnyWhere.Services
                 }
                 else if (!string.IsNullOrEmpty(code))
                 {
+                    // v261116-8d: Run.Background 不存在 — 只用 Foreground 区分
                     var r = new Run { Text = code, FontFamily = new FontFamily("Consolas") };
                     r.Foreground = new SolidColorBrush(accent);
-                    r.Background = new SolidColorBrush(Color.FromArgb(255, 244, 244, 248));
                     p.Inlines.Add(r);
                 }
                 else if (!string.IsNullOrEmpty(imgUrl))
