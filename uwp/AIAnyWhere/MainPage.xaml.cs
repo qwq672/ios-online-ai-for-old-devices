@@ -453,7 +453,9 @@ namespace AIAnyWhere
                 Windows.UI.Color accentColor = uiSettings.GetColorValue(Windows.UI.ViewManagement.UIColorType.Accent);
                 _cachedAccentBrush = new SolidColorBrush(accentColor);
 
-                Windows.UI.Color errorColor = uiSettings.GetColorValue(Windows.UI.ViewManagement.UIColorType.Error);
+                // v261116-12c: UIColorType 没有 Error（14393/15063 都没有）
+                // 用硬编码红色作为错误色（深色/浅色模式都用同一红）
+                Windows.UI.Color errorColor = Windows.UI.Color.FromArgb(255, 196, 30, 30);
                 _cachedErrorBgBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x33, errorColor.R, errorColor.G, errorColor.B));
                 _cachedErrorFgBrush = new SolidColorBrush(errorColor);
 
