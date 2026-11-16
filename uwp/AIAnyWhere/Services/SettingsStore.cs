@@ -72,8 +72,8 @@ namespace AIAnyWhere.Services
             return def;
         }
 
-        // 预设供应商
-        public class Provider
+        // 预设供应商 — v261116-8c: 改名 ProviderInfo 避免与 Provider 属性冲突
+        public class ProviderInfo
         {
             public string Id;
             public string Name;
@@ -81,15 +81,15 @@ namespace AIAnyWhere.Services
             public string DefaultModel;
         }
 
-        public static readonly List<Provider> Providers = new List<Provider>
+        public static readonly List<ProviderInfo> Providers = new List<ProviderInfo>
         {
-            new Provider { Id = "openai", Name = "OpenAI", BaseUrl = "https://api.openai.com/v1", DefaultModel = "gpt-3.5-turbo" },
-            new Provider { Id = "glm", Name = "智谱 GLM", BaseUrl = "https://open.bigmodel.cn/api/paas/v4", DefaultModel = "glm-4-flash" },
-            new Provider { Id = "deepseek", Name = "DeepSeek", BaseUrl = "https://api.deepseek.com/v1", DefaultModel = "deepseek-chat" },
-            new Provider { Id = "moonshot", Name = "月之暗面 Kimi", BaseUrl = "https://api.moonshot.cn/v1", DefaultModel = "moonshot-v1-8k" },
-            new Provider { Id = "qwen", Name = "通义千问", BaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1", DefaultModel = "qwen-turbo" },
-            new Provider { Id = "doubao", Name = "豆包", BaseUrl = "https://ark.cn-beijing.volces.com/api/v3", DefaultModel = "doubao-lite-4k" },
-            new Provider { Id = "custom", Name = "自定义", BaseUrl = "", DefaultModel = "" }
+            new ProviderInfo { Id = "openai", Name = "OpenAI", BaseUrl = "https://api.openai.com/v1", DefaultModel = "gpt-3.5-turbo" },
+            new ProviderInfo { Id = "glm", Name = "智谱 GLM", BaseUrl = "https://open.bigmodel.cn/api/paas/v4", DefaultModel = "glm-4-flash" },
+            new ProviderInfo { Id = "deepseek", Name = "DeepSeek", BaseUrl = "https://api.deepseek.com/v1", DefaultModel = "deepseek-chat" },
+            new ProviderInfo { Id = "moonshot", Name = "月之暗面 Kimi", BaseUrl = "https://api.moonshot.cn/v1", DefaultModel = "moonshot-v1-8k" },
+            new ProviderInfo { Id = "qwen", Name = "通义千问", BaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1", DefaultModel = "qwen-turbo" },
+            new ProviderInfo { Id = "doubao", Name = "豆包", BaseUrl = "https://ark.cn-beijing.volces.com/api/v3", DefaultModel = "doubao-lite-4k" },
+            new ProviderInfo { Id = "custom", Name = "自定义", BaseUrl = "", DefaultModel = "" }
         };
     }
 }
