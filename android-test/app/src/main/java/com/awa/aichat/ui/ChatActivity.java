@@ -16,6 +16,7 @@ import android.widget.Toast;
 
 import com.awa.aichat.R;
 import com.awa.aichat.adapter.ChatAdapter;
+import com.awa.aichat.adapter.ChatAdapter.ChatMessageListener;
 import com.awa.aichat.model.Message;
 import com.awa.aichat.network.NetworkService;
 import com.awa.aichat.util.ThemeManager;
@@ -37,7 +38,7 @@ import java.util.List;
  *  - onChunk: no longer wraps an empty runOnUiThread around the update
  *    (NetworkService already posts to the main looper).
  */
-public class ChatActivity extends Activity implements NetworkService.Listener {
+public class ChatActivity extends Activity implements NetworkService.Listener, ChatAdapter.ChatMessageListener {
 
     private static final String PREFS = "aichat_prefs";
     private static final String KEY_API_KEY = "api_key";
@@ -389,5 +390,18 @@ public class ChatActivity extends Activity implements NetworkService.Listener {
             finish();
             startActivity(getIntent());
         }
+    }
+
+    // v261116-11: ChatAdapter.ChatMessageListener — 重新生成消息
+    // 把传入的 userText 填到输入框，调 sendMessage()
+    @Override
+    public void onRegenerate(String userText) {
+        if (isStreaming) {
+            networkService.cancel();
+            isStreaming = false;
+            sendButton.setText("发送");
+        }
+        inputField.setText(userText);
+        sendMessage();
     }
 }

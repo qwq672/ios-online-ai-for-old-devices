@@ -259,7 +259,97 @@ public class ChatAdapter extends BaseAdapter {
             h.content.setText(rendered);
         }
 
+        // v261116-11: 长按菜单（Android 标准上下文菜单）
+        // 弹出 AlertDialog 显示：复制 / 重新生成 / 删除
+        // 通过 setOnLongClickListener 监听整个 bubble
+        final Message boundMsg = msg;
+        final int boundPosition = position;
+        h.bubble.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                showItemMenu(boundMsg, boundPosition);
+                return true;
+            }
+        });
+
         return convertView;
+    }
+
+    // v261116-11: 显示消息项菜单（复制/重新生成/删除）
+    private void showItemMenu(final Message msg, final int position) {
+        if (context instanceof android.app.Activity) {
+            final android.app.Activity activity = (android.app.Activity) context;
+            final CharSequence[] items;
+            // 用户消息: 复制 + 删除
+            // AI 消息: 复制 + 重新生成 + 删除
+            if (msg.isUser()) {
+                items = new CharSequence[]{"复制", "删除"};
+            } else {
+                items = new CharSequence[]{"复制", "重新生成", "删除"};
+            }
+            new android.app.AlertDialog.Builder(activity)
+                .setItems(items, new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface d, int which) {
+                        String action = items[which].toString();
+                        if ("复制".equals(action)) {
+                            copyMessage(msg);
+                        } else if ("重新生成".equals(action)) {
+                            regenerateMessage(msg, position, activity);
+                        } else if ("删除".equals(action)) {
+                            messages.remove(msg);
+                            notifyDataSetChanged();
+                            android.widget.Toast.makeText(activity, "已删除", android.widget.Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                })
+                .show();
+        }
+    }
+
+    // v261116-11: 复制消息到剪贴板
+    private void copyMessage(Message msg) {
+        try {
+            android.content.ClipboardManager clip = (android.content.ClipboardManager)
+                context.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+            android.content.ClipData clipData = android.content.ClipData.newPlainText("AIAnyWhere", msg.content);
+            clip.setPrimaryClip(clipData);
+            android.widget.Toast.makeText(context, "已复制到剪贴板", android.widget.Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            android.util.Log.w("ChatAdapter", "copy failed: " + e.getMessage());
+        }
+    }
+
+    // v261116-11: 重新生成 — 删除当前 AI 消息及之后，找上一条 user 消息重发
+    private void regenerateMessage(Message msg, int position, android.app.Activity activity) {
+        // 删除从 position 开始的所有消息
+        while (messages.size() > position) {
+            messages.remove(messages.size() - 1);
+        }
+        notifyDataSetChanged();
+        // 找上一条 user 消息
+        String lastUserText = "";
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            if (messages.get(i).isUser()) {
+                lastUserText = messages.get(i).content;
+                messages.remove(i);
+                notifyDataSetChanged();
+                break;
+            }
+        }
+        if (lastUserText.length() == 0) {
+            android.widget.Toast.makeText(activity, "找不到上一条用户消息", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        // 触发 ChatActivity 重新发送
+        if (activity instanceof ChatMessageListener) {
+            ((ChatMessageListener) activity).onRegenerate(lastUserText);
+        }
+    }
+
+    // v261116-11: 让 ChatActivity 监听菜单事件（重新生成）
+    public interface ChatMessageListener {
+        void onRegenerate(String userText);
     }
 
     private static class Holder {
