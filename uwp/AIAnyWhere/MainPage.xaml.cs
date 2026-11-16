@@ -243,9 +243,9 @@ namespace AIAnyWhere
             // 简化为 InputBox placeholder 短暂显示）
             var originalPlaceholder = InputBox.PlaceholderText;
             InputBox.PlaceholderText = text;
-            Task.Delay(2000).ContinueWith(_ =>
+            Task.Delay(2000).ContinueWith(t =>
             {
-                _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
+                Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
                 {
                     if (InputBox.PlaceholderText == text)
                         InputBox.PlaceholderText = originalPlaceholder;

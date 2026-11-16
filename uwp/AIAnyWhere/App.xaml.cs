@@ -33,7 +33,7 @@ namespace AIAnyWhere
         // 0 = 跟随系统 (Default), 1 = 浅色 (Light), 2 = 深色 (Dark)
         public static void ApplyUserTheme(Frame rootFrame)
         {
-            int mode = SettingsStore.GetThemeMode();
+            int mode = SettingsStore.ThemeMode;
             ElementTheme theme = ElementTheme.Default;
             if (mode == 1) theme = ElementTheme.Light;
             else if (mode == 2) theme = ElementTheme.Dark;
@@ -45,7 +45,7 @@ namespace AIAnyWhere
         {
             if (Window.Current.Content is FrameworkElement root)
             {
-                int mode = SettingsStore.GetThemeMode();
+                int mode = SettingsStore.ThemeMode;
                 ElementTheme theme = ElementTheme.Default;
                 if (mode == 1) theme = ElementTheme.Light;
                 else if (mode == 2) theme = ElementTheme.Dark;
