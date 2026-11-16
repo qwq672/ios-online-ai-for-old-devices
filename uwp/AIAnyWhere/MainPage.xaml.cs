@@ -25,61 +25,48 @@ namespace AIAnyWhere
             MessageList.ItemsSource = messages;
             networkService = new NetworkService();
             networkService.Listener = new NetworkListener(this);
-            // v261116-10c: 默认选中聊天
-            ChatRadio.IsChecked = true;
-            // 根据屏幕宽度调整 SplitView
-            Window.Current.SizeChanged += OnWindowSizeChanged;
-            OnWindowSizeChanged(null, null);
-        }
-
-        // v261116-10c: 窗口大小变化时调整 SplitView DisplayMode
-        // PC 宽屏 (>= 720px): Inline 模式（展开不覆盖）
-        // 手机/窄屏 (< 720px): Overlay 模式（展开覆盖）
-        private void OnWindowSizeChanged(object sender, Windows.UI.Core.WindowSizeChangedEventArgs e)
-        {
-            double width = Window.Current.Bounds.Width;
-            if (width >= 720)
+            // v261116-12: 默认选中聊天项（NavigationView）
+            // 在 Loaded 事件后选中，避免初始化期触发 SelectionChanged
+            Loaded += (s, e) =>
             {
-                NavSplit.DisplayMode = SplitViewDisplayMode.CompactInline;
-                NavSplit.IsPaneOpen = true;
-            }
-            else
+                if (NavView.SelectedItem == null)
+                {
+                    foreach (var item in NavView.MenuItems)
+                    {
+                        if (item is Microsoft.UI.Xaml.Controls.NavigationViewItem nvi && (string)nvi.Tag == "chat")
+                        {
+                            NavView.SelectedItem = nvi;
+                            break;
+                        }
+                    }
+                }
+            };
+        }
+
+        // v261116-12: NavigationView SelectionChanged
+        private void NavView_SelectionChanged(Microsoft.UI.Xaml.Controls.NavigationView sender,
+                                              Microsoft.UI.Xaml.Controls.NavigationViewSelectionChangedEventArgs args)
+        {
+            if (args.SelectedItem == null) return;
+            var nvi = args.SelectedItem as Microsoft.UI.Xaml.Controls.NavigationViewItem;
+            if (nvi == null) return;
+            string tag = nvi.Tag as string;
+            switch (tag)
             {
-                NavSplit.DisplayMode = SplitViewDisplayMode.CompactOverlay;
-                NavSplit.IsPaneOpen = false;
+                case "chat":
+                    MessageList.Visibility = Visibility.Visible;
+                    HistoryPanel.Visibility = Visibility.Collapsed;
+                    break;
+                case "history":
+                    MessageList.Visibility = Visibility.Collapsed;
+                    HistoryPanel.Visibility = Visibility.Visible;
+                    LoadHistoryList();
+                    break;
+                case "settings":
+                    Frame.Navigate(typeof(SettingsPage));
+                    NavView.SelectedItem = null;
+                    break;
             }
-        }
-
-        // v261116-10c: 汉堡菜单按钮
-        private void HamburgerBtn_Click(object sender, RoutedEventArgs e)
-        {
-            NavSplit.IsPaneOpen = !NavSplit.IsPaneOpen;
-        }
-
-        // v261116-10c: 侧边栏菜单切换
-        private void NavChat_Click(object sender, RoutedEventArgs e)
-        {
-            MessageList.Visibility = Visibility.Visible;
-            HistoryPanel.Visibility = Visibility.Collapsed;
-            // 窄屏点击后关闭侧边栏
-            if (Window.Current.Bounds.Width < 720) NavSplit.IsPaneOpen = false;
-        }
-
-        private void NavHistory_Click(object sender, RoutedEventArgs e)
-        {
-            MessageList.Visibility = Visibility.Collapsed;
-            HistoryPanel.Visibility = Visibility.Visible;
-            LoadHistoryList();
-            if (Window.Current.Bounds.Width < 720) NavSplit.IsPaneOpen = false;
-        }
-
-        private void NavSettings_Click(object sender, RoutedEventArgs e)
-        {
-            Frame.Navigate(typeof(SettingsPage));
-            // 返回后默认选中聊天
-            SettingsRadio.IsChecked = false;
-            ChatRadio.IsChecked = true;
-            if (Window.Current.Bounds.Width < 720) NavSplit.IsPaneOpen = false;
         }
 
         // === 历史对话列表 ===
@@ -111,9 +98,14 @@ namespace AIAnyWhere
             if (string.IsNullOrEmpty(id)) return;
             await LoadConversationAsync(id);
             // 切换回聊天视图
-            ChatRadio.IsChecked = true;
-            MessageList.Visibility = Visibility.Visible;
-            HistoryPanel.Visibility = Visibility.Collapsed;
+            foreach (var nvi in NavView.MenuItems)
+            {
+                if (nvi is Microsoft.UI.Xaml.Controls.NavigationViewItem navItem && (string)navItem.Tag == "chat")
+                {
+                    NavView.SelectedItem = navItem;
+                    break;
+                }
+            }
         }
 
         private void SendBtn_Click(object sender, RoutedEventArgs e) { DoSend(); }
@@ -442,24 +434,71 @@ namespace AIAnyWhere
         // 用户消息：SystemAccentColor（系统强调色，深色/浅色自适应）
         // AI 消息：SystemControlBackgroundAltMediumBrush（系统次级背景）
         // 错误消息：SystemControlErrorBackgroundBrush
+        // v261116-12: 缓存 accent 色（避免每次读 BubbleBackground 都查 UISettings）
+        private static Brush _cachedAccentBrush;
+        private static Brush _cachedErrorBgBrush;
+        private static Brush _cachedErrorFgBrush;
+        private static Brush _cachedAltMediumBrush;
+        private static Brush _cachedBaseHighBrush;
+        private static Brush _cachedWhiteBrush;
+        private static bool _brushesCached = false;
+
+        private static void CacheBrushes()
+        {
+            if (_brushesCached) return;
+            try
+            {
+                // v261116-12: 用 UISettings 获取系统 accent 色 — 最稳定可靠
+                var uiSettings = new Windows.UI.ViewManagement.UISettings();
+                Windows.UI.Color accentColor = uiSettings.GetColorValue(Windows.UI.ViewManagement.UIColorType.Accent);
+                _cachedAccentBrush = new SolidColorBrush(accentColor);
+
+                Windows.UI.Color errorColor = uiSettings.GetColorValue(Windows.UI.ViewManagement.UIColorType.Error);
+                _cachedErrorBgBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x33, errorColor.R, errorColor.G, errorColor.B));
+                _cachedErrorFgBrush = new SolidColorBrush(errorColor);
+
+                _cachedWhiteBrush = new SolidColorBrush(Colors.White);
+
+                // 系统 alt/base 资源 — 尝试从当前 Page 拿（fallback 到 Application）
+                if (Application.Current.Resources.ContainsKey("SystemControlBackgroundAltMediumBrush"))
+                    _cachedAltMediumBrush = (Brush)Application.Current.Resources["SystemControlBackgroundAltMediumBrush"];
+                if (Application.Current.Resources.ContainsKey("SystemControlForegroundBaseHighBrush"))
+                    _cachedBaseHighBrush = (Brush)Application.Current.Resources["SystemControlForegroundBaseHighBrush"];
+
+                // Fallback — 如果系统资源不存在
+                if (_cachedAltMediumBrush == null)
+                {
+                    bool dark = Windows.UI.Xaml.Application.Current.RequestedTheme == ApplicationTheme.Dark;
+                    _cachedAltMediumBrush = new SolidColorBrush(dark ?
+                        Windows.UI.Color.FromArgb(255, 38, 38, 42) : Windows.UI.Color.FromArgb(255, 248, 248, 248));
+                }
+                if (_cachedBaseHighBrush == null)
+                {
+                    bool dark = Windows.UI.Xaml.Application.Current.RequestedTheme == ApplicationTheme.Dark;
+                    _cachedBaseHighBrush = new SolidColorBrush(dark ? Colors.White : Colors.Black);
+                }
+            }
+            catch (Exception ex)
+            {
+                // 兜底 — 至少不为 null
+                _cachedAccentBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0, 120, 215));
+                _cachedErrorBgBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 252, 220, 220));
+                _cachedErrorFgBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 180, 30, 30));
+                _cachedAltMediumBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 248, 248, 248));
+                _cachedBaseHighBrush = new SolidColorBrush(Colors.Black);
+                _cachedWhiteBrush = new SolidColorBrush(Colors.White);
+            }
+            _brushesCached = true;
+        }
+
         public Brush BubbleBackground
         {
             get
             {
-                if (isError)
-                {
-                    return (Brush)Application.Current.Resources["SystemControlErrorBackgroundBrush"];
-                }
-                else if (isUser)
-                {
-                    // 用户气泡用系统 accent 色
-                    return (Brush)Application.Current.Resources["SystemControlBackgroundAccentBrush"];
-                }
-                else
-                {
-                    // AI 气泡用次级背景色（深色模式自动变深，浅色模式自动变浅）
-                    return (Brush)Application.Current.Resources["SystemControlBackgroundAltMediumBrush"];
-                }
+                CacheBrushes();
+                if (isError) return _cachedErrorBgBrush;
+                if (isUser) return _cachedAccentBrush;
+                return _cachedAltMediumBrush;
             }
         }
 
@@ -467,17 +506,10 @@ namespace AIAnyWhere
         {
             get
             {
-                if (isError)
-                {
-                    return (Brush)Application.Current.Resources["SystemControlErrorTextForegroundBrush"];
-                }
-                if (isUser)
-                {
-                    // 用户气泡上是 accent 色背景，文字用白色（对比度足够）
-                    return new SolidColorBrush(Colors.White);
-                }
-                // AI 气泡用系统文字色（深色模式白，浅色模式黑）
-                return (Brush)Application.Current.Resources["SystemControlForegroundBaseHighBrush"];
+                CacheBrushes();
+                if (isError) return _cachedErrorFgBrush;
+                if (isUser) return _cachedWhiteBrush;
+                return _cachedBaseHighBrush;
             }
         }
 
