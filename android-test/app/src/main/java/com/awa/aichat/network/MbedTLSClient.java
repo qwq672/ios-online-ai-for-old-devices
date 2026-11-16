@@ -25,7 +25,8 @@ public class MbedTLSClient {
 
     private static final String TAG = "AIAnyWhere/MbedTLS";
     private long nativePtr;
-    private boolean available;
+    // v261116-8: available 必须是 static — static 块 + hasMbedTLS() 都是静态访问
+    private static boolean available;
 
     static {
         try {
@@ -41,7 +42,10 @@ public class MbedTLSClient {
     public MbedTLSClient() {
         if (available) {
             nativePtr = nativeCreate();
-            if (nativePtr == 0) available = false;
+            if (nativePtr == 0) {
+                // native 创建失败 — 不修改静态 available，只在本次实例不可用
+                nativePtr = 0;
+            }
         }
     }
 

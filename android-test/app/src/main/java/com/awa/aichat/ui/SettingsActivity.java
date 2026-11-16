@@ -123,14 +123,16 @@ public class SettingsActivity extends Activity {
         mainLayout.addView(toggleLayout, saveIdx + 1);
 
         // v261116-7: mbedTLS 切换（仅当 native 库支持时显示）
+        // v261116-8: 修复 saveIdx 计数 — 用 insertIdx 变量动态计算
+        int insertIdx = saveIdx + 2;
         if (com.awa.aichat.network.MbedTLSClient.hasMbedTLS()) {
             CheckBox mbedtlsCheckBox = new CheckBox(this);
             mbedtlsCheckBox.setText("使用 mbedTLS (Android 2.3 TLS 1.2)");
             mbedtlsCheckBox.setChecked(prefs.getBoolean("use_mbedtls", false));
-            mainLayout.addView(mbedtlsCheckBox, saveIdx + 2);
-            // 调整后续 addView 的 saveIdx
+            mainLayout.addView(mbedtlsCheckBox, insertIdx);
             _mbedtlsCheckBox = mbedtlsCheckBox;
             _useMbedTlsKey = "use_mbedtls";
+            insertIdx++;
         }
 
         // 导出/导入（水平排列）
@@ -138,7 +140,7 @@ public class SettingsActivity extends Activity {
         ioLayout.setOrientation(LinearLayout.HORIZONTAL);
         ioLayout.addView(exportButton, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         ioLayout.addView(importButton, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        mainLayout.addView(ioLayout, saveIdx + 3);
+        mainLayout.addView(ioLayout, insertIdx);
 
         // intervalSeek 回调
         intervalSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
