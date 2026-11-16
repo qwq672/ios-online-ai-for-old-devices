@@ -10,24 +10,70 @@
         <local:GridLengthStarConverter x:Key="StarConv"/>
     </Page.Resources>
 
-    <!-- v261116-10: NavigationView 汉堡菜单 — UWP 标准导航控件
-         自动适配 PC（展开侧边栏）和手机（覆盖式）
-         自带 Acrylic 背景效果（UWP 设计语言核心元素） -->
-    <NavigationView x:Name="NavView"
-                    IsBackEnabled="False"
-                    IsSettingsVisible="False"
-                    PaneDisplayMode="Auto"
-                    OpenPaneLength="280"
-                    CompactPaneLength="48"
-                    SelectionChanged="NavView_SelectionChanged"
-                    Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
-        <NavigationView.MenuItems>
-            <NavigationViewItem Tag="chat" Icon="Message" Content="聊天"/>
-            <NavigationViewItem Tag="history" Icon="Clock" Content="历史"/>
-        </NavigationView.MenuItems>
-        <NavigationView.FooterMenuItems>
-            <NavigationViewItem Tag="settings" Icon="Setting" Content="设置"/>
-        </NavigationView.FooterMenuItems>
+    <!-- v261116-10c: 用 SplitView 实现汉堡菜单（14393 兼容，NavigationView 是 1809+）
+         PC 宽屏展开侧边栏，手机窄屏覆盖式 -->
+    <SplitView x:Name="NavSplit" IsPaneOpen="True" DisplayMode="CompactOverlay"
+               OpenPaneLength="280" CompactPaneLength="48"
+               PaneBackground="{ThemeResource SystemControlBackgroundAltMediumBrush}">
+        <SplitView.Pane>
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- 顶部标题 + 汉堡按钮 -->
+                <Grid Grid.Row="0" Padding="12,12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Button Grid.Column="0" x:Name="HamburgerBtn" Click="HamburgerBtn_Click"
+                            Width="40" Height="40" Padding="0"
+                            Background="Transparent" BorderThickness="0"
+                            FontFamily="Segoe MDL2 Assets" FontSize="18" Content="&#xE700;"/>
+                    <TextBlock Grid.Column="1" Text="AIAnyWhere" FontSize="16"
+                               FontWeight="SemiBold" VerticalAlignment="Center"
+                               Margin="8,0,0,0"/>
+                </Grid>
+
+                <!-- 菜单项 -->
+                <StackPanel Grid.Row="1" Padding="0,8">
+                    <RadioButton x:Name="ChatRadio" GroupName="Nav" IsChecked="True"
+                                 Click="NavChat_Click" Tag="chat"
+                                 Padding="12,10" MinWidth="240">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8BD;" FontFamily="Segoe MDL2 Assets"
+                                       FontSize="18" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                            <TextBlock Text="聊天" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton x:Name="HistoryRadio" GroupName="Nav"
+                                 Click="NavHistory_Click" Tag="history"
+                                 Padding="12,10" MinWidth="240">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE823;" FontFamily="Segoe MDL2 Assets"
+                                       FontSize="18" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                            <TextBlock Text="历史" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </RadioButton>
+                </StackPanel>
+
+                <!-- 底部设置 -->
+                <StackPanel Grid.Row="2" Padding="0,0,0,8">
+                    <RadioButton x:Name="SettingsRadio" GroupName="Nav"
+                                 Click="NavSettings_Click" Tag="settings"
+                                 Padding="12,10" MinWidth="240">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets"
+                                       FontSize="18" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                            <TextBlock Text="设置" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </RadioButton>
+                </StackPanel>
+            </Grid>
+        </SplitView.Pane>
 
         <!-- 主内容区 -->
         <Grid>
@@ -100,7 +146,7 @@
                 </ListView.ItemTemplate>
             </ListView>
 
-            <!-- 历史视图（在 ListView 之上，按需显示） -->
+            <!-- 历史视图 -->
             <Grid x:Name="HistoryPanel" Grid.Row="0" Visibility="Collapsed" Padding="12,8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -123,7 +169,7 @@
                 </ListView>
             </Grid>
 
-            <!-- 底部输入栏 — UWP 风格用 AccentButtonStyle 发送按钮 -->
+            <!-- 底部输入栏 — UWP 风格 AccentButtonStyle -->
             <Grid Grid.Row="1" Padding="12,8" Background="{ThemeResource SystemControlBackgroundAltMediumBrush}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -138,5 +184,5 @@
                         Style="{ThemeResource AccentButtonStyle}"/>
             </Grid>
         </Grid>
-    </NavigationView>
+    </SplitView>
 </Page>

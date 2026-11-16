@@ -25,41 +25,61 @@ namespace AIAnyWhere
             MessageList.ItemsSource = messages;
             networkService = new NetworkService();
             networkService.Listener = new NetworkListener(this);
-            // 默认选中聊天项
-            foreach (var item in NavView.MenuItems)
+            // v261116-10c: 默认选中聊天
+            ChatRadio.IsChecked = true;
+            // 根据屏幕宽度调整 SplitView
+            Window.Current.SizeChanged += OnWindowSizeChanged;
+            OnWindowSizeChanged(null, null);
+        }
+
+        // v261116-10c: 窗口大小变化时调整 SplitView DisplayMode
+        // PC 宽屏 (>= 720px): Inline 模式（展开不覆盖）
+        // 手机/窄屏 (< 720px): Overlay 模式（展开覆盖）
+        private void OnWindowSizeChanged(object sender, Windows.UI.Core.WindowSizeChangedEventArgs e)
+        {
+            double width = Window.Current.Bounds.Width;
+            if (width >= 720)
             {
-                if (item is NavigationViewItem nvi && (string)nvi.Tag == "chat")
-                {
-                    NavView.SelectedItem = nvi;
-                    break;
-                }
+                NavSplit.DisplayMode = SplitViewDisplayMode.CompactInline;
+                NavSplit.IsPaneOpen = true;
+            }
+            else
+            {
+                NavSplit.DisplayMode = SplitViewDisplayMode.CompactOverlay;
+                NavSplit.IsPaneOpen = false;
             }
         }
 
-        // === NavigationView 切换 ===
-        private void NavView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+        // v261116-10c: 汉堡菜单按钮
+        private void HamburgerBtn_Click(object sender, RoutedEventArgs e)
         {
-            if (args.SelectedItem == null) return;
-            var nvi = args.SelectedItem as NavigationViewItem;
-            if (nvi == null) return;
-            string tag = nvi.Tag as string;
-            switch (tag)
-            {
-                case "chat":
-                    MessageList.Visibility = Visibility.Visible;
-                    HistoryPanel.Visibility = Visibility.Collapsed;
-                    break;
-                case "history":
-                    MessageList.Visibility = Visibility.Collapsed;
-                    HistoryPanel.Visibility = Visibility.Visible;
-                    LoadHistoryList();
-                    break;
-                case "settings":
-                    Frame.Navigate(typeof(SettingsPage));
-                    // 导航后清空选中（避免返回时仍是设置选中态）
-                    NavView.SelectedItem = null;
-                    break;
-            }
+            NavSplit.IsPaneOpen = !NavSplit.IsPaneOpen;
+        }
+
+        // v261116-10c: 侧边栏菜单切换
+        private void NavChat_Click(object sender, RoutedEventArgs e)
+        {
+            MessageList.Visibility = Visibility.Visible;
+            HistoryPanel.Visibility = Visibility.Collapsed;
+            // 窄屏点击后关闭侧边栏
+            if (Window.Current.Bounds.Width < 720) NavSplit.IsPaneOpen = false;
+        }
+
+        private void NavHistory_Click(object sender, RoutedEventArgs e)
+        {
+            MessageList.Visibility = Visibility.Collapsed;
+            HistoryPanel.Visibility = Visibility.Visible;
+            LoadHistoryList();
+            if (Window.Current.Bounds.Width < 720) NavSplit.IsPaneOpen = false;
+        }
+
+        private void NavSettings_Click(object sender, RoutedEventArgs e)
+        {
+            Frame.Navigate(typeof(SettingsPage));
+            // 返回后默认选中聊天
+            SettingsRadio.IsChecked = false;
+            ChatRadio.IsChecked = true;
+            if (Window.Current.Bounds.Width < 720) NavSplit.IsPaneOpen = false;
         }
 
         // === 历史对话列表 ===
@@ -91,14 +111,9 @@ namespace AIAnyWhere
             if (string.IsNullOrEmpty(id)) return;
             await LoadConversationAsync(id);
             // 切换回聊天视图
-            foreach (var nvi in NavView.MenuItems)
-            {
-                if (nvi is NavigationViewItem navItem && (string)navItem.Tag == "chat")
-                {
-                    NavView.SelectedItem = navItem;
-                    break;
-                }
-            }
+            ChatRadio.IsChecked = true;
+            MessageList.Visibility = Visibility.Visible;
+            HistoryPanel.Visibility = Visibility.Collapsed;
         }
 
         private void SendBtn_Click(object sender, RoutedEventArgs e) { DoSend(); }
