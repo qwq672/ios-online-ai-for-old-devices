@@ -25,52 +25,55 @@ namespace AIAnyWhere
             MessageList.ItemsSource = messages;
             networkService = new NetworkService();
             networkService.Listener = new NetworkListener(this);
-            // v261116-12: 默认选中聊天项（NavigationView）
-            // 在 Loaded 事件后选中，避免初始化期触发 SelectionChanged
-            Loaded += (s, e) =>
-            {
-                if (NavView.SelectedItem == null)
-                {
-                    foreach (var item in NavView.MenuItems)
-                    {
-                        if (item is Microsoft.UI.Xaml.Controls.NavigationViewItem nvi && (string)nvi.Tag == "chat")
-                        {
-                            NavView.SelectedItem = nvi;
-                            break;
-                        }
-                    }
-                }
-            };
+            // v261116-13d: 默认选中聊天
+            ChatRadio.IsChecked = true;
+            Window.Current.SizeChanged += OnWindowSizeChanged;
+            OnWindowSizeChanged(null, null);
         }
 
-        // v261116-12: NavigationView SelectionChanged
-        private void NavView_SelectionChanged(Microsoft.UI.Xaml.Controls.NavigationView sender,
-                                              Microsoft.UI.Xaml.Controls.NavigationViewSelectionChangedEventArgs args)
+        private void OnWindowSizeChanged(object sender, Windows.UI.Core.WindowSizeChangedEventArgs e)
         {
-            if (args.SelectedItem == null) return;
-            var nvi = args.SelectedItem as Microsoft.UI.Xaml.Controls.NavigationViewItem;
-            if (nvi == null) return;
-            string tag = nvi.Tag as string;
-            switch (tag)
+            double width = Window.Current.Bounds.Width;
+            if (width >= 720)
             {
-                case "chat":
-                    MessageList.Visibility = Visibility.Visible;
-                    HistoryPanel.Visibility = Visibility.Collapsed;
-                    break;
-                case "history":
-                    MessageList.Visibility = Visibility.Collapsed;
-                    HistoryPanel.Visibility = Visibility.Visible;
-                    LoadHistoryList();
-                    break;
+                NavSplit.DisplayMode = SplitViewDisplayMode.CompactInline;
+                NavSplit.IsPaneOpen = true;
+            }
+            else
+            {
+                NavSplit.DisplayMode = SplitViewDisplayMode.CompactOverlay;
+                NavSplit.IsPaneOpen = false;
             }
         }
 
-        // v261116-13: 设置项点击（修复设置点不了）
-        // NavigationView 自带 SettingsItem（齿轮图标）触发 SettingsItemInvoked
-        private void NavView_SettingsItemInvoked(Microsoft.UI.Xaml.Controls.NavigationView sender,
-                                                  Microsoft.UI.Xaml.Controls.NavigationViewItemInvokedEventArgs args)
+        private void HamburgerBtn_Click(object sender, RoutedEventArgs e)
+        {
+            NavSplit.IsPaneOpen = !NavSplit.IsPaneOpen;
+        }
+
+        private void NavChat_Click(object sender, RoutedEventArgs e)
+        {
+            MessageList.Visibility = Visibility.Visible;
+            HistoryPanel.Visibility = Visibility.Collapsed;
+            if (Window.Current.Bounds.Width < 720) NavSplit.IsPaneOpen = false;
+        }
+
+        private void NavHistory_Click(object sender, RoutedEventArgs e)
+        {
+            MessageList.Visibility = Visibility.Collapsed;
+            HistoryPanel.Visibility = Visibility.Visible;
+            LoadHistoryList();
+            if (Window.Current.Bounds.Width < 720) NavSplit.IsPaneOpen = false;
+        }
+
+        // v261116-13: 设置点击修复 — 手动 RadioButton 触发导航
+        private void NavSettings_Click(object sender, RoutedEventArgs e)
         {
             Frame.Navigate(typeof(SettingsPage));
+            // 返回后默认选中聊天
+            SettingsRadio.IsChecked = false;
+            ChatRadio.IsChecked = true;
+            if (Window.Current.Bounds.Width < 720) NavSplit.IsPaneOpen = false;
         }
 
         // v261116-13: ContainerContentChanging — 在 ListView item 容器化时渲染 Markdown
@@ -183,14 +186,9 @@ namespace AIAnyWhere
             if (string.IsNullOrEmpty(id)) return;
             await LoadConversationAsync(id);
             // 切换回聊天视图
-            foreach (var nvi in NavView.MenuItems)
-            {
-                if (nvi is Microsoft.UI.Xaml.Controls.NavigationViewItem navItem && (string)navItem.Tag == "chat")
-                {
-                    NavView.SelectedItem = navItem;
-                    break;
-                }
-            }
+            ChatRadio.IsChecked = true;
+            MessageList.Visibility = Visibility.Visible;
+            HistoryPanel.Visibility = Visibility.Collapsed;
         }
 
         private void SendBtn_Click(object sender, RoutedEventArgs e) { DoSend(); }

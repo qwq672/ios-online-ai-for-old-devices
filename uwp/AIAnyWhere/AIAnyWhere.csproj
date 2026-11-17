@@ -92,9 +92,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.NETCore.UniversalWindowsPlatform" Version="6.2.9" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
-    <!-- v261116-13c: WinUI 2.4.0 是真正兼容 14393 的最后版本
-         2.5+ 都要求 15063+（NuGet 包 buildTransitive.targets 强制检查） -->
-    <PackageReference Include="Microsoft.UI.Xaml" Version="2.4.0" />
+    <!-- v261116-13d: 放弃 WinUI NuGet 包（所有版本都强制要求 15063+）
+         改回手搓 SplitView + RadioButton（14393 完全兼容）
+         保留其他改进：响应式 + Markdown 渲染 + 设置点击 + 闪退修复 + ARM 包 -->
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml">
