@@ -21,16 +21,33 @@ namespace AIAnyWhere
 
         public MainPage()
         {
-            InitializeComponent();
-            MessageList.ItemsSource = messages;
-            networkService = new NetworkService();
-            networkService.Listener = new NetworkListener(this);
-            // v261116-15: 用 ListView 填充侧边栏菜单（左侧蓝色竖条选中样式）
-            PopulateNavMenus();
-            Window.Current.SizeChanged += OnWindowSizeChanged;
-            OnWindowSizeChanged(null, null);
-            // 默认选中聊天
-            NavMenuList.SelectedIndex = 0;
+            try
+            {
+                InitializeComponent();
+                MessageList.ItemsSource = messages;
+                networkService = new NetworkService();
+                networkService.Listener = new NetworkListener(this);
+                // v261116-15: 用 ListView 填充侧边栏菜单（左侧蓝色竖条选中样式）
+                PopulateNavMenus();
+                Window.Current.SizeChanged += OnWindowSizeChanged;
+                OnWindowSizeChanged(null, null);
+                // 默认选中聊天
+                NavMenuList.SelectedIndex = 0;
+            }
+            catch (Exception ex)
+            {
+                // 启动崩溃 — 写日志
+                try
+                {
+                    var folder = Windows.Storage.ApplicationData.Current.LocalFolder;
+                    var file = folder.CreateFileAsync("mainpage_init.log",
+                        Windows.Storage.CreationCollisionOption.ReplaceExisting).AsTask().Result;
+                    Windows.Storage.FileIO.WriteTextAsync(file,
+                        $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] MainPage init: {ex}").AsTask().Wait();
+                }
+                catch { }
+                throw;
+            }
         }
 
         // v261116-15: 填充侧边栏菜单数据
@@ -52,10 +69,52 @@ namespace AIAnyWhere
             public string Title { get; set; }
         }
 
-        // v261116-15: ListView item 容器化时清除选中（避免复用残留）
-        private void NavMenuList_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
+        // v261116-16: 选中状态变化时，显示/隐藏左侧蓝色竖条
+        // 通过 ContainerContentChanging 找到 SelectionBar 并改 Visibility
+        private void NavMenuList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            // 不需要做额外处理 — ItemContainerStyle 的 Selected 状态自动处理
+            UpdateSelectionBars(NavMenuList);
+            // 主菜单选中时清空 footer 选中
+            if (NavMenuList.SelectedIndex >= 0) NavFooterList.SelectedIndex = -1;
+        }
+
+        private void NavFooterList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            UpdateSelectionBars(NavFooterList);
+            // footer 选中时清空主菜单选中
+            if (NavFooterList.SelectedIndex >= 0) NavMenuList.SelectedIndex = -1;
+        }
+
+        // 遍历 ListView 的 containers，更新 SelectionBar 可见性
+        private void UpdateSelectionBars(ListView list)
+        {
+            try
+            {
+                for (int i = 0; i < list.Items.Count; i++)
+                {
+                    var container = list.ContainerFromIndex(i) as ListViewItem;
+                    if (container == null) continue;
+                    var bar = FindChildByName<Windows.UI.Xaml.Shapes.Rectangle>(container, "SelectionBar");
+                    if (bar != null)
+                    {
+                        bar.Visibility = (i == list.SelectedIndex) ? Visibility.Visible : Visibility.Collapsed;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private static T FindChildByName<T>(DependencyObject parent, string name) where T : DependencyObject
+        {
+            int count = VisualTreeHelper.GetChildrenCount(parent);
+            for (int i = 0; i < count; i++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, i);
+                if (child is FrameworkElement fe && fe.Name == name && fe is T t) return t;
+                var found = FindChildByName<T>(child, name);
+                if (found != null) return found;
+            }
+            return null;
         }
 
         // v261116-15: 菜单项点击
@@ -63,6 +122,15 @@ namespace AIAnyWhere
         {
             var item = e.ClickedItem as NavItem;
             if (item == null) return;
+            // 设置 SelectedIndex 会触发 SelectionChanged → 自动更新竖条
+            for (int i = 0; i < NavMenuList.Items.Count; i++)
+            {
+                if ((NavMenuList.Items[i] as NavItem)?.Tag == item.Tag)
+                {
+                    NavMenuList.SelectedIndex = i;
+                    break;
+                }
+            }
             switch (item.Tag)
             {
                 case "chat":
@@ -75,13 +143,6 @@ namespace AIAnyWhere
                     LoadHistoryList();
                     break;
             }
-            // 同步选中状态
-            for (int i = 0; i < NavMenuList.Items.Count; i++)
-            {
-                NavMenuList.SelectedIndex = i;
-                if ((NavMenuList.Items[i] as NavItem)?.Tag == item.Tag) break;
-            }
-            NavFooterList.SelectedIndex = -1;
             if (Window.Current.Bounds.Width < 720) NavSplit.IsPaneOpen = false;
         }
 
@@ -90,6 +151,7 @@ namespace AIAnyWhere
         {
             var item = e.ClickedItem as NavItem;
             if (item == null) return;
+            NavFooterList.SelectedIndex = 0;  // 触发 SelectionChanged
             if (item.Tag == "settings")
             {
                 Frame.Navigate(typeof(SettingsPage));

@@ -8,72 +8,10 @@
     <Page.Resources>
         <local:BoolToVisibilityConverter x:Key="VisConv"/>
         <local:GridLengthStarConverter x:Key="StarConv"/>
-        <!-- v261116-15: UWP 标准侧边栏菜单项样式 — 左侧蓝色竖条 + 半透明背景（不用 RadioButton 圆点） -->
-        <Style x:Key="NavListItemStyle" TargetType="ListViewItem">
-            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-            <Setter Property="Padding" Value="0"/>
-            <Setter Property="MinHeight" Value="40"/>
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="{ThemeResource SystemControlForegroundBaseHighBrush}"/>
-            <Setter Property="UseSystemFocusVisuals" Value="True"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ListViewItem">
-                        <Grid x:Name="Root" Background="{TemplateBinding Background}">
-                            <!-- 左侧蓝色竖条（选中时显示，4px 宽，accent 色） -->
-                            <Rectangle x:Name="SelectionBar" Width="4" Height="24"
-                                       HorizontalAlignment="Left" VerticalAlignment="Center"
-                                       Fill="{ThemeResource SystemControlBackgroundAccentBrush}"
-                                       Visibility="Collapsed"/>
-                            <ContentPresenter Content="{TemplateBinding Content}"
-                                              HorizontalAlignment="Stretch"
-                                              VerticalAlignment="Center"
-                                              Margin="16,0,0,0"/>
-                            <VisualStateManager.VisualStateGroups>
-                                <VisualStateGroup x:Name="CommonStates">
-                                    <VisualState x:Name="Normal"/>
-                                    <VisualState x:Name="Pressed">
-                                        <Storyboard>
-                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Root"
-                                                                            Storyboard.TargetProperty="Background">
-                                                <DiscreteObjectKeyFrame KeyTime="0"
-                                                    Value="{ThemeResource SystemControlHighlightListLowBrush}"/>
-                                            </ObjectAnimationUsingKeyFrames>
-                                        </Storyboard>
-                                    </VisualState>
-                                    <VisualState x:Name="Selected">
-                                        <Storyboard>
-                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectionBar"
-                                                                            Storyboard.TargetProperty="Visibility">
-                                                <DiscreteObjectKeyFrame KeyTime="0" Value="Visible"/>
-                                            </ObjectAnimationUsingKeyFrames>
-                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Root"
-                                                                            Storyboard.TargetProperty="Background">
-                                                <DiscreteObjectKeyFrame KeyTime="0"
-                                                    Value="{ThemeResource SystemControlHighlightAccentLowBrush}"/>
-                                            </ObjectAnimationUsingKeyFrames>
-                                        </Storyboard>
-                                    </VisualState>
-                                    <VisualState x:Name="PointerOver">
-                                        <Storyboard>
-                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Root"
-                                                                            Storyboard.TargetProperty="Background">
-                                                <DiscreteObjectKeyFrame KeyTime="0"
-                                                    Value="{ThemeResource SystemControlHighlightListLowBrush}"/>
-                                            </ObjectAnimationUsingKeyFrames>
-                                        </Storyboard>
-                                    </VisualState>
-                                </VisualStateGroup>
-                            </VisualStateManager.VisualStateGroups>
-                        </Grid>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
     </Page.Resources>
 
-    <!-- v261116-15: SplitView 汉堡菜单（14393 兼容）
-         侧边栏用 ListView 实现左侧蓝色竖条选中样式（UWP 标准，参考 Groove/天气/邮件） -->
+    <!-- v261116-16: 简化 SplitView（避免 ControlTemplate 引起启动闪退）
+         侧边栏用普通 ListView，选中样式通过 SelectionChanged 在代码里改背景 -->
     <SplitView x:Name="NavSplit" IsPaneOpen="True" DisplayMode="CompactOverlay"
                OpenPaneLength="280" CompactPaneLength="48"
                PaneBackground="{ThemeResource SystemControlBackgroundAltMediumBrush}">
@@ -100,23 +38,30 @@
                                Margin="4,0,0,0"/>
                 </Grid>
 
-                <!-- 主菜单 ListView — 左侧蓝色竖条选中样式 -->
+                <!-- 主菜单 ListView — 选中样式通过代码控制 -->
                 <ListView x:Name="NavMenuList" Grid.Row="1"
                           SelectionMode="Single"
                           IsItemClickEnabled="True"
                           ItemClick="NavMenuList_ItemClick"
-                          ContainerContentChanging="NavMenuList_ContainerContentChanging"
-                          ItemContainerStyle="{StaticResource NavListItemStyle}">
+                          SelectionChanged="NavMenuList_SelectionChanged">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="MinHeight" Value="40"/>
+                        </Style>
+                    </ListView.ItemContainerStyle>
                     <ListView.ItemTemplate>
                         <DataTemplate>
                             <Grid Height="40">
+                                <!-- 左侧蓝色竖条（默认隐藏，选中时通过代码显示） -->
+                                <Rectangle x:Name="SelectionBar" Width="4" Height="24"
+                                           HorizontalAlignment="Left" VerticalAlignment="Center"
+                                           Fill="#FF0078D7" Visibility="Collapsed"/>
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding Icon}" FontFamily="Segoe MDL2 Assets"
-                                               FontSize="16" VerticalAlignment="Center" Margin="20,0,16,0"
-                                               Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"/>
-                                    <TextBlock Text="{Binding Title}" VerticalAlignment="Center"
-                                               FontSize="14"
-                                               Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"/>
+                                               FontSize="16" VerticalAlignment="Center" Margin="20,0,16,0"/>
+                                    <TextBlock Text="{Binding Title}" VerticalAlignment="Center" FontSize="14"/>
                                 </StackPanel>
                             </Grid>
                         </DataTemplate>
@@ -125,27 +70,32 @@
 
                 <!-- 分隔线 -->
                 <Border Grid.Row="1" VerticalAlignment="Bottom"
-                        Height="1" Background="{ThemeResource SystemControlForegroundBaseLowBrush}"
-                        Opacity="0.3"/>
+                        Height="1" Background="#33000000"/>
 
-                <!-- 底部设置项 ListView -->
+                <!-- 底部设置项 -->
                 <ListView x:Name="NavFooterList" Grid.Row="2"
                           SelectionMode="Single"
                           IsItemClickEnabled="True"
                           ItemClick="NavFooterList_ItemClick"
-                          ContainerContentChanging="NavMenuList_ContainerContentChanging"
-                          ItemContainerStyle="{StaticResource NavListItemStyle}"
+                          SelectionChanged="NavFooterList_SelectionChanged"
                           Margin="0,8,0,8">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="MinHeight" Value="40"/>
+                        </Style>
+                    </ListView.ItemContainerStyle>
                     <ListView.ItemTemplate>
                         <DataTemplate>
                             <Grid Height="40">
+                                <Rectangle x:Name="SelectionBar" Width="4" Height="24"
+                                           HorizontalAlignment="Left" VerticalAlignment="Center"
+                                           Fill="#FF0078D7" Visibility="Collapsed"/>
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding Icon}" FontFamily="Segoe MDL2 Assets"
-                                               FontSize="16" VerticalAlignment="Center" Margin="20,0,16,0"
-                                               Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"/>
-                                    <TextBlock Text="{Binding Title}" VerticalAlignment="Center"
-                                               FontSize="14"
-                                               Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"/>
+                                               FontSize="16" VerticalAlignment="Center" Margin="20,0,16,0"/>
+                                    <TextBlock Text="{Binding Title}" VerticalAlignment="Center" FontSize="14"/>
                                 </StackPanel>
                             </Grid>
                         </DataTemplate>
