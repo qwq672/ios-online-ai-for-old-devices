@@ -25,10 +25,79 @@ namespace AIAnyWhere
             MessageList.ItemsSource = messages;
             networkService = new NetworkService();
             networkService.Listener = new NetworkListener(this);
-            // v261116-13d: 默认选中聊天
-            ChatRadio.IsChecked = true;
+            // v261116-15: 用 ListView 填充侧边栏菜单（左侧蓝色竖条选中样式）
+            PopulateNavMenus();
             Window.Current.SizeChanged += OnWindowSizeChanged;
             OnWindowSizeChanged(null, null);
+            // 默认选中聊天
+            NavMenuList.SelectedIndex = 0;
+        }
+
+        // v261116-15: 填充侧边栏菜单数据
+        private void PopulateNavMenus()
+        {
+            NavMenuList.Items.Clear();
+            NavMenuList.Items.Add(new NavItem { Tag = "chat", Icon = "\uE8BD", Title = "聊天" });
+            NavMenuList.Items.Add(new NavItem { Tag = "history", Icon = "\uE823", Title = "历史" });
+
+            NavFooterList.Items.Clear();
+            NavFooterList.Items.Add(new NavItem { Tag = "settings", Icon = "\uE713", Title = "设置" });
+        }
+
+        // v261116-15: 菜单项数据类
+        public class NavItem
+        {
+            public string Tag { get; set; }
+            public string Icon { get; set; }
+            public string Title { get; set; }
+        }
+
+        // v261116-15: ListView item 容器化时清除选中（避免复用残留）
+        private void NavMenuList_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
+        {
+            // 不需要做额外处理 — ItemContainerStyle 的 Selected 状态自动处理
+        }
+
+        // v261116-15: 菜单项点击
+        private void NavMenuList_ItemClick(object sender, ItemClickEventArgs e)
+        {
+            var item = e.ClickedItem as NavItem;
+            if (item == null) return;
+            switch (item.Tag)
+            {
+                case "chat":
+                    MessageList.Visibility = Visibility.Visible;
+                    HistoryPanel.Visibility = Visibility.Collapsed;
+                    break;
+                case "history":
+                    MessageList.Visibility = Visibility.Collapsed;
+                    HistoryPanel.Visibility = Visibility.Visible;
+                    LoadHistoryList();
+                    break;
+            }
+            // 同步选中状态
+            for (int i = 0; i < NavMenuList.Items.Count; i++)
+            {
+                NavMenuList.SelectedIndex = i;
+                if ((NavMenuList.Items[i] as NavItem)?.Tag == item.Tag) break;
+            }
+            NavFooterList.SelectedIndex = -1;
+            if (Window.Current.Bounds.Width < 720) NavSplit.IsPaneOpen = false;
+        }
+
+        // v261116-15: 底部菜单（设置）点击
+        private void NavFooterList_ItemClick(object sender, ItemClickEventArgs e)
+        {
+            var item = e.ClickedItem as NavItem;
+            if (item == null) return;
+            if (item.Tag == "settings")
+            {
+                Frame.Navigate(typeof(SettingsPage));
+                // 返回后默认选中聊天
+                NavFooterList.SelectedIndex = -1;
+                NavMenuList.SelectedIndex = 0;
+            }
+            if (Window.Current.Bounds.Width < 720) NavSplit.IsPaneOpen = false;
         }
 
         private void OnWindowSizeChanged(object sender, Windows.UI.Core.WindowSizeChangedEventArgs e)
@@ -49,31 +118,6 @@ namespace AIAnyWhere
         private void HamburgerBtn_Click(object sender, RoutedEventArgs e)
         {
             NavSplit.IsPaneOpen = !NavSplit.IsPaneOpen;
-        }
-
-        private void NavChat_Click(object sender, RoutedEventArgs e)
-        {
-            MessageList.Visibility = Visibility.Visible;
-            HistoryPanel.Visibility = Visibility.Collapsed;
-            if (Window.Current.Bounds.Width < 720) NavSplit.IsPaneOpen = false;
-        }
-
-        private void NavHistory_Click(object sender, RoutedEventArgs e)
-        {
-            MessageList.Visibility = Visibility.Collapsed;
-            HistoryPanel.Visibility = Visibility.Visible;
-            LoadHistoryList();
-            if (Window.Current.Bounds.Width < 720) NavSplit.IsPaneOpen = false;
-        }
-
-        // v261116-13: 设置点击修复 — 手动 RadioButton 触发导航
-        private void NavSettings_Click(object sender, RoutedEventArgs e)
-        {
-            Frame.Navigate(typeof(SettingsPage));
-            // 返回后默认选中聊天
-            SettingsRadio.IsChecked = false;
-            ChatRadio.IsChecked = true;
-            if (Window.Current.Bounds.Width < 720) NavSplit.IsPaneOpen = false;
         }
 
         // v261116-13: ContainerContentChanging — 在 ListView item 容器化时渲染 Markdown
