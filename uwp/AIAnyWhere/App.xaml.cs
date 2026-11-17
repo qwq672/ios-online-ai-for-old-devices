@@ -13,8 +13,8 @@ namespace AIAnyWhere
         {
             InitializeComponent();
             // v261116-16: 全局未处理异常捕获 — 写入日志文件便于调试启动闪退
+            // 注意: UWP 不支持 AppDomain.CurrentDomain.UnhandledException（桌面 .NET 才有）
             UnhandledException += App_UnhandledException;
-            AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
             TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
         }
 
@@ -26,18 +26,6 @@ namespace AIAnyWhere
                 var folder = ApplicationData.Current.LocalFolder;
                 var file = await folder.CreateFileAsync("crash.log", CreationCollisionOption.OpenIfExists);
                 await FileIO.AppendTextAsync(file, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] UNHANDLED: {e.Exception}\n\n");
-            }
-            catch { }
-        }
-
-        private async void CurrentDomain_UnhandledException(object sender, System.UnhandledExceptionEventArgs e)
-        {
-            try
-            {
-                var ex = e.ExceptionObject as Exception;
-                var folder = ApplicationData.Current.LocalFolder;
-                var file = await folder.CreateFileAsync("crash.log", CreationCollisionOption.OpenIfExists);
-                await FileIO.AppendTextAsync(file, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] APPDOMAIN: {ex}\n\n");
             }
             catch { }
         }
