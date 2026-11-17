@@ -36,12 +36,13 @@ jobs:
           # Print thumbprint for MSBuild
           Write-Output "AIANYWHERE_CERT_THUMB=$($cert.Thumbprint)" >> $env:GITHUB_ENV
 
-      - name: Build UWP (.appxbundle with signing, x86 + ARM + ARM64)
+      - name: Build UWP (.appxbundle with signing, x86 + ARM)
         # v261116-9: PFX 用绝对路径（$env:GITHUB_WORKSPACE），否则 msbuild 在 uwp/ 子目录
         # 运行时找不到相对路径 AIAnyWhereDev.pfx，签名步骤跳过 → 只生成 Dependencies 不生成主 .appx
-        # v261116-13: AppxBundlePlatforms 加 ARM + ARM64（不只 x86，支持 ARM 设备如 Surface Pro X）
+        # v261116-13: AppxBundlePlatforms 加 ARM（不只 x86，支持 ARM 设备）
+        # v261116-13d: 去掉 ARM64（solution 缺 ARM64 配置，需手动加，留待后续）
         run: |
-          msbuild uwp/AIAnyWhere.sln /p:Configuration=Release /p:Platform=x86 /p:AppxBundle=Always /p:AppxBundlePlatforms="x86|ARM|ARM64" /p:AppxPackageDir="AppPackages" /p:AppxPackageSigningEnabled=true /p:PackageCertificateThumbprint="$env:AIANYWHERE_CERT_THUMB" /p:PackageCertificateKeyFile="$env:GITHUB_WORKSPACE\AIAnyWhereDev.pfx" /p:PackageCertificatePassword="AIAnyWhere2026"
+          msbuild uwp/AIAnyWhere.sln /p:Configuration=Release /p:Platform=x86 /p:AppxBundle=Always /p:AppxBundlePlatforms="x86|ARM" /p:AppxPackageDir="AppPackages" /p:AppxPackageSigningEnabled=true /p:PackageCertificateThumbprint="$env:AIANYWHERE_CERT_THUMB" /p:PackageCertificateKeyFile="$env:GITHUB_WORKSPACE\AIAnyWhereDev.pfx" /p:PackageCertificatePassword="AIAnyWhere2026"
 
       - name: List built appx (debug)
         shell: pwsh
