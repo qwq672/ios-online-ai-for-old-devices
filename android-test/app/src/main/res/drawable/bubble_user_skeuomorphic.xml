@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v261116-14: 拟物化用户气泡背景（绿色，iOS 6 iMessage 风格） -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 主气泡：圆角矩形 + 渐变 -->
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="14dp" />
+            <gradient
+                android:angle="270"
+                android:startColor="#DCF8C6"
+                android:endColor="#B8E89C"
+                android:type="linear" />
+            <stroke android:width="1dp" android:color="#A8D088" />
+            <padding android:left="10dp" android:right="10dp" android:top="8dp" android:bottom="8dp" />
+        </shape>
+    </item>
+    <!-- 顶部高光（白色半透明，模拟玻璃反光） -->
+    <item android:top="1dp" android:left="3dp" android:right="3dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="14dp" />
+            <gradient
+                android:angle="270"
+                android:startColor="#40FFFFFF"
+                android:endColor="#00FFFFFF"
+                android:type="linear" />
+            <padding android:top="2dp" android:bottom="18dp" />
+        </shape>
+    </item>
+</layer-list>

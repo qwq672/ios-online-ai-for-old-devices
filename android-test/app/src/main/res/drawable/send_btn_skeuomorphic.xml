@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v261116-14: 拟物化发送按钮 — 胶囊形 + 渐变 + 高光 + 边框 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <layer-list>
+            <item>
+                <shape android:shape="rectangle">
+                    <corners android:radius="22dp" />
+                    <gradient
+                        android:angle="270"
+                        android:startColor="#3A7AC8"
+                        android:endColor="#2A6AB8"
+                        android:type="linear" />
+                    <stroke android:width="1dp" android:color="#1A5AA8" />
+                    <padding android:left="16dp" android:right="16dp" android:top="6dp" android:bottom="6dp" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+    <item>
+        <layer-list>
+            <!-- 主背景渐变（蓝色按钮：从亮蓝到深蓝，模拟玻璃质感） -->
+            <item>
+                <shape android:shape="rectangle">
+                    <corners android:radius="22dp" />
+                    <gradient
+                        android:angle="270"
+                        android:startColor="#5B9BFF"
+                        android:endColor="#3B82F6"
+                        android:type="linear" />
+                    <stroke android:width="1dp" android:color="#2A6AB8" />
+                    <padding android:left="16dp" android:right="16dp" android:top="6dp" android:bottom="6dp" />
+                </shape>
+            </item>
+            <!-- 顶部高光（白色半透明渐变，模拟玻璃顶部反光） -->
+            <item android:top="1dp" android:left="2dp" android:right="2dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="22dp" />
+                    <gradient
+                        android:angle="270"
+                        android:startColor="#80FFFFFF"
+                        android:endColor="#00FFFFFF"
+                        android:type="linear" />
+                    <padding android:top="2dp" android:bottom="14dp" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+</selector>

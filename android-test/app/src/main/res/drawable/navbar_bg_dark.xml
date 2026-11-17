@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v261116-14: 拟物化顶部栏背景（深色模式） -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:startColor="#2C2C2E"
+                android:endColor="#1A1A1C"
+                android:type="linear" />
+        </shape>
+    </item>
+    <item android:bottom="-1dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#000000" />
+            <padding android:bottom="1dp" />
+        </shape>
+    </item>
+</layer-list>

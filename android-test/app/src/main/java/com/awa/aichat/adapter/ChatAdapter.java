@@ -49,7 +49,7 @@ public class ChatAdapter extends BaseAdapter {
         float density = ctx.getResources().getDisplayMetrics().density;
         this.padH = (int) (24 * density + 0.5f);
         this.padV = (int) (14 * density + 0.5f);
-        this.cornerRadius = (int) (8 * density + 0.5f);
+        this.cornerRadius = (int) (14 * density + 0.5f);  // v261116-14: 14dp 配合拟物化气泡
         // v0.6.5: 注入 accent 颜色到 MarkdownParser
         int idx = ThemeManager.getAccentColorIndex(ctx);
         MarkdownParser.setAccentColors(ThemeManager.getAccentLight(idx), ThemeManager.getAccentDark(idx));
@@ -208,11 +208,24 @@ public class ChatAdapter extends BaseAdapter {
         int fgColor = context.getResources().getColor(fgColorRes);
         int thinkColor = context.getResources().getColor(thinkColorRes);
 
-        // Rounded bubble background.
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(bgColor);
-        bg.setCornerRadius(cornerRadius);
-        h.bubble.setBackgroundDrawable(bg);
+        // v261116-14: 拟物化气泡背景 — 用 drawable 资源（iOS 6 风格渐变 + 高光 + 边框）
+        // 按消息类型 + 主题选择对应 drawable
+        if (msg.error) {
+            // 错误：纯色（红色淡背景）
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(bgColor);
+            bg.setCornerRadius(cornerRadius);
+            bg.setStroke(1, dark ? 0xFF3A1515 : 0xFFE8C0C0);
+            h.bubble.setBackgroundDrawable(bg);
+        } else if (msg.isUser()) {
+            // 用户气泡：绿色拟物化
+            int resId = dark ? R.drawable.bubble_user_skeuomorphic_dark : R.drawable.bubble_user_skeuomorphic;
+            h.bubble.setBackgroundDrawable(context.getResources().getDrawable(resId));
+        } else {
+            // AI 气泡：白色拟物化
+            int resId = dark ? R.drawable.bubble_ai_skeuomorphic_dark : R.drawable.bubble_ai_skeuomorphic;
+            h.bubble.setBackgroundDrawable(context.getResources().getDrawable(resId));
+        }
         h.content.setTextColor(fgColor);
         h.thinking.setTextColor(thinkColor);
 
