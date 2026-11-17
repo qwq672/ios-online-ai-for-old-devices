@@ -92,9 +92,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.NETCore.UniversalWindowsPlatform" Version="6.2.9" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
-    <!-- v261116-13b: WinUI 2.5.x 是支持 14393 的最后版本
-         2.6+ 都要求 15063+ -->
-    <PackageReference Include="Microsoft.UI.Xaml" Version="2.5.0" />
+    <!-- v261116-13c: WinUI 2.4.0 是真正兼容 14393 的最后版本
+         2.5+ 都要求 15063+（NuGet 包 buildTransitive.targets 强制检查） -->
+    <PackageReference Include="Microsoft.UI.Xaml" Version="2.4.0" />
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml">
