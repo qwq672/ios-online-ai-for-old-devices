@@ -52,5 +52,21 @@ namespace AIAnyWhere
                 root.RequestedTheme = theme;
             }
         }
+
+        // v261116-13: 获取当前是否深色模式（用于 MarkdownRenderer 选色）
+        // 如果用户选跟随系统，按 Application.Current.RequestedTheme 判断
+        // 如果用户强制浅色/深色，按 ElementTheme 判断
+        public static bool IsDarkMode()
+        {
+            int mode = SettingsStore.ThemeMode;
+            if (mode == 1) return false;  // 强制浅色
+            if (mode == 2) return true;   // 强制深色
+            // 跟随系统：判断 root 的 ActualTheme
+            if (Window.Current.Content is FrameworkElement root)
+            {
+                return root.ActualTheme == ElementTheme.Dark;
+            }
+            return Windows.UI.Xaml.Application.Current.RequestedTheme == ApplicationTheme.Dark;
+        }
     }
 }

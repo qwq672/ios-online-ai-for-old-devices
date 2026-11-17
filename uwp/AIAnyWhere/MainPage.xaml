@@ -11,10 +11,9 @@
         <local:GridLengthStarConverter x:Key="StarConv"/>
     </Page.Resources>
 
-    <!-- v261116-12: 真正的 NavigationView（WinUI 标准控件，不是手搓）
-         自带 Acrylic 背景 + 系统汉堡按钮 + 响应式适配
-         PaneDisplayMode=Auto: PC 展开侧边栏，平板 CompactOverlay，手机 Minimal
-         MinWindowWidth 决定每个模式的触发宽度 -->
+    <!-- v261116-13: WinUI NavigationView 2.6.3（14393 兼容）
+         自带 Acrylic + 系统汉堡按钮 + 响应式
+         SettingsItemInvoked 处理设置导航（修复设置点不了） -->
     <muxc:NavigationView x:Name="NavView"
                          IsBackEnabled="False"
                          IsSettingsVisible="True"
@@ -23,26 +22,29 @@
                          CompactModeThresholdWidth="640"
                          ExpandedModeThresholdWidth="1024"
                          SelectionChanged="NavView_SelectionChanged"
+                         SettingsItemInvoked="NavView_SettingsItemInvoked"
                          Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <muxc:NavigationView.MenuItems>
             <muxc:NavigationViewItem Tag="chat" Icon="Message" Content="聊天"/>
             <muxc:NavigationViewItem Tag="history" Icon="Clock" Content="历史"/>
         </muxc:NavigationView.MenuItems>
 
-        <!-- 主内容区 — 居中容器适配宽屏（避免硬拉长） -->
-        <Grid MaxWidth="1200" HorizontalAlignment="Stretch">
+        <!-- 主内容区 — VisualStateManager 响应式适配
+             宽屏 (>= 720): MaxWidth=900 居中显示（电脑端不硬拉长）
+             窄屏 (< 720): 占满宽度（手机端可拉长） -->
+        <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <!-- 聊天视图 -->
+            <!-- 聊天视图 — ContainerContentChanging 渲染 Markdown -->
             <ListView x:Name="MessageList" Grid.Row="0" Padding="12,8"
                       SelectionMode="None"
                       IsItemClickEnabled="False"
-                      HorizontalAlignment="Center"
+                      HorizontalAlignment="Stretch"
                       HorizontalContentAlignment="Stretch"
-                      MaxWidth="900">
+                      ContainerContentChanging="MessageList_ContainerContentChanging">
                 <ListView.ItemContainerStyle>
                     <Style TargetType="ListViewItem">
                         <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -85,9 +87,9 @@
                                                        Margin="4,4,0,0"/>
                                         </StackPanel>
                                     </Border>
-                                    <TextBlock Text="{Binding Content}" FontSize="15"
-                                               TextWrapping="Wrap" LineHeight="22"
-                                               Foreground="{Binding ContentForeground}"/>
+                                    <!-- v261116-13: ContentHost 在 ContainerContentChanging 中
+                                         根据消息类型填充 TextBlock 或 RichTextBlock -->
+                                    <StackPanel x:Name="ContentHost" MinHeight="20"/>
                                     <TextBlock Text="{Binding RoleDisplay}" FontSize="10"
                                                Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
                                                Margin="0,4,0,0" Opacity="0.6"/>
@@ -99,8 +101,7 @@
             </ListView>
 
             <!-- 历史视图 -->
-            <Grid x:Name="HistoryPanel" Grid.Row="0" Visibility="Collapsed" Padding="12,8"
-                  MaxWidth="900" HorizontalAlignment="Center">
+            <Grid x:Name="HistoryPanel" Grid.Row="0" Visibility="Collapsed" Padding="12,8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
@@ -122,9 +123,8 @@
                 </ListView>
             </Grid>
 
-            <!-- 底部输入栏 — 居中适配宽屏 -->
-            <Grid Grid.Row="1" Padding="12,8" Background="{ThemeResource SystemControlBackgroundAltMediumBrush}"
-                  MaxWidth="900" HorizontalAlignment="Center">
+            <!-- 底部输入栏 -->
+            <Grid Grid.Row="1" Padding="12,8" Background="{ThemeResource SystemControlBackgroundAltMediumBrush}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -137,6 +137,36 @@
                         Click="SendBtn_Click" MinWidth="80"
                         Style="{ThemeResource AccentButtonStyle}"/>
             </Grid>
+
+            <!-- v261116-13: VisualStateManager 响应式 -->
+            <VisualStateManager.VisualStateGroups>
+                <VisualStateGroup>
+                    <VisualState x:Name="Wide">
+                        <VisualState.StateTriggers>
+                            <AdaptiveTrigger MinWindowWidth="720"/>
+                        </VisualState.StateTriggers>
+                        <VisualState.Setters>
+                            <!-- 宽屏（PC/平板横屏）：消息列表居中，限制最大宽度 -->
+                            <Setter Target="MessageList.MaxWidth" Value="900"/>
+                            <Setter Target="MessageList.HorizontalAlignment" Value="Center"/>
+                            <Setter Target="HistoryPanel.MaxWidth" Value="900"/>
+                            <Setter Target="HistoryPanel.HorizontalAlignment" Value="Center"/>
+                        </VisualState.Setters>
+                    </VisualState>
+                    <VisualState x:Name="Narrow">
+                        <VisualState.StateTriggers>
+                            <AdaptiveTrigger MinWindowWidth="0"/>
+                        </VisualState.StateTriggers>
+                        <VisualState.Setters>
+                            <!-- 窄屏（手机）：占满宽度 -->
+                            <Setter Target="MessageList.MaxWidth" Value="NaN"/>
+                            <Setter Target="MessageList.HorizontalAlignment" Value="Stretch"/>
+                            <Setter Target="HistoryPanel.MaxWidth" Value="NaN"/>
+                            <Setter Target="HistoryPanel.HorizontalAlignment" Value="Stretch"/>
+                        </VisualState.Setters>
+                    </VisualState>
+                </VisualStateGroup>
+            </VisualStateManager.VisualStateGroups>
         </Grid>
     </muxc:NavigationView>
 </Page>

@@ -11,7 +11,7 @@
     <DefaultLanguage>zh-CN</DefaultLanguage>
     <TargetPlatformIdentifier>UAP</TargetPlatformIdentifier>
     <TargetPlatformVersion>10.0.19041.0</TargetPlatformVersion>
-    <TargetPlatformMinVersion>10.0.15063.0</TargetPlatformMinVersion>
+    <TargetPlatformMinVersion>10.0.14393.0</TargetPlatformMinVersion>
     <MinimumVisualStudioVersion>14</MinimumVisualStudioVersion>
     <EnableDotNetNativeCompatibleProfile>true</EnableDotNetNativeCompatibleProfile>
     <FileAlignment>512</FileAlignment>
@@ -92,9 +92,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.NETCore.UniversalWindowsPlatform" Version="6.2.9" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
-    <!-- v261116-12: WinUI 2.x 包含 NavigationView — UWP 标准汉堡菜单控件
-         Microsoft.UI.Xaml 2.7.x 兼容 14393+ -->
-    <PackageReference Include="Microsoft.UI.Xaml" Version="2.7.3" />
+    <!-- v261116-13: WinUI 2.6.x 是兼容 14393 的最后版本
+         2.7.x 要求 15063+，用户反馈太新了 -->
+    <PackageReference Include="Microsoft.UI.Xaml" Version="2.6.3" />
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml">

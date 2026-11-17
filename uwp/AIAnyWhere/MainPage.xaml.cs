@@ -62,11 +62,96 @@ namespace AIAnyWhere
                     HistoryPanel.Visibility = Visibility.Visible;
                     LoadHistoryList();
                     break;
-                case "settings":
-                    Frame.Navigate(typeof(SettingsPage));
-                    NavView.SelectedItem = null;
-                    break;
             }
+        }
+
+        // v261116-13: 设置项点击（修复设置点不了）
+        // NavigationView 自带 SettingsItem（齿轮图标）触发 SettingsItemInvoked
+        private void NavView_SettingsItemInvoked(Microsoft.UI.Xaml.Controls.NavigationView sender,
+                                                  Microsoft.UI.Xaml.Controls.NavigationViewItemInvokedEventArgs args)
+        {
+            Frame.Navigate(typeof(SettingsPage));
+        }
+
+        // v261116-13: ContainerContentChanging — 在 ListView item 容器化时渲染 Markdown
+        // 用户消息：TextBlock 显示原文
+        // AI 消息：RichTextBlock 显示 Markdown 渲染结果
+        // 错误消息：TextBlock 红色显示
+        private void MessageList_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
+        {
+            if (args.Phase != 0) return;
+            var msg = args.Item as ChatMessage;
+            if (msg == null) return;
+
+            // 找 ContentHost（DataTemplate 中 x:Name="ContentHost"）
+            var container = args.ItemContainer as ListViewItem;
+            if (container == null) return;
+            var contentHost = FindChildByName<StackPanel>(container, "ContentHost");
+            if (contentHost == null) return;
+
+            contentHost.Children.Clear();
+
+            if (msg.IsError)
+            {
+                // 错误消息：纯文本红色
+                var tb = new TextBlock
+                {
+                    Text = msg.Content ?? "",
+                    FontSize = 15,
+                    TextWrapping = TextWrapping.Wrap,
+                    LineHeight = 22,
+                    Foreground = (Brush)Application.Current.Resources["SystemControlErrorTextForegroundBrush"]
+                };
+                contentHost.Children.Add(tb);
+            }
+            else if (msg.IsUser)
+            {
+                // 用户消息：纯文本白色（在 accent 色气泡上）
+                var tb = new TextBlock
+                {
+                    Text = msg.Content ?? "",
+                    FontSize = 15,
+                    TextWrapping = TextWrapping.Wrap,
+                    LineHeight = 22,
+                    Foreground = new SolidColorBrush(Colors.White)
+                };
+                contentHost.Children.Add(tb);
+            }
+            else
+            {
+                // AI 消息：Markdown 渲染
+                try
+                {
+                    var rtl = MarkdownRenderer.Render(msg.Content ?? "", App.IsDarkMode());
+                    contentHost.Children.Add(rtl);
+                }
+                catch
+                {
+                    // 兜底：渲染失败显示原文
+                    var tb = new TextBlock
+                    {
+                        Text = msg.Content ?? "",
+                        FontSize = 15,
+                        TextWrapping = TextWrapping.Wrap,
+                        LineHeight = 22
+                    };
+                    contentHost.Children.Add(tb);
+                }
+            }
+        }
+
+        // 递归查找子控件
+        private static T FindChildByName<T>(DependencyObject parent, string name) where T : DependencyObject
+        {
+            int count = VisualTreeHelper.GetChildrenCount(parent);
+            for (int i = 0; i < count; i++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, i);
+                if (child is FrameworkElement fe && fe.Name == name && fe is T t) return t;
+                var found = FindChildByName<T>(child, name);
+                if (found != null) return found;
+            }
+            return null;
         }
 
         // === 历史对话列表 ===
