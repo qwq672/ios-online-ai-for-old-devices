@@ -229,8 +229,8 @@ namespace AIAnyWhere
             string id = item.id;
             if (string.IsNullOrEmpty(id)) return;
             await LoadConversationAsync(id);
-            // 切换回聊天视图
-            ChatRadio.IsChecked = true;
+            // 切换回聊天视图 — v261116-15: 用 NavMenuList.SelectedIndex 替代 ChatRadio
+            NavMenuList.SelectedIndex = 0;
             MessageList.Visibility = Visibility.Visible;
             HistoryPanel.Visibility = Visibility.Collapsed;
         }
