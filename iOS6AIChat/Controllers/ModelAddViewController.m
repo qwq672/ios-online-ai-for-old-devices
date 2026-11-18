@@ -313,10 +313,14 @@ static NSInteger const kAASheetQuickPick = 461;
 
 - (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section
 {
+    // v261116-17: 生图模式时 format/template section footer 高度几乎为 0
     if ([self _isImageMode] && (section == kAASectionFormat || section == kAASectionTemplate)) {
         return 0.01f;
     }
-    return tableView.sectionFooterHeight;
+    // 正常模式用 iOS6Theme 计算实际高度
+    NSString *title = [self tableView:tableView titleForFooterInSection:section];
+    return [iOS6Theme groupedSectionFooterHeightForTitle:title
+                                                   width:tableView.bounds.size.width];
 }
 
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
@@ -370,12 +374,8 @@ static NSInteger const kAASheetQuickPick = 461;
                                                   width:tableView.bounds.size.width];
 }
 
-- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section
-{
-    NSString *title = [self tableView:tableView titleForFooterInSection:section];
-    return [iOS6Theme groupedSectionFooterHeightForTitle:title
-                                                   width:tableView.bounds.size.width];
-}
+// v261116-17: 旧的 heightForFooterInSection 已合并到 line 314（生图模式处理）
+// 删除重复声明，避免编译错误
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
           cellForRowAtIndexPath:(NSIndexPath *)indexPath
