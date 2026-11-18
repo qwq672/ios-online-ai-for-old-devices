@@ -330,15 +330,6 @@ static NSInteger const kAASheetQuickPick = 461;
                                                   width:tableView.bounds.size.width];
 }
 
-- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
-{
-    // v261116-17: 生图模式时 format/template section 高度几乎为 0（隐藏）
-    if ([self _isImageMode] && (section == kAASectionFormat || section == kAASectionTemplate)) {
-        return 0.01f;
-    }
-    NSString *title = [self tableView:tableView titleForHeaderInSection:section];
-    return (title.length > 0) ? 26.0f : 8.0f;
-}
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
