@@ -36,7 +36,8 @@ static CGFloat const kPad  = 12.0f;
 static CGFloat const kLabelW = 84.0f;
 
 enum {
-    kAASectionFormat = 0,
+    kAASectionKind = 0,      // v261116-17: 模型类型选择（聊天/生图）
+    kAASectionFormat,        // 提供商格式（生图模式时隐藏，只支持 OpenAI）
     kAASectionTemplate,
     kAASectionConn,
     kAASectionTest,
@@ -55,6 +56,10 @@ static NSInteger const kAASheetQuickPick = 461;
     NSString *_format;            // ProviderFormatOpenAI / Anthropic / Ollama
     NSString *_template;          // ProviderID* / ProviderTemplateCustom
     NSMutableArray *_models;      // working list of model dicts ({id, starred, kind})
+    // v261116-17: 模型类型 — "chat"（默认）或 "image"（生图）
+    // 选 image 时隐藏 format/template section，强制 _format = OpenAI
+    // 新加入的模型 kind 自动设为 "image"
+    NSString *_modelKind;
 
     // Persistent text fields (created once, re-attached to cells).
     UITextField *_baseURLField;
@@ -84,6 +89,7 @@ static NSInteger const kAASheetQuickPick = 461;
     [_apiKeyField release];
     [_searchResults release];
     [_pendingManualAddModelID release];
+    [_modelKind release];  // v261116-17
     [super dealloc];
 }
 
@@ -100,6 +106,7 @@ static NSInteger const kAASheetQuickPick = 461;
         _template = [ProviderIDOpenAI retain];
         _models = [[NSMutableArray array] retain];
         _searchResults = [[NSMutableArray array] retain];
+        _modelKind = [@"chat" retain];  // v261116-17: 默认聊天模式
     }
     return self;
 }
@@ -256,30 +263,60 @@ static NSInteger const kAASheetQuickPick = 461;
 
 #pragma mark - Table data source
 
+// v261116-17: 是否生图模式（_modelKind == "image"）
+- (BOOL)_isImageMode {
+    return [_modelKind isEqualToString:@"image"];
+}
+
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
 {
-    return kAASectionCount;
+    return kAASectionCount;  // 始终返回全部 section，生图模式时 format/template 行数为 0
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
-    if (section == kAASectionFormat)  return 1;
-    if (section == kAASectionTemplate) return 1;
-    if (section == kAASectionConn)    return 2;   // BaseURL + API Key
-    if (section == kAASectionTest)    return 1;
-    if (section == kAASectionModels)  return (NSInteger)[_models count] + 2;  // + 搜索 + 手动添加
-    if (section == kAASectionSave)    return 1;
+    if (section == kAASectionKind)     return 1;
+    // 生图模式隐藏 format/template（只支持 OpenAI 协议）
+    if (section == kAASectionFormat)   return [self _isImageMode] ? 0 : 1;
+    if (section == kAASectionTemplate) return [self _isImageMode] ? 0 : 1;
+    if (section == kAASectionConn)     return 2;
+    if (section == kAASectionTest)     return 1;
+    if (section == kAASectionModels)   return (NSInteger)[_models count] + 2;
+    if (section == kAASectionSave)     return 1;
     return 0;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
 {
+    // 生图模式 format/template section 不显示 header
+    if ([self _isImageMode] && (section == kAASectionFormat || section == kAASectionTemplate)) {
+        return nil;
+    }
+    if (section == kAASectionKind)     return NSLocalizedString(@"模型类型", nil);
     if (section == kAASectionFormat)   return NSLocalizedString(@"提供商格式", nil);
     if (section == kAASectionTemplate) return NSLocalizedString(@"提供商模板", nil);
     if (section == kAASectionConn)     return NSLocalizedString(@"连接", nil);
     if (section == kAASectionTest)     return @"";
     if (section == kAASectionModels)   return NSLocalizedString(@"模型", nil);
     return @"";
+}
+
+// v261116-17: 生图模式时 format/template section 高度为 0
+- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
+{
+    if ([self _isImageMode] && (section == kAASectionFormat || section == kAASectionTemplate)) {
+        return 0.01f;  // 几乎为 0（不能用 0，会被默认值覆盖）
+    }
+    NSString *title = [self tableView:tableView titleForHeaderInSection:section];
+    return (title.length > 0) ? 26.0f : 8.0f;
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section
+{
+    if ([self _isImageMode] && (section == kAASectionFormat || section == kAASectionTemplate)) {
+        return 0.01f;
+    }
+    return tableView.sectionFooterHeight;
 }
 
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
@@ -291,12 +328,26 @@ static NSInteger const kAASheetQuickPick = 461;
 
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
 {
+    // v261116-17: 生图模式时 format/template section 高度几乎为 0（隐藏）
+    if ([self _isImageMode] && (section == kAASectionFormat || section == kAASectionTemplate)) {
+        return 0.01f;
+    }
     NSString *title = [self tableView:tableView titleForHeaderInSection:section];
     return (title.length > 0) ? 26.0f : 8.0f;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
+    // v261116-17: 生图模式时 Kind section 显示"暂支持 OpenAI 协议"
+    if (section == kAASectionKind) {
+        if ([self _isImageMode]) {
+            return NSLocalizedString(@"暂支持 OpenAI 协议（/v1/images/generations）", nil);
+        }
+        return NSLocalizedString(@"聊天模型走对话接口；切到生图则只支持 OpenAI 协议。", nil);
+    }
+    if ([self _isImageMode] && (section == kAASectionFormat || section == kAASectionTemplate)) {
+        return nil;  // 隐藏
+    }
     if (section == kAASectionFormat) {
         return NSLocalizedString(@"openai=/v1/chat/completions; anthropic=/v1/messages; ollama 原生 /api/chat (本轮按 openai 兼容)。", nil);
     }
@@ -344,6 +395,23 @@ static NSInteger const kAASheetQuickPick = 461;
     cell.textLabel.text = @"";
     cell.accessoryType = UITableViewCellAccessoryNone;
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
+
+    // v261116-17: 模型类型选择（聊天/生图）— UISegmentedControl
+    if (indexPath.section == kAASectionKind) {
+        CGFloat w = cell.contentView.bounds.size.width;
+        UISegmentedControl *seg = [[[UISegmentedControl alloc]
+            initWithItems:[NSArray arrayWithObjects:
+                NSLocalizedString(@"聊天", nil),
+                NSLocalizedString(@"生图", nil), nil]] autorelease];
+        seg.frame = CGRectMake(kPad, (kRowH - 30) / 2.0f, w - 2 * kPad, 30);
+        seg.segmentedControlStyle = UISegmentedControlStyleBar;
+        seg.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        seg.selectedSegmentIndex = [self _isImageMode] ? 1 : 0;
+        [seg addTarget:self action:@selector(_kindSegChanged:)
+          forControlEvents:UIControlEventValueChanged];
+        [cell.contentView addSubview:seg];
+        return cell;
+    }
 
     if (indexPath.section == kAASectionFormat) {
         CGFloat w = cell.contentView.bounds.size.width;
@@ -550,6 +618,48 @@ forRowAtIndexPath:(NSIndexPath *)indexPath
     [self _applyFormat:fmt];
 }
 
+// v261116-17: 模型类型切换（聊天/生图）
+// 切到"生图"时：
+//   1. _modelKind = "image"
+//   2. 强制 _format = OpenAI（生图只支持 OpenAI 协议）
+//   3. 隐藏 format/template section（numberOfRowsInSection 返回 0）
+//   4. 后续添加的模型 kind 自动设为 "image"
+//   5. footer 显示"暂支持 OpenAI 协议"
+// 切回"聊天"时：
+//   1. _modelKind = "chat"
+//   2. 恢复 format/template section
+//   3. 已添加的 image kind 模型保留（用户可手动改回 chat）
+- (void)_kindSegChanged:(UISegmentedControl *)seg
+{
+    if (seg.selectedSegmentIndex == 1) {
+        // 切到生图
+        [_modelKind release];
+        _modelKind = [@"image" retain];
+        // 强制 OpenAI 协议
+        if (![_format isEqualToString:ProviderFormatOpenAI]) {
+            [self _applyFormat:ProviderFormatOpenAI];
+        }
+        // 已添加的模型 kind 全部改为 image（生图模式下整个 provider 都是生图）
+        for (NSUInteger i = 0; i < [_models count]; i++) {
+            NSMutableDictionary *m = [[_models objectAtIndex:i] mutableCopy];
+            [m setObject:@"image" forKey:@"kind"];
+            [_models replaceObjectAtIndex:i withObject:m];
+            [m release];
+        }
+    } else {
+        // 切回聊天
+        [_modelKind release];
+        _modelKind = [@"chat" retain];
+        for (NSUInteger i = 0; i < [_models count]; i++) {
+            NSMutableDictionary *m = [[_models objectAtIndex:i] mutableCopy];
+            [m setObject:@"chat" forKey:@"kind"];
+            [_models replaceObjectAtIndex:i withObject:m];
+            [m release];
+        }
+    }
+    [_formTable reloadData];
+}
+
 - (void)_presentTemplateSheet
 {
     UIActionSheet *sheet = [[[UIActionSheet alloc]
@@ -592,7 +702,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         NSMutableDictionary *nm = [NSMutableDictionary dictionary];
         [nm setObject:mid forKey:@"id"];
         [nm setObject:[NSNumber numberWithBool:NO] forKey:@"starred"];
-        [nm setObject:@"chat" forKey:@"kind"];
+        [nm setObject:[self _isImageMode] ? @"image" : @"chat" forKey:@"kind"];
         [_models addObject:nm];
         [_formTable reloadData];
         return;
@@ -615,7 +725,7 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
         NSMutableDictionary *nm = [NSMutableDictionary dictionary];
         [nm setObject:mid forKey:@"id"];
         [nm setObject:[NSNumber numberWithBool:NO] forKey:@"starred"];
-        [nm setObject:@"chat" forKey:@"kind"];
+        [nm setObject:[self _isImageMode] ? @"image" : @"chat" forKey:@"kind"];
         [_models addObject:nm];
         [_formTable reloadData];
         return;
