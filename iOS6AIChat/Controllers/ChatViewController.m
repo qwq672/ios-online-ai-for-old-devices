@@ -1050,6 +1050,23 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
             BOOL superseded = (self->_imageGenAssistantMessage != capturedMsg);
 
             if (pngData && pngData.length > 0) {
+                // v261116-19: 写入前校验 magic bytes — 防止 HTML/JSON 错误页被当作 PNG
+                const unsigned char *pb = [pngData bytes];
+                NSUInteger pl = [pngData length];
+                BOOL validPNG  = (pl >= 8 && pb[0]==0x89 && pb[1]==0x50 && pb[2]==0x4E && pb[3]==0x47);
+                BOOL validJPEG = (pl >= 3 && pb[0]==0xFF && pb[1]==0xD8 && pb[2]==0xFF);
+                BOOL validGIF  = (pl >= 6 && pb[0]==0x47 && pb[1]==0x49 && pb[2]==0x46);
+                if (!validPNG && !validJPEG && !validGIF) {
+                    NSString *prev = [[[NSString alloc] initWithData:pngData encoding:NSUTF8StringEncoding] autorelease] ?: @"<binary>";
+                    if (prev.length > 200) prev = [prev substringToIndex:200];
+                    capturedMsg.content = [NSString stringWithFormat:@"%@: %@",
+                        NSLocalizedString(@"生图返回数据异常", nil), prev];
+                    [[Logger sharedLogger] warn:[NSString stringWithFormat:
+                        @"imggen ✗ not image data (%luB, starts: %@)",
+                        (unsigned long)pl, prev]];
+                    [capturedMsg release];
+                    return;
+                }
                 // Write the PNG under Documents/genimg/<uuid>.png.
                 NSArray *dirs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,
                                                                     NSUserDomainMask, YES);

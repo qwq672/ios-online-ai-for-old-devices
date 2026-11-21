@@ -2629,12 +2629,14 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
 + (NSString *)_imageGenTargetForBase:(NSString *)base
 {
     if (![base isKindOfClass:[NSString class]] || base.length == 0) return nil;
-    NSString *trimmed = [base stringByTrimmingCharactersInSet:
-                         [NSCharacterSet characterSetWithCharactersInString:@"/"]];
+    // v261116-19: 修复 trim bug — 只 trim 结尾 "/"，不能 trim "https://" 中的 "/"
+    NSString *trimmed = base;
+    while (trimmed.length > 0 && [trimmed hasSuffix:@"/"]) {
+        trimmed = [trimmed substringToIndex:trimmed.length - 1];
+    }
     if (trimmed.length == 0) return nil;
     if ([trimmed hasSuffix:@"/v1"] || [trimmed hasSuffix:@"/v3"] ||
-        [trimmed hasSuffix:@"/v4"] || [trimmed hasSuffix:@"/v1/"] ||
-        [trimmed hasSuffix:@"/v3/"] || [trimmed hasSuffix:@"/v4/"]) {
+        [trimmed hasSuffix:@"/v4"]) {
         return [trimmed stringByAppendingPathComponent:@"images/generations"];
     }
     return [trimmed stringByAppendingPathComponent:@"v1/images/generations"];
@@ -2775,9 +2777,19 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
     if (!base || base.length == 0) {
         base = @"https://api.openai.com";
     }
-    NSString *endpoint = [base stringByTrimmingCharactersInSet:
-                          [NSCharacterSet characterSetWithCharactersInString:@"/"]];
-    endpoint = [endpoint stringByAppendingPathComponent:@"v1/models"];
+    // v261116-19: 修复 URL trim bug — 不能 trim 整个 URL 的 "/"
+    // 旧代码 stringByTrimmingCharactersInSet:@"/" 会把 https:// 的双斜杠 trim 成单斜杠
+    // 正确做法：只 trim 结尾的 "/"
+    while (base.length > 0 && [base hasSuffix:@"/"]) {
+        base = [base substringToIndex:base.length - 1];
+    }
+    // 如果 baseURL 已以 /v1 结尾，不再追加 /v1（避免 /v1/v1/models）
+    NSString *endpoint;
+    if ([base hasSuffix:@"/v1"] || [base hasSuffix:@"/v3"] || [base hasSuffix:@"/v4"]) {
+        endpoint = [base stringByAppendingPathComponent:@"models"];
+    } else {
+        endpoint = [base stringByAppendingPathComponent:@"v1/models"];
+    }
 
     [[Logger sharedLogger] info:[NSString stringWithFormat:
         @"MODELS → GET %@", endpoint]];
@@ -3157,10 +3169,23 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
         return nil;
     }
     if (!data || data.length == 0) return nil;
+    // v261116-19: 嗅探 magic bytes — transit 可能返回 HTML 错误页被当作 PNG
+    const unsigned char *imgBytes = [data bytes];
+    NSUInteger imgLen = [data length];
+    BOOL isPNG  = (imgLen >= 8 && imgBytes[0]==0x89 && imgBytes[1]==0x50 && imgBytes[2]==0x4E && imgBytes[3]==0x47);
+    BOOL isJPEG = (imgLen >= 3 && imgBytes[0]==0xFF && imgBytes[1]==0xD8 && imgBytes[2]==0xFF);
+    BOOL isGIF  = (imgLen >= 6 && imgBytes[0]==0x47 && imgBytes[1]==0x49 && imgBytes[2]==0x46);
+    if (!isPNG && !isJPEG && !isGIF) {
+        NSString *prev = [[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] autorelease] ?: @"<binary>";
+        if (prev.length > 200) prev = [prev substringToIndex:200];
+        [[Logger sharedLogger] warn:[NSString stringWithFormat:@"imggen transit ✗ not image (%luB, starts: %@)", (unsigned long)imgLen, prev]];
+        if (error) *error = [NSError errorWithDomain:@"iOS6AIChat" code:500 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"生图服务返回非图片数据: %@", prev]}];
+        return nil;
+    }
     NSString *b64 = [data base64String];
     if (!b64 || b64.length == 0) return nil;
-    // Sniff content type from response if possible — default to png.
-    NSString *mimeType = @"image/png";
+    // v261116-19: 根据 magic bytes 确定 MIME（不再盲目默认 image/png）
+    NSString *mimeType = isJPEG ? @"image/jpeg" : (isGIF ? @"image/gif" : @"image/png");
     NSHTTPURLResponse *httpResp = (NSHTTPURLResponse *)resp;
     if ([httpResp respondsToSelector:@selector(allHeaderFields)]) {
         NSDictionary *headers = [httpResp allHeaderFields];

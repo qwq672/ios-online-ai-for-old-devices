@@ -54,7 +54,9 @@ static const char base64Chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrs
     NSUInteger outIdx = 0;
     
     NSUInteger i = 0;
-    while (i + 3 < cleanLen) {
+    // v261116-19: 修复边界 bug — while (i + 3 < cleanLen) 应为 while (i + 4 <= cleanLen)
+    // 旧条件当 cleanLen % 4 != 0（unpadded base64）时静默丢弃尾部 1-3 字符
+    while (i + 4 <= cleanLen) {
         int v0 = decodeTable[(unsigned char)clean[i]];
         int v1 = decodeTable[(unsigned char)clean[i+1]];
         int v2 = (clean[i+2] == '=') ? 0 : decodeTable[(unsigned char)clean[i+2]];
