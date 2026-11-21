@@ -1072,6 +1072,22 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
                         [[Logger sharedLogger] info:[NSString stringWithFormat:
                             @"imggen ✓ wrote %@ (%lu bytes)",
                             fileName, (unsigned long)pngData.length]];
+                        // v261116-18: 写入后立即验证文件存在 + 记录完整路径
+                        NSFileManager *fm = [NSFileManager defaultManager];
+                        BOOL exists = [fm fileExistsAtPath:path];
+                        NSDictionary *attrs = exists ? [fm attributesOfItemAtPath:path error:NULL] : nil;
+                        NSUInteger fileSize = [[attrs objectForKey:NSFileSize] unsignedLongValue];
+                        [[Logger sharedLogger] info:[NSString stringWithFormat:
+                            @"imggen verify: exists=%d size=%lu path=%@",
+                            (int)exists, (unsigned long)fileSize, path]];
+                        if (!exists || fileSize == 0) {
+                            // v261116-18: 原子写入可能失败了 — 尝试非原子写入
+                            [[Logger sharedLogger] warn:@"imggen ✗ atomic write verified missing, retry non-atomic"];
+                            [pngData writeToFile:path atomically:NO];
+                            exists = [fm fileExistsAtPath:path];
+                            [[Logger sharedLogger] info:[NSString stringWithFormat:
+                                @"imggen retry: exists=%d", (int)exists]];
+                        }
                     } else {
                         capturedMsg.content = NSLocalizedString(@"图片保存失败（磁盘写入错误）", nil);
                         [[Logger sharedLogger] warn:@"imggen ✗ writeToFile failed"];
@@ -1794,14 +1810,18 @@ didFailForConversationID:(NSString *)conversationID
 {
     if (!message || ![message isImageGenResult]) return;
     NSString *path = [Message absolutePathForGeneratedImage:message.generatedImagePath];
-    if (!path) return;
-    // Prefer the shared decoded cache (gImageCache) — same key the cell
-    // used — so the modal opens instantly; fall back to the file.
-    // (NO @try — ObjC exceptions are disabled on cctools-port armv7;
-    // imageWithContentsOfFile: never throws, it just returns nil.)
+    if (!path) {
+        [[Logger sharedLogger] warn:@"ChatVC gen-image viewer — path is nil (generatedImagePath empty?)"];
+        return;
+    }
+    // v261116-18: 记录读取路径 + 文件是否存在
+    BOOL exists = [[NSFileManager defaultManager] fileExistsAtPath:path];
+    [[Logger sharedLogger] info:[NSString stringWithFormat:
+        @"ChatVC gen-image viewer — path=%@ exists=%d generatedImagePath=%@",
+        path, (int)exists, message.generatedImagePath]];
     UIImage *img = [UIImage imageWithContentsOfFile:path];
     if (!img) {
-        [[Logger sharedLogger] warn:@"ChatVC gen-image viewer — image file missing"];
+        [[Logger sharedLogger] warn:@"ChatVC gen-image viewer — image file missing (or undecodable)"];
         return;
     }
     GenImageViewerController *viewer = [[[GenImageViewerController alloc] init] autorelease];
