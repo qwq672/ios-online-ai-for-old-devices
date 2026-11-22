@@ -72,6 +72,9 @@ public class NetworkService {
     private volatile boolean cancelled = false;
     private volatile HttpURLConnection connection;
     private Thread streamThread;
+    // v0.6.6: 请求代次 —— 每次 streamChat/cancel 递增。旧线程残留的回调
+    // 和 finally 通过比对代次跳过，避免 cancel 后立即重发时串话/提前结束。
+    private volatile int generation = 0;
 
     // v0.6: 功能开关
     public boolean enableDeepThinking = false;
@@ -89,6 +92,7 @@ public class NetworkService {
                            final String systemPrompt, final float temperature,
                            final int maxTokens, final boolean stream) {
         cancelled = false;
+        final int myGen = ++generation;  // v0.6.6: 新代次，作废旧线程回调
         accumulated.setLength(0);
         thinkingAccumulated.setLength(0);
 
@@ -100,18 +104,17 @@ public class NetworkService {
             public void run() {
                 try {
                     doStream(baseURL, apiKey, model, msgsCopy, sysCopy,
-                             temperature, maxTokens, stream);
+                             temperature, maxTokens, stream, myGen);
                 } catch (Exception e) {
-                    // v0.2: if the user cancelled, swallow the exception
-                    // (disconnecting the connection surfaces as an
-                    // IOException — that's expected, not an error).
-                    if (cancelled) return;
+                    // v0.6.6: 若本线程已过期（用户取消后立即重发新请求），
+                    // 吞掉异常且不回调 —— 否则旧线程会串话/误报错误。
+                    if (myGen != generation || cancelled) return;
                     Log.e(TAG, "stream error", e);
-                    notifyError(friendlyError(e));
+                    notifyError(friendlyError(e), myGen);
                 } finally {
-                    // v0.6.4: 资源泄漏修复 — 任何路径都 disconnect
-                    // 防止 socket 泄漏（HTTP 4xx、readLine 抛 IOException、cancelled）
-                    if (connection != null) {
+                    // v0.6.6: 只清理"自己这一代"的连接 —— 旧线程 finally 若
+                    // 误清新请求的连接，会导致提前结束/串话。
+                    if (myGen == generation && connection != null) {
                         try { connection.disconnect(); } catch (Exception ignored) {}
                         connection = null;
                     }
@@ -131,6 +134,7 @@ public class NetworkService {
 
     public void cancel() {
         cancelled = true;
+        generation++;  // v0.6.6: 作废旧线程所有待执行回调 + finally
         if (connection != null) {
             try { connection.disconnect(); } catch (Exception ignored) {}
         }
@@ -138,7 +142,8 @@ public class NetworkService {
 
     private void doStream(String baseURL, String apiKey, String model,
                           List<Message> messages, String systemPrompt,
-                          float temperature, int maxTokens, boolean stream)
+                          float temperature, int maxTokens, boolean stream,
+                          final int myGen)
             throws Exception {
 
         // Build endpoint URL
@@ -176,10 +181,14 @@ public class NetworkService {
             body.put("max_tokens", maxTokens);
         }
 
-        // v0.6: 深度思考 — 发送 thinking 参数（部分 API 支持）
+        // v0.6.6: 深度思考 — 显式开关，关闭时必须发 disabled。
+        // 旧实现关闭时什么都不发，DeepSeek-Reasoner / GLM-4.5+ 等默认思考的
+        // 模型照样输出 reasoning，开关形同虚设。开启时不再附带
+        // reasoning_effort:"high"（部分非推理 API 会因此报错），只发 thinking。
         if (enableDeepThinking) {
             body.put("thinking", new JSONObject().put("type", "enabled"));
-            body.put("reasoning_effort", "high");
+        } else {
+            body.put("thinking", new JSONObject().put("type", "disabled"));
         }
 
         // v0.6: 联网搜索 — 发送 tools 数组（如果有搜索 key）
@@ -235,7 +244,7 @@ public class NetworkService {
         int code = connection.getResponseCode();
         if (code < 200 || code >= 300) {
             String errBody = readStream(connection.getErrorStream());
-            notifyError("HTTP " + code + ": " + truncate(errBody, 500));
+            notifyError("HTTP " + code + ": " + truncate(errBody, 500), myGen);
             return;
         }
 
@@ -249,7 +258,7 @@ public class NetworkService {
             String respBody = readStream(connection.getInputStream());
             parseNonStreamJson(respBody);
             if (cancelled) return;
-            notifyFinish(accumulated.toString(), thinkingAccumulated.toString());
+            notifyFinish(accumulated.toString(), thinkingAccumulated.toString(), myGen);
             return;
         }
 
@@ -290,7 +299,7 @@ public class NetworkService {
                     String content = safeStr(delta, "content");
                     if (content.length() > 0) {
                         accumulated.append(content);
-                        notifyChunk(accumulated.toString());
+                        notifyChunk(accumulated.toString(), myGen);
                     }
 
                     // Reasoning / thinking — try every known field name.
@@ -303,7 +312,7 @@ public class NetworkService {
                     }
                     if (reasoning.length() > 0) {
                         thinkingAccumulated.append(reasoning);
-                        notifyThinking(thinkingAccumulated.toString());
+                        notifyThinking(thinkingAccumulated.toString(), myGen);
                     }
                 }
 
@@ -334,7 +343,7 @@ public class NetworkService {
             Log.w(TAG, "SSE stream produced no data lines");
         }
 
-        notifyFinish(accumulated.toString(), thinkingAccumulated.toString());
+        notifyFinish(accumulated.toString(), thinkingAccumulated.toString(), myGen);
     }
 
     /** Parse a non-streaming JSON chat completion response. */
@@ -352,7 +361,7 @@ public class NetworkService {
             String content = safeStr(message, "content");
             if (content.length() > 0) {
                 accumulated.append(content);
-                notifyChunk(accumulated.toString());
+                notifyChunk(accumulated.toString(), myGen);
             }
 
             String reasoning = safeStr(message, "reasoning_content");
@@ -364,7 +373,7 @@ public class NetworkService {
             }
             if (reasoning.length() > 0) {
                 thinkingAccumulated.append(reasoning);
-                notifyThinking(thinkingAccumulated.toString());
+                notifyThinking(thinkingAccumulated.toString(), myGen);
             }
         } catch (Exception e) {
             Log.w(TAG, "non-stream parse error: " + e.getMessage());
@@ -443,33 +452,37 @@ public class NetworkService {
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
-    private void notifyChunk(final String text) {
+    private void notifyChunk(final String text, final int gen) {
         mainHandler.post(new Runnable() {
             @Override public void run() {
+                if (gen != generation) return;  // v0.6.6: 丢弃过期回调
                 if (listener != null) listener.onChunk(text);
             }
         });
     }
 
-    private void notifyThinking(final String text) {
+    private void notifyThinking(final String text, final int gen) {
         mainHandler.post(new Runnable() {
             @Override public void run() {
+                if (gen != generation) return;
                 if (listener != null) listener.onThinking(text);
             }
         });
     }
 
-    private void notifyFinish(final String text, final String thinking) {
+    private void notifyFinish(final String text, final String thinking, final int gen) {
         mainHandler.post(new Runnable() {
             @Override public void run() {
+                if (gen != generation) return;
                 if (listener != null) listener.onFinish(text, thinking);
             }
         });
     }
 
-    private void notifyError(final String msg) {
+    private void notifyError(final String msg, final int gen) {
         mainHandler.post(new Runnable() {
             @Override public void run() {
+                if (gen != generation) return;
                 if (listener != null) listener.onError(msg);
             }
         });

@@ -120,7 +120,16 @@
     Conversation *c = [[[self class] allocWithZone:zone] init];
     c.conversationID = [_conversationID copy];
     c.title           = [_title copy];
-    c.messages        = [NSMutableArray arrayWithArray:_messages];
+    // v261122-2: 深拷贝每条 Message —— 旧实现 arrayWithArray 只拷数组壳，
+    // Message 对象仍与原 conversation 共享。ConversationStore 把快照丢到
+    // 后台 serial queue 用 NSKeyedArchiver 归档时，主线程正在 didReceiveChunk
+    // 里改同一个 Message.content → 枚举/归档过程中对象被改 →
+    // NSFastEnumerationMutation 崩溃或归档数据错乱。逐条 copy 后彻底隔离。
+    NSMutableArray *msgCopies = [NSMutableArray arrayWithCapacity:[_messages count]];
+    for (Message *m in _messages) {
+        [msgCopies addObject:[[m copy] autorelease]];
+    }
+    c.messages        = msgCopies;
     c.createdAt       = [_createdAt copy];
     c.updatedAt       = [_updatedAt copy];
     return c;

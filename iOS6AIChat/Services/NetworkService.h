@@ -25,6 +25,14 @@
 @protocol NetworkServiceDelegate;
 
 @interface NetworkService : NSObject <NSURLConnectionDelegate>
+{
+    // v261122-3: 流代次计数 —— 每次新用户消息/停止/取消递增。工具调用的
+    // 后台 block 捕获发起时的代次，回到主线程重启流前比对：若已变（用户
+    // 点了停止或切换会话），则放弃本次 relaunch，避免"停止无效/串台"。
+    NSUInteger _streamGeneration;
+    // v261122-1: 当前请求是否允许思考（解析层总闸）
+    BOOL _requestThinkingAllowed;
+}
 
 @property (nonatomic, assign) id<NetworkServiceDelegate> delegate;
 @property (nonatomic, assign) BOOL thinkingEnabled;

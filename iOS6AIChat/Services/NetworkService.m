@@ -198,6 +198,12 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
             autonomousFetchKey=_autonomousFetchKey;
 @dynamic accumulatedThinking;
 
+// v261122-1: 深度思考总闸 _requestThinkingAllowed 定义在头文件 ivar block
+// （见 NetworkService.h）。在构造请求体时按 thinkingEnabled 计算并固化，
+// SSE/Anthropic/非流式三处解析统一据此决定是否采纳 reasoning。这样即使
+// provider / 中转无视请求里的 thinking 参数仍回吐 reasoning_content，
+// 关闭开关后也不会再显示"深度思考中"。工具多轮复用同一 service 时保持不变。
+
 - (id)init
 {
     if (self = [super init]) {
@@ -207,6 +213,7 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
         _toolCallAccumulators = [[NSMutableArray alloc] init];
         _pendingToolMessages = [[NSMutableArray alloc] init];
         _maxToolTurns = 5;  // hard cap — don't let AI loop forever
+        _requestThinkingAllowed = YES;  // v261122-1
     }
     return self;
 }
@@ -253,6 +260,9 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
                       tavilyKey:(NSString *)tavilyKey
                 tavilyMaxResults:(NSInteger)tavilyMaxResults
 {
+    // v261122-3: 新用户消息 —— 递增流代次，作废旧流的所有后台工具回调。
+    _streamGeneration++;
+
     // Save context for multi-turn tool use.
     self.useTransit = useTransit;
     self.transitURL = transitURL;
@@ -452,6 +462,13 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
     // mbedTLS 自带 TLS 栈，不依赖系统，无 body 限制，全版本可用。
     NSDictionary *allHeaders = [req allHTTPHeaderFields];
     NSString *httpMethod = [req HTTPMethod] ?: @"POST";
+    // v261122-3: 建新 client 前先取消旧的 —— 旧代码只 cancel _connection/
+    // _dataTask/CFStream，漏掉 mbedTLS。旧 client 因 NSThread↔self 强引用环
+    // 存活到自身请求结束，socket/线程泄漏，且 stop 再也触达不到它。
+    if (_mbedtlsClient) {
+        [_mbedtlsClient cancel];
+        self.mbedtlsClient = nil;
+    }
     self.mbedtlsClient = [[[MbedTLSHTTPClient alloc] init] autorelease];
     self.mbedtlsClient.delegate = self;
     [self.mbedtlsClient startRequest:url method:httpMethod headers:allHeaders body:bodyData];
@@ -506,15 +523,18 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
     // 如果 CFNetwork 创建失败 fallback 到 NSURLConnection，现有 -1200 剥离图片
     // 重试兜底（极少触发）。
 
-    // Check model supports thinking (default ON).
-    BOOL doThink = NO;
-    if (self.thinkingEnabled) {
-        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"modelSupportsThinking"]) {
-            doThink = [[NSUserDefaults standardUserDefaults] boolForKey:@"modelSupportsThinking"];
-        } else {
-            doThink = YES; // default ON
-        }
+    // v261122-1: 深度思考开关是唯一真源 —— 直接等于用户开关状态。
+    // 旧逻辑额外叠加 "modelSupportsThinking"（默认 ON），但那个 key 根本没有
+    // 设置页入口，而不同页面又用 boolForKey 默认 NO 显示，导致行为与 UI 不一致。
+    // 仅当显式写成 NO 时才作为"该模型不支持思考"的强制关闭覆盖。
+    BOOL doThink = self.thinkingEnabled;
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    if (doThink && [ud objectForKey:@"modelSupportsThinking"] &&
+        ![ud boolForKey:@"modelSupportsThinking"]) {
+        doThink = NO;
     }
+    // 固化到总闸，供 SSE/Anthropic/非流式三处解析统一判定。
+    _requestThinkingAllowed = doThink;
 
     // "Use transit server's model" feature: when ON, omit the `model`
     // field from the request body — the transit server substitutes its
@@ -559,13 +579,19 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
             [body setObject:@"high" forKey:@"reasoning_effort"];
         }
     } else {
+        // v261122-1: 关闭思考时必须"显式禁用"，不能只靠省略字段 ——
+        // DeepSeek-Reasoner / GLM-4.5+ / Kimi 等默认开思考的模型，省略字段
+        // 仍会输出 reasoning_content。按各供应商规范发 disabled。
         if ([self.provider isEqualToString:ProviderIDZhipu] ||
             [self.provider isEqualToString:ProviderIDDeepSeek] ||
             [self.provider isEqualToString:ProviderIDKimi]) {
             [body setObject:@{@"type": @"disabled"} forKey:@"thinking"];
-        } else if ([self.provider isEqualToString:ProviderIDOpenAI]) {
-            [body setObject:@"minimal" forKey:@"reasoning_effort"];
         }
+        // v261122-1: OpenAI 分支不再发送 reasoning_effort:"minimal" —— minimal
+        // 只是"最低推理量"而非关闭，gpt-5/o 系列照样思考。彻底省略该字段；
+        // 真正的兜底在解析层（_requestThinkingAllowed），即使服务端仍回吐
+        // reasoning 也不会显示。
+        // 注：非推理模型(gpt-4o 等)本就不产生 reasoning，省略字段无副作用。
     }
 
     // Tools array. The two lightweight tools (get_current_time,
@@ -865,8 +891,29 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
         @"stream":     @(doStream),
         @"messages":   msgs
     }];
-    // Anthropic recommends temperature 0..1; clamp our 0..2 range.
+    // v261122-1: Anthropic 扩展思考 —— 开关 ON 时显式开启（并要求
+    // temperature=1, budget_tokens>=1024）；OFF 时不带 thinking 字段即默认关闭。
+    // 旧实现完全没处理思考开关，导致该 provider 下开关零作用。
+    BOOL doThinkAnthropic = self.thinkingEnabled;
+    NSUserDefaults *udA = [NSUserDefaults standardUserDefaults];
+    if (doThinkAnthropic && [udA objectForKey:@"modelSupportsThinking"] &&
+        ![udA boolForKey:@"modelSupportsThinking"]) {
+        doThinkAnthropic = NO;
+    }
+    _requestThinkingAllowed = doThinkAnthropic;
     CGFloat t = self.temperature;
+    if (doThinkAnthropic) {
+        // Anthropic 要求开启 thinking 时 temperature 固定为 1。
+        t = 1.0f;
+        NSInteger budget = 4096;
+        if ([udA objectForKey:@"anthropicThinkingBudget"]) {
+            NSInteger b = [udA integerForKey:@"anthropicThinkingBudget"];
+            if (b >= 1024) budget = b;
+        }
+        [body setObject:@{@"type": @"enabled", @"budget_tokens": @(budget)}
+                 forKey:@"thinking"];
+    }
+    // Anthropic recommends temperature 0..1; clamp our 0..2 range.
     if (t > 1.0f) t = 1.0f;
     [body setObject:[NSNumber numberWithFloat:(float)t] forKey:@"temperature"];
     if (systemText.length > 0) {
@@ -886,6 +933,7 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
     // Nil-out the delegate first so any in-flight callbacks from the
     // dying connection don't dispatch into a freed VC (audit #2, #3).
     _delegate = nil;
+    _streamGeneration++;  // v261122-3: 作废旧流的后台工具回调
     [_connection cancel];
     // v261103-21 bug fix: 也取消 NSURLSession (iOS 7+) 和 CFNetwork (iOS 6)
     [self _cancelAllTransports];
@@ -912,6 +960,7 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
 // conversation's UI.
 - (void)cancelStream
 {
+    _streamGeneration++;  // v261122-3: 切换会话时作废正在跑的工具回调
     [_connection cancel];
     self.connection = nil;
     [self _cancelAllTransports];  // v261103-21 bug fix
@@ -945,6 +994,9 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
 // caller's (main) thread is the only safe path.
 - (void)stopGenerating
 {
+    // v261122-3: 递增代次 —— 即使此刻工具正在后台执行（无在途 transport），
+    // 其完成回调回到主线程时也会因代次不符而放弃重启流，停止真正生效。
+    _streamGeneration++;
     // v261103-21 bug fix: 检查所有三种传输方式，不只 _connection。
     // 之前 iOS 7+ (NSURLSession) / iOS 6 (CFNetwork) 路径 _connection 为 nil,
     // 用户点停止直接 return → 不取消流、composer 卡在 streaming 状态。
@@ -1040,6 +1092,7 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
                                            userInfo:@{NSLocalizedDescriptionKey: msg}];
             [_delegate networkService:self didFailForConversationID:_conversationID error:err];
         }
+        [_rawBuffer setData:nil];  // v261122-3: 错误响应body不残留到下次请求
         return;
     }
 
@@ -1400,6 +1453,9 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
     // v261103-31: 检查 client 身份 — 旧请求的残留回调不处理
     if (client != self.mbedtlsClient) return;
     self.httpStatus = statusCode;
+    // v261122-3: statusCode 是响应的第一个事件，在此清缓冲 —— 防止上一次
+    // 请求失败残留的字节拼到本次数据前，导致首个 SSE 事件解析错乱。
+    [_rawBuffer setData:nil];
     [[Logger sharedLogger] info:[NSString stringWithFormat:
         @"NET ← HTTP %ld (mbedTLS)", (long)statusCode]];
 }
@@ -1474,6 +1530,10 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
     };
     [contentForDict release];
     [newMessages addObject:assistantToolMsg];
+
+    // v261122-3: 捕获发起时的流代次 —— 后台工具执行期间用户若点停止/切会话，
+    // 代次会变，主线程回调据此放弃重启流。
+    NSUInteger capturedGeneration = _streamGeneration;
 
     // Save context for the bg-queue closure.
     NSMutableArray *toolCallAcc = [NSMutableArray arrayWithArray:_toolCallAccumulators];
@@ -2147,6 +2207,12 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
         // Re-launch stream on main — segmented thinking: preserve
         // _accumulated so pre-tool-call text + markers stay visible.
         dispatch_async(dispatch_get_main_queue(), ^{
+            // v261122-3: 代次校验 —— 工具执行期间若用户点了停止/切换会话，
+            // generation 已递增，此时必须放弃重启流（否则"停止无效"且会串台）。
+            if (capturedGeneration != _streamGeneration) {
+                [[Logger sharedLogger] info:@"NET ⊘ tool-call relaunch 被取消（流代次已变）"];
+                return;
+            }
             // v261103-1: append per-tool "done" markers (gray :::tool box)
             // — the ONLY visible artifact of the tool call. Tool result
             // content (JSON or text) is fed back to the model in the
@@ -2312,7 +2378,10 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
         if (![reasoning isKindOfClass:[NSString class]] || reasoning.length == 0) {
             reasoning = [delta objectForKey:@"thinking_content"];
         }
-        if ([reasoning isKindOfClass:[NSString class]] && reasoning.length > 0) {
+        // v261122-1: 深度思考总闸 —— 关闭开关时丢弃服务端仍回吐的 reasoning，
+        // 避免"开关关了却一直显示深度思考中"。
+        if (_requestThinkingAllowed &&
+            [reasoning isKindOfClass:[NSString class]] && reasoning.length > 0) {
             [_thinkingAccumulated appendString:reasoning];
             if ([_delegate respondsToSelector:@selector(networkService:didReceiveThinkingForConversationID:thinkingText:)]) {
                 NSString *thinkCopy = [NSString stringWithString:_thinkingAccumulated];
@@ -2448,6 +2517,8 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
                 }
             }
         } else if ([deltaType isEqualToString:@"thinking_delta"]) {
+            // v261122-1: 深度思考总闸
+            if (!_requestThinkingAllowed) return;
             NSString *think = [delta objectForKey:@"thinking"];
             if ([think isKindOfClass:[NSString class]] && think.length > 0) {
                 [_thinkingAccumulated appendString:think];
@@ -2521,9 +2592,10 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
                 if ([content isKindOfClass:[NSString class]] && content.length > 0) {
                     [_accumulated appendString:content];
                 }
-                NSString *reasoning = [message objectForKey:@"reasoning_content"];
+                // v261122-1: 深度思考总闸
+                NSString *reasoning = _requestThinkingAllowed ? [message objectForKey:@"reasoning_content"] : nil;
                 if (![reasoning isKindOfClass:[NSString class]]) {
-                    reasoning = [message objectForKey:@"reasoning"];
+                    reasoning = _requestThinkingAllowed ? [message objectForKey:@"reasoning"] : nil;
                 }
                 if ([reasoning isKindOfClass:[NSString class]] && reasoning.length > 0) {
                     [_thinkingAccumulated appendString:reasoning];
@@ -2544,6 +2616,8 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
                 NSString *t = [block objectForKey:@"text"];
                 if ([t isKindOfClass:[NSString class]]) [_accumulated appendString:t];
             } else if ([type isEqualToString:@"thinking"]) {
+                // v261122-1: 深度思考总闸
+                if (!_requestThinkingAllowed) continue;
                 NSString *t = [block objectForKey:@"thinking"];
                 if ([t isKindOfClass:[NSString class]]) [_thinkingAccumulated appendString:t];
             }

@@ -1382,7 +1382,11 @@ enum {
         [l release];
 
         UISwitch *sw = [[[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 79, 27)] autorelease];
-        BOOL on = [[NSUserDefaults standardUserDefaults] boolForKey:key];
+        // v261122-1: 默认值与 NetworkService 一致（capability 默认开启）。
+        // 旧代码 boolForKey 在 key 不存在时返回 NO，UI 显示"关闭"，但请求构造
+        // 缺省时按 YES 处理 —— UI 与行为不一致。此处显式处理 key 不存在的情况。
+        NSUserDefaults *capsUD = [NSUserDefaults standardUserDefaults];
+        BOOL on = ([capsUD objectForKey:key] != nil) ? [capsUD boolForKey:key] : YES;
         [sw setOn:on animated:NO];
         sw.tag = indexPath.row == 0 ? 100 : 101;
         [sw addTarget:self action:@selector(_capToggleChanged:)

@@ -166,15 +166,10 @@ int openai_parse_chunk(const char* sse_data,
      * {"choices":[{"delta":{"content":"xxx","reasoning_content":"yyy"},
      *   "finish_reason":"stop"}]}
      */
-    int has_content = 0;
-    int has_reasoning = 0;
-    int has_finish = 0;
-
     /* content（可能是 null） */
     if (content_out && content_size > 0) {
         content_out[0] = '\0';
-        int r = extract_string_or_null(sse_data, "content", content_out, content_size);
-        if (r > 0) has_content = 1;
+        extract_string_or_null(sse_data, "content", content_out, content_size);
     }
 
     /* reasoning_content（可能是 null，某些 API 用 "reasoning" 或 "thinking"） */
@@ -187,14 +182,12 @@ int openai_parse_chunk(const char* sse_data,
         if (r <= 0) {
             r = extract_string_or_null(sse_data, "thinking", reasoning_out, reasoning_size);
         }
-        if (r > 0) has_reasoning = 1;
     }
 
     /* finish_reason */
     if (finish_out && finish_size > 0) {
         finish_out[0] = '\0';
-        int r = extract_string_or_null(sse_data, "finish_reason", finish_out, finish_size);
-        if (r > 0) has_finish = 1;
+        extract_string_or_null(sse_data, "finish_reason", finish_out, finish_size);
     }
 
     return 0;

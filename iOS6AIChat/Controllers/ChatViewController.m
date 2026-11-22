@@ -1718,6 +1718,15 @@ didFailForConversationID:(NSString *)conversationID
     if (!force && now - self.lastRowReloadTime < throttleInterval) return;
     self.lastRowReloadTime = now;
 
+    // v261122-2: 记录刷新前用户是否停在底部附近 —— 只有"本来就在底部"才
+    // 自动跟随流式输出滚动。用户上滑查看历史时不再被每 300ms 强行拽回底部。
+    CGFloat contentH0 = _tableView.contentSize.height;
+    CGFloat viewH0 = _tableView.bounds.size.height;
+    CGFloat offsetY0 = _tableView.contentOffset.y;
+    CGFloat insetBottom0 = _tableView.contentInset.bottom;
+    // 距底部 80pt 内视为"在底部"
+    BOOL wasNearBottom = (contentH0 - viewH0 - offsetY0 + insetBottom0) < 80.0f;
+
     NSIndexPath *lastIdx = [NSIndexPath indexPathForRow:[_conversation.messages count] - 1
                                               inSection:0];
     if (!lastIdx || lastIdx.row < 0 ||
@@ -1741,11 +1750,17 @@ didFailForConversationID:(NSString *)conversationID
             // 溢出 cell.bounds 底部被下一个 cell 盖住的现象）。
             [cell layoutIfNeeded];
         } else {
-            [_tableView reloadData];
+            // v261122-2: 末行 cell 不在可视区（用户上滑看历史）时，旧代码
+            // 走整表 reloadData —— 每 300ms 全量重载所有可见 cell 的 Markdown
+            // 渲染，既卡顿又无必要。改为只重载这一行。
+            [_tableView reloadRowsAtIndexPaths:[NSArray arrayWithObject:lastIdx]
+                              withRowAnimation:UITableViewRowAnimationNone];
         }
     }
-    // v261103-36: animated:NO 瞬时定位（避免与 throttle 周期打架）
-    [self _scrollToBottomAnimated:NO];
+    // v261122-2: 仅当用户原本就在底部附近才跟随滚动；上滑看历史时不打断。
+    if (wasNearBottom) {
+        [self _scrollToBottomAnimated:NO];
+    }
 }
 
 #pragma mark - Table data source
