@@ -81,7 +81,9 @@ static NSString * const kConvFileExtension     = @"conv";
     // v261116-3: 异步落盘 — 旧实现 [NSKeyedArchiver archiveRootObject:toFile:] 同步
     // 在主线程执行，长对话（>200 条消息）落盘 200-500ms 卡 UI
     // 用 serial queue 保序，避免并发写同一文件产生竞态
-    Conversation *convCopy = [conversation copy];  // 浅拷贝避免后续修改竞态
+    // v261122-2: 深拷贝快照（Conversation copyWithZone 会逐条 copy Message），
+    // 彻底隔离主线程流式写入与后台归档，避免竞态崩溃。
+    Conversation *convCopy = [conversation copy];
     dispatch_async(self.saveQueue, ^{
         @try {
             [NSKeyedArchiver archiveRootObject:convCopy toFile:path];

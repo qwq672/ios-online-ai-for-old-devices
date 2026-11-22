@@ -117,6 +117,11 @@
     copy.contentHTML = [_contentHTML copy];
     copy.createdAt   = [_createdAt copy];
     copy.messageID   = [_messageID copy];
+    // v261122-2: 补齐 thinking / images —— 旧实现漏拷，任何"按值拷贝"
+    // （尤其 ConversationStore 异步落盘的快照）都会静默丢失思考内容和图片，
+    // 归档后重新加载会丢思考块与聊天图片。
+    copy.thinking    = [_thinking copy];
+    copy.images      = [_images copy];
     // v261025-6: copy variants + index too.
     copy.variants = [_variants copy];
     copy.currentVariantIndex = _currentVariantIndex;

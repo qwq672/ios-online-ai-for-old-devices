@@ -41,6 +41,11 @@
     self.requestBody = body;
     self.cancelled = NO;
     self.statusCodeSent = NO;
+    // v261122-3: 重置 chunked 解码状态
+    _chunked = NO;
+    _chunkRemaining = -1;
+    if (_chunkBuf) { [_chunkBuf release]; _chunkBuf = nil; }
+    _chunkBuf = [[NSMutableData alloc] init];
 
     // 在后台线程跑 TLS（阻塞操作）
     self.networkThread = [[[NSThread alloc] initWithTarget:self
@@ -53,8 +58,13 @@
 {
     self.cancelled = YES;
     // v261103-26: shutdown socket 让 mbedtls_ssl_read 立即返回
-    // 否则 mbedtls_ssl_read 会阻塞等待数据，用户点停止后不立即生效
-    int fd = self.socketFd;
+    // v261122-3: 加锁并"取出即清零"，避免 cleanup 线程 free/复用 fd 后
+    // shutdown 误伤新请求的 socket（竞态）。
+    int fd = -1;
+    @synchronized(self) {
+        fd = (int)self.socketFd;
+        self.socketFd = 0;
+    }
     if (fd > 0) {
         shutdown(fd, SHUT_RDWR);
     }
@@ -294,7 +304,11 @@
         goto cleanup;
     }
     // v261103-26: 保存 socket fd 用于 cancel 时 shutdown
-    self.socketFd = server_fd.fd;
+    // v261122-3: 若请求已被取消（cancel 先于连接建立），立即关闭 fd 退出
+    if (self.cancelled) { goto cleanup; }
+    @synchronized(self) {
+        self.socketFd = server_fd.fd;
+    }
 
     // 5. 设置 bio
     mbedtls_ssl_set_bio(&ssl, &server_fd, mbedtls_net_send, mbedtls_net_recv, mbedtls_net_recv_timeout);
@@ -349,8 +363,17 @@
     int totalRead = 0;
     BOOL headersParsed = NO;
     NSMutableData *headerBuffer = [NSMutableData data];
+    // v261122-3: 整体超时兜底 —— read timeout 只 continue，服务端挂起会
+    // 永久占住后台线程。用 wall-clock 限制总时长（300s，与 NSURLSession
+    // timeoutIntervalForResource 一致）。思考模型长静默由 read timeout 的
+    // 10s 轮询 + cancelled 检查处理，这里只防"永远不结束"的死连接。
+    NSTimeInterval readDeadline = [NSDate timeIntervalSinceReferenceDate] + 300.0;
 
     while (!self.cancelled) {
+        if ([NSDate timeIntervalSinceReferenceDate] > readDeadline) {
+            [self _failWithError:@"响应整体超时（300s）"];
+            goto cleanup;
+        }
         memset(buf, 0, sizeof(buf));
         ret = mbedtls_ssl_read(&ssl, buf, sizeof(buf) - 1);
 
@@ -418,6 +441,14 @@
                 [scanner scanString:@" " intoString:nil];
                 [scanner scanInteger:&statusCode];
 
+                // v261122-3: 检测 Transfer-Encoding: chunked —— mbedTLS 拿到的是
+                // 原始字节，必须自己解块，否则 chunk 大小行(如 "1a3")混进 SSE，
+                // 边界落在 data JSON 行中间时该行解析失败 → 丢 token。
+                if ([headerStr rangeOfString:@"chunked" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                    _chunked = YES;
+                    _chunkRemaining = -1;
+                }
+
                 // 发送状态码到主线程
                 [self performSelectorOnMainThread:@selector(_deliverStatusCode:)
                                        withObject:[NSNumber numberWithInteger:statusCode]
@@ -426,16 +457,12 @@
                 // 发送 body 部分（headerEnd 之后的数据）
                 if (bodyStart < hdrLen) {
                     NSData *bodyData = [headerBuffer subdataWithRange:NSMakeRange(bodyStart, hdrLen - bodyStart)];
-                    [self performSelectorOnMainThread:@selector(_deliverData:)
-                                           withObject:bodyData
-                                        waitUntilDone:NO];
+                    [self _processBodyBytes:bodyData];
                 }
             }
         } else {
             // 直接发送 body chunk
-            [self performSelectorOnMainThread:@selector(_deliverData:)
-                                   withObject:chunkData
-                                waitUntilDone:NO];
+            [self _processBodyBytes:chunkData];
         }
     }
 
@@ -447,7 +474,9 @@
     }
 
 cleanup:
-    self.socketFd = 0;  // v261103-26: 重置，避免 cancel shutdown 已关闭的 fd
+    @synchronized(self) {
+        self.socketFd = 0;  // v261103-26: 重置，避免 cancel shutdown 已关闭的 fd
+    }
     mbedtls_ssl_free(&ssl);
     mbedtls_ssl_config_free(&conf);
     mbedtls_entropy_free(&entropy);
@@ -467,6 +496,93 @@ cleanup:
 - (void)_clearNetworkThread
 {
     self.networkThread = nil;
+}
+
+#pragma mark - HTTP chunked 解码（v261122-3，后台线程执行）
+
+// 把读到的原始字节按 HTTP chunked 规则解码，解出的纯 body 经 _deliverData
+// 转发到主线程。非 chunked 响应直接透传。
+// 状态机：_chunkRemaining == -1 表示正在等 chunk size 行；否则读取该 chunk 的数据。
+- (void)_processBodyBytes:(NSData *)bytes
+{
+    if (!bytes || [bytes length] == 0) return;
+    if (!_chunked) {
+        [self performSelectorOnMainThread:@selector(_deliverData:)
+                               withObject:bytes waitUntilDone:NO];
+        return;
+    }
+
+    [_chunkBuf appendData:bytes];
+    const char *p = [_chunkBuf bytes];
+    NSUInteger len = [_chunkBuf length];
+    NSUInteger consumed = 0;          // 已从 _chunkBuf 消费的字节
+    NSMutableData *decoded = [NSMutableData data];
+
+    while (consumed < len) {
+        if (_chunkRemaining < 0) {
+            // v261122-3: 先跳过上一个 chunk 数据后残留的 CRLF（可能跨 read
+            // 边界，只有 \r 先到）。跳过后若没有更多字节，等下次。
+            while (consumed < len && (p[consumed] == '\r' || p[consumed] == '\n')) {
+                consumed++;
+            }
+            if (consumed >= len) break;
+            // 读 chunk size 行（形如 "1a3\r\n" 或 "1a3;ext\r\n"），以 \n 结束
+            NSUInteger lineEnd = consumed;
+            BOOL found = NO;
+            while (lineEnd < len) {
+                if (p[lineEnd] == '\n') { found = YES; break; }
+                lineEnd++;
+            }
+            if (!found) break;  // 行未完整，等下次
+            NSUInteger lineLen = lineEnd - consumed;
+            NSString *sizeLine = [[[NSString alloc] initWithBytes:p + consumed
+                                                           length:lineLen
+                                                         encoding:NSUTF8StringEncoding] autorelease];
+            // 去掉 ;扩展 部分
+            NSRange semi = [sizeLine rangeOfString:@";"];
+            NSString *hex = semi.location != NSNotFound
+                ? [sizeLine substringToIndex:semi.location] : sizeLine;
+            hex = [hex stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            unsigned long long chunkSize = 0;
+            NSScanner *scan = [NSScanner scannerWithString:hex];
+            [scan scanHexLongLong:&chunkSize];
+            consumed = lineEnd + 1;   // 跳过 \n
+            if (chunkSize == 0) {
+                // 最后一个 chunk —— 忽略后续 trailer，直接结束解码
+                _chunkRemaining = 0;
+                break;
+            }
+            _chunkRemaining = (NSInteger)chunkSize;
+            continue;
+        }
+
+        // 读 chunk 数据
+        NSUInteger avail = len - consumed;
+        NSUInteger take = avail < (NSUInteger)_chunkRemaining ? avail : (NSUInteger)_chunkRemaining;
+        [decoded appendBytes:p + consumed length:take];
+        consumed += take;
+        _chunkRemaining -= (NSInteger)take;
+        if (_chunkRemaining == 0) {
+            // chunk 数据读完，后面跟 \r\n —— 跳过（可能跨 read，简单处理：
+            // 若剩余 >=2 且是 \r\n 消费掉；否则等下次数据到来时按 size 行处理，
+            // 这里预消费一个可能的 \r\n）
+            if (consumed + 1 < len && p[consumed] == '\r' && p[consumed + 1] == '\n') {
+                consumed += 2;
+            } else if (consumed < len && p[consumed] == '\n') {
+                consumed += 1;
+            }
+            _chunkRemaining = -1;  // 等下一个 size 行
+        }
+    }
+
+    // 保留未消费的残字节供下次
+    if (consumed > 0) {
+        [_chunkBuf replaceBytesInRange:NSMakeRange(0, consumed) withBytes:NULL length:0];
+    }
+    if ([decoded length] > 0) {
+        [self performSelectorOnMainThread:@selector(_deliverData:)
+                               withObject:decoded waitUntilDone:NO];
+    }
 }
 
 #pragma mark - 主线程回调
@@ -522,6 +638,7 @@ cleanup:
     [_requestHeaders release];
     [_requestBody release];
     [_networkThread release];
+    [_chunkBuf release];  // v261122-3
     [super dealloc];
 }
 

@@ -12,6 +12,12 @@
 @protocol MbedTLSHTTPDelegate;
 
 @interface MbedTLSHTTPClient : NSObject
+{
+    // v261122-3: HTTP chunked 传输解码状态（后台线程使用，无锁）
+    BOOL  _chunked;            // 响应是否 Transfer-Encoding: chunked
+    NSInteger _chunkRemaining; // 当前 chunk 剩余字节数；-1 = 正在读 chunk size 行
+    NSMutableData *_chunkBuf;  // 跨 read 调用累积的字节（chunk size 行 / 半行数据）
+}
 
 @property (nonatomic, assign) id<MbedTLSHTTPDelegate> delegate;
 

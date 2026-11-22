@@ -121,14 +121,11 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     @synchronized(gStreamingMessageIDs) {
         [gStreamingMessageIDs removeObject:messageID];
     }
-    // The next render will use the FULL path. The cache key includes
-    // contentLength, so the final render (with the last content length)
-    // won't collide with the streaming-rendered entry. But to be safe,
-    // flush the whole renderedAttr cache so the next render re-runs the
-    // full MarkdownParser. (Height cache stays — heights are computed
-    // from the same attr, so re-rendering invalidates them too.)
-    [gRenderedAttrCache removeAllObjects];
-    [gHeightCache removeAllObjects];
+    // v261122-2: 不再全清全局缓存 —— 这是"大量消息时卡死"的主因。
+    // 每次一条消息完成就 removeAllObjects，会让所有历史消息的渲染/高度缓存
+    // 同时失效，滚动时全部重跑 MarkdownParser + emoji + 高度计算。
+    // 实际上缓存 key 已包含 contentLength 与 fast(F)/完成(S) 标志，流式条目
+    // 与完成条目 key 天然不同，不会误命中，因此无需清空任何缓存。
 }
 
 + (BOOL)isMessageStreaming:(NSString *)messageID
@@ -1748,11 +1745,17 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     // 标志会返回流式版（□）的高度，但 cell 实际渲染是完成版（彩色 emoji）→
     // 高度 < 实际内容 → 文字溢出 cell frame → 重叠到下一行。
     BOOL fast = [ChatMessageCell isMessageStreaming:message.messageID];
-    NSString *cacheKey = [NSString stringWithFormat:@"%@_%.0f_%lu_%lu_%ld_%@",
+    // v261122-2: key 加入 images.count + generatedImagePath 长度 —— 生图回调
+    // 只往 message.images 追加图片，content/thinking 长度不变，旧 key 会命中
+    // "无图"的缓存高度，但 cell 实际布局为图片多留 90pt → 图片被下一行覆盖。
+    NSUInteger imagesCount = message.images ? [message.images count] : 0;
+    NSString *cacheKey = [NSString stringWithFormat:@"%@_%.0f_%lu_%lu_%ld_%lu_%lu_%@",
                           message.messageID, (double)width,
                           (unsigned long)message.content.length,
                           (unsigned long)message.thinking.length,
                           (long)message.currentVariantIndex,
+                          (unsigned long)imagesCount,
+                          (unsigned long)message.generatedImagePath.length,
                           fast ? @"F" : @"S"];
     NSNumber *cached = [gHeightCache objectForKey:cacheKey];
     if (cached) {

@@ -98,7 +98,14 @@ public class ChatAdapter extends BaseAdapter {
     }
 
     public List<Message> getMessages() {
-        return new ArrayList<Message>(messages);
+        // v0.6.6: 不把错误气泡([错误]...)作为历史发给 API —— 旧实现把错误文案
+        // 写进 content，下条消息构造请求时会污染上下文。error 消息仅用于 UI 展示。
+        List<Message> out = new ArrayList<Message>();
+        for (Message m : messages) {
+            if (m.error) continue;
+            out.add(m);
+        }
+        return out;
     }
 
     public Message getLast() {
@@ -321,14 +328,26 @@ public class ChatAdapter extends BaseAdapter {
     }
 
     // v261116-11: 复制消息到剪贴板
+    // v0.6.6: minSdk=9 (Android 2.3) 没有 ClipData/ClipboardManager(新)，
+    // API 11+ 才有。直接引用会在 2.3 触发 NoClassDefFoundError，而
+    // catch(Exception) 抓不到 Error → 崩溃。按 SDK_INT 分支：
     private void copyMessage(Message msg) {
+        String text = msg.content == null ? "" : msg.content;
         try {
-            android.content.ClipboardManager clip = (android.content.ClipboardManager)
-                context.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
-            android.content.ClipData clipData = android.content.ClipData.newPlainText("AIAnyWhere", msg.content);
-            clip.setPrimaryClip(clipData);
+            if (android.os.Build.VERSION.SDK_INT >= 11) {
+                android.content.ClipboardManager clip = (android.content.ClipboardManager)
+                    context.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+                android.content.ClipData clipData = android.content.ClipData.newPlainText("AIAnyWhere", text);
+                clip.setPrimaryClip(clipData);
+            } else {
+                // Android 2.3 — 旧 ClipboardManager (android.text.ClipboardManager)
+                android.text.ClipboardManager oldClip = (android.text.ClipboardManager)
+                    context.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+                oldClip.setText(text);
+            }
             android.widget.Toast.makeText(context, "已复制到剪贴板", android.widget.Toast.LENGTH_SHORT).show();
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            // 用 Throwable 兜底，连 NoClassDefFoundError/VerifyError 也不崩
             android.util.Log.w("ChatAdapter", "copy failed: " + e.getMessage());
         }
     }

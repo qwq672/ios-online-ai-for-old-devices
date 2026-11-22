@@ -190,7 +190,13 @@ public class ChatActivity extends Activity implements NetworkService.Listener, C
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
             @Override
             public void afterTextChanged(Editable s) {
-                sendButton.setEnabled(s != null && s.length() > 0);
+                // v0.6.6: 流式期间按钮是"停止"，sendMessage() 里的 setText("")
+                // 会触发本回调；此时不能禁用，否则用户点不了"停止生成"。
+                if (isStreaming) {
+                    sendButton.setEnabled(true);
+                } else {
+                    sendButton.setEnabled(s != null && s.length() > 0);
+                }
             }
         });
         sendButton.setEnabled(false);
@@ -217,6 +223,7 @@ public class ChatActivity extends Activity implements NetworkService.Listener, C
         // Start streaming
         isStreaming = true;
         sendButton.setText("停止");
+        sendButton.setEnabled(true);  // v0.6.6: setText("") 触发的 TextWatcher 可能已禁用它
 
         String apiKey = prefs.getString(KEY_API_KEY, "");
         String baseURL = prefs.getString(KEY_BASE_URL, "https://api.openai.com/v1");
@@ -260,7 +267,9 @@ public class ChatActivity extends Activity implements NetworkService.Listener, C
         isStreaming = false;
         sendButton.setText("发送");
         if (fullText == null || fullText.length() == 0) {
-            adapter.updateLast("[错误] 空回复");
+            // v0.6.6: 用 markLastError 打 error 标记，避免错误文案进入下一条
+            // 请求的历史上下文（getMessages 会跳过 error 消息）。
+            adapter.markLastError("[错误] 空回复");
         }
         listView.setSelection(adapter.getCount() - 1);
     }
