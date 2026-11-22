@@ -1050,20 +1050,38 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
             BOOL superseded = (self->_imageGenAssistantMessage != capturedMsg);
 
             if (pngData && pngData.length > 0) {
-                // v261116-19: 写入前校验 magic bytes — 防止 HTML/JSON 错误页被当作 PNG
+                // v261116-20: 写入前校验 magic bytes — 防止 HTML/JSON/WebP 等不被支持的数据
                 const unsigned char *pb = [pngData bytes];
                 NSUInteger pl = [pngData length];
                 BOOL validPNG  = (pl >= 8 && pb[0]==0x89 && pb[1]==0x50 && pb[2]==0x4E && pb[3]==0x47);
                 BOOL validJPEG = (pl >= 3 && pb[0]==0xFF && pb[1]==0xD8 && pb[2]==0xFF);
                 BOOL validGIF  = (pl >= 6 && pb[0]==0x47 && pb[1]==0x49 && pb[2]==0x46);
+                BOOL validWebP = (pl >= 12 && pb[0]==0x52 && pb[1]==0x49 && pb[2]==0x46 && pb[3]==0x46);  // RIFF
+                BOOL validBMP  = (pl >= 2 && pb[0]==0x42 && pb[1]==0x4D);  // BM
                 if (!validPNG && !validJPEG && !validGIF) {
-                    NSString *prev = [[[NSString alloc] initWithData:pngData encoding:NSUTF8StringEncoding] autorelease] ?: @"<binary>";
-                    if (prev.length > 200) prev = [prev substringToIndex:200];
-                    capturedMsg.content = [NSString stringWithFormat:@"%@: %@",
-                        NSLocalizedString(@"生图返回数据异常", nil), prev];
+                    // v261116-20: 记录前 16 字节 hex 帮助诊断格式
+                    char hex[64] = {0};
+                    NSUInteger dumpLen = (pl < 16) ? pl : 16;
+                    for (NSUInteger i = 0; i < dumpLen; i++) {
+                        sprintf(hex + i * 3, "%02X ", pb[i]);
+                    }
+                    NSString *hexStr = [NSString stringWithCString:hex encoding:NSASCIIStringEncoding];
+                    NSString *msg = nil;
+                    if (validWebP) {
+                        msg = [NSString stringWithFormat:@"%@: WebP (iOS 6/7 不原生支持，请换模型或格式)",
+                            NSLocalizedString(@"生图返回数据异常", nil)];
+                    } else if (validBMP) {
+                        msg = [NSString stringWithFormat:@"%@: BMP 格式不被支持",
+                            NSLocalizedString(@"生图返回数据异常", nil)];
+                    } else {
+                        msg = [NSString stringWithFormat:@"%@: 未知格式 %lu bytes, hex: %@",
+                            NSLocalizedString(@"生图返回数据异常", nil),
+                            (unsigned long)pl, hexStr];
+                    }
+                    capturedMsg.content = msg;
                     [[Logger sharedLogger] warn:[NSString stringWithFormat:
-                        @"imggen ✗ not image data (%luB, starts: %@)",
-                        (unsigned long)pl, prev]];
+                        @"imggen ✗ not image data (%luB, hex: %@, webp=%d bmp=%d)",
+                        (unsigned long)pl, hexStr, (int)validWebP, (int)validBMP]];
                     [capturedMsg release];
                     return;
                 }
