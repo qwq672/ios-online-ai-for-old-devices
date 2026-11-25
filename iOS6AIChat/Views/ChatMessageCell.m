@@ -89,6 +89,13 @@ static NSMutableSet *gStreamingMessageIDs = nil;
         [gHeightCache setCountLimit:512];
         gRenderedAttrCache = [[NSCache alloc] init];
         [gRenderedAttrCache setCountLimit:256];   // up to 256 rendered attrs
+        // v261125-5 (bug1 fix): 给 attr 缓存加总内存上限。
+        // 流式时每个 chunk 的 content.length 都不同 → 每个 token 生成一个
+        // 新 key → markMessageDone 又不再全清（v261122-2）→ 长回答的缓存
+        // 条目线性膨胀。countLimit=256 只限条数不限字节；一条 8000 字的
+        // attr 可能几百 KB，256 条就是几十 MB，在 256MB 的 iPhone4s 上
+        // 足以触发 jetsam（卡死/闪退）。设 6MB 硬上限，超出 NSCache 自动淘汰。
+        [gRenderedAttrCache setTotalCostLimit:6 * 1024 * 1024];
         gExpandedThinking = [[NSMutableDictionary alloc] init];
         gStreamingMessageIDs = [[NSMutableSet alloc] init];
     });
@@ -1046,7 +1053,18 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     if (boundsWidth < 100) {
         boundsWidth = [UIScreen mainScreen].bounds.size.width;
     }
-    CGFloat textWidth = [ChatMessageCell unifiedTextWidthForOuterWidth:boundsWidth];
+    // v261125-6 (bug1 fix): 渲染宽度必须与布局(_layoutInternal:1353)和行高
+    // (_heightForMessageInternal:1775)使用同一个宽度。此前这里无条件用
+    // unifiedTextWidth(AI≈242pt)，而后两者对 AI 消息用 aiTextWidth(≈290pt)：
+    // ① 同一个消息渲染 key 与高度 key 的 width 不同 → 共享缓存永远 miss →
+    //    每个流式 chunk 渲染 2 份 attr（cell + height），是长回答卡死主因之一；
+    // ② 渲染按 242 换行、textView 实际 290 宽、高度按 290 算 → 三者对不上，
+    //    是历史"文字溢出/重叠"的来源。按 useBubble 分支统一到 aiTextWidth。
+    // 注意：这只改渲染用的换行宽度使其匹配既有容器宽度，不改布局本身。
+    BOOL useBubbleText = message.isUser || isError;
+    CGFloat textWidth = useBubbleText
+        ? [ChatMessageCell unifiedTextWidthForOuterWidth:boundsWidth]
+        : [ChatMessageCell aiTextWidthForOuterWidth:boundsWidth];
 
     // Build the attributed string. Use the shared cache so we don't
     // run MarkdownParser twice per streaming chunk (cell render + height
@@ -1816,8 +1834,12 @@ static NSMutableSet *gStreamingMessageIDs = nil;
     NSString *dispContentForCalc = [Message displayedContentForMessage:message];
     // v261103-33: 检查渲染后的 attributed string 里是否有 \x00THINK\x00 标记
     // （标记由 MarkdownParser 插入，不在原始 content 里）
-    NSAttributedString *renderedAttrForCheck = [ChatMessageCell _renderedAttrForMessage:msgForRender width:availTextWidth];
-    NSString *renderedStrForCheck = renderedAttrForCheck ? [renderedAttrForCheck string] : @"";
+    // v261125-5 (bug1 fix): 直接复用上面 1800 行已算出的 attr —— 原代码这里
+    // 用完全相同的 msgForRender + availTextWidth 再调一次 _renderedAttrForMessage，
+    // 虽然命中缓存不重解析，但每次 heightForRow 都多一次字符串 key 构造 +
+    // NSCache 查找 + 字符串拼接；长消息 + 每个流式 chunk × 所有可见行时是
+    // 可观的主线程开销。attr 就是同一份渲染结果，复用零风险。
+    NSString *renderedStrForCheck = attr ? [attr string] : @"";
     BOOL hasInlineThinkMarker = [renderedStrForCheck rangeOfString:@"\x00THINK\x00"].location != NSNotFound;
     BOOL hasInlineThinkingForCalc = [dispContentForCalc rangeOfString:@":::thinking"].location != NSNotFound || hasInlineThinkMarker;
 

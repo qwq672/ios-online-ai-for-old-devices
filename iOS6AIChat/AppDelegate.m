@@ -27,6 +27,7 @@
 #import "iOS6Theme.h"
 #import "ChatViewController.h"
 #import "DrawerViewController.h"
+#import "Logger.h"
 
 @implementation AppDelegate
 
@@ -35,6 +36,15 @@
 - (BOOL)application:(UIApplication *)application
         didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
+    // v261125-2 (bug4 fix): 崩溃 hook 必须最早安装。
+    // Logger 把 NSSetUncaughtExceptionHandler + 信号处理器装在 +init 里，
+    // 而此前没有任何代码在启动早期引用 Logger —— 日志单例靠懒加载，直到
+    // 用户第一次发消息才初始化。结果：启动/重进阶段（含损坏会话归档加载）
+    // 崩溃时 hook 尚未安装，gCrashLogPath 为空，崩溃信息一条都写不进日志。
+    // 这里在 didFinishLaunching 第一行就 touches 单例，确保 hook 在任何
+    // 会话加载/UI 构建之前就绪。
+    [[Logger sharedLogger] info:@"=== app launch — crash hooks installed ==="];
+
     // v261024-19: no @try — defensive nil-checks inside.
     self.window = [[[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]] autorelease];
     if (!self.window) {

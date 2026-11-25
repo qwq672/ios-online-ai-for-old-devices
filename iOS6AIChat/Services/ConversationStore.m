@@ -4,6 +4,7 @@
 //
 
 #import "ConversationStore.h"
+#include <stdio.h>   // v261125-3: rename() for atomic archive write
 
 static NSString * const kConversationsDirName = @"Conversations";
 static NSString * const kConvFileExtension     = @"conv";
@@ -83,13 +84,27 @@ static NSString * const kConvFileExtension     = @"conv";
     // 用 serial queue 保序，避免并发写同一文件产生竞态
     // v261122-2: 深拷贝快照（Conversation copyWithZone 会逐条 copy Message），
     // 彻底隔离主线程流式写入与后台归档，避免竞态崩溃。
+    // v261125-3 (bug2 fix): 用临时文件 + rename() 原子替换，杜绝"写一半被
+    // 强杀/jetsam → .conv 文件被截断 → 下次启动 unarchive 崩溃 → 黑屏闪退"。
+    // rename() 在同一文件系统内是原子的：要么旧文件完整保留，要么被完整替换，
+    // 绝不会留下半截文件。这正是"卡死后重进黑屏闪退"的根因修复。
     Conversation *convCopy = [conversation copy];
     dispatch_async(self.saveQueue, ^{
+        NSString *tmpPath = [path stringByAppendingString:@".tmp"];
+        BOOL wrote = NO;
         @try {
-            [NSKeyedArchiver archiveRootObject:convCopy toFile:path];
+            wrote = [NSKeyedArchiver archiveRootObject:convCopy toFile:tmpPath];
         } @catch (NSException *e) {
             NSLog(@"ConversationStore save failed: %@", e);
         }
+        if (wrote) {
+            if (rename([tmpPath fileSystemRepresentation],
+                       [path fileSystemRepresentation]) != 0) {
+                NSLog(@"ConversationStore rename failed, keeping old file");
+                [[NSFileManager defaultManager] removeItemAtPath:tmpPath error:NULL];
+            }
+        }
+        [convCopy release];  // 配平上面的 copy —— 修掉每次保存泄漏一份会话
     });
 
     // Refresh in-memory copy.
@@ -143,11 +158,42 @@ static NSString * const kConvFileExtension     = @"conv";
     NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:_conversationsDir
                                                                           error:NULL];
     NSMutableArray *loaded = [NSMutableArray array];
+    NSFileManager *fm = [NSFileManager defaultManager];
     for (NSString *fname in files) {
         if (![fname hasSuffix:kConvFileExtension]) continue;
         NSString *path = [_conversationsDir stringByAppendingPathComponent:fname];
+
+        // v261125-4 (bug2 fix): 加载前的轻量完整性护卫。
+        // 虽然归档已改为原子写，仍要防历史遗留的截断文件（老版本写坏的）。
+        // 用纯数据检查（不用 @try —— 该 Theos 工具链在 armv7 上 @try 会
+        // SIGSEGV，见 AppDelegate 头部注释）：文件必须非空、>=32 字节，
+        // 且头部必须是 NSKeyedArchiver 的二进制 plist magic "bplist00"。
+        // 不满足就把该文件改名隔离（.bad）后跳过，避免它每次启动都触发
+        // unarchive 崩溃（黑屏 → 闪退）。原子写 + 这个护卫 = 双保险。
+        NSData *blob = [NSData dataWithContentsOfFile:path];
+        BOOL looksValid = (blob != nil && [blob length] >= 32);
+        if (looksValid) {
+            const unsigned char *bytes = [blob bytes];
+            static const char plistMagic[] = "bplist00";
+            for (NSUInteger i = 0; i < 8; i++) {
+                if (bytes[i] != (unsigned char)plistMagic[i]) { looksValid = NO; break; }
+            }
+        }
+        if (!looksValid) {
+            NSLog(@"ConversationStore: quarantining corrupt file %@", fname);
+            NSString *badPath = [path stringByAppendingString:@".bad"];
+            [fm removeItemAtPath:badPath error:NULL];
+            [fm moveItemAtPath:path toPath:badPath error:NULL];
+            continue;
+        }
         Conversation *c = [NSKeyedUnarchiver unarchiveObjectWithFile:path];
         if (c) [loaded addObject:c];
+        else {
+            // 头合法但解档仍失败（更深的损坏）——同样隔离，不让坏文件反复崩溃。
+            NSString *badPath = [path stringByAppendingString:@".bad"];
+            [fm removeItemAtPath:badPath error:NULL];
+            [fm moveItemAtPath:path toPath:badPath error:NULL];
+        }
     }
     // CRITICAL: MRC retain — `loaded` is autoreleased. Without retain,
     // the next runloop drain frees it and _mutableConversations becomes

@@ -1357,9 +1357,16 @@ static NSString *const kCellReuseID = @"ChatMessageCell";
         if (maxResults > 8) maxResults = 8;
     }
 
-    if (webSearch && tavilyKey.length == 0) {
-        // No Tavily key — show warning in status, proceed without search.
-        [self _showSearchStatus:@"未配置 Tavily API Key，搜索不可用"];
+    // v261125-1 (bug3 fix): 搜索开关不应被本地 Tavily key 绑死。
+    // 若当前 provider 开启了「自主联网搜索」(autonomousWebSearch)，搜索能力由
+    // provider 自己的 API 提供，根本不需要 Tavily key —— NetworkService 会声明
+    // web_search 工具并走 provider 原生搜索（见 NetworkService.m:694）。
+    // 旧逻辑无条件要求 tavilyKey，导致「provider 已开自主搜索、却因没填 Tavily
+    // key 而整体禁用搜索」，开关形同虚设。这里改为：自主搜索开启时直接放行。
+    BOOL providerHasAutonomousSearch = _networkService.autonomousWebSearch;
+    if (webSearch && tavilyKey.length == 0 && !providerHasAutonomousSearch) {
+        // No Tavily key AND no provider-native search — proceed without search.
+        [self _showSearchStatus:@"未配置 Tavily API Key，且当前模型未启用自主搜索，搜索不可用"];
         [self _launchAIStreamWithMessages:nil
                               systemPrompt:systemPrompt
                                 useTransit:useTransit

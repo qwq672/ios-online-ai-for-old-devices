@@ -153,16 +153,26 @@ static void iOS6AIChatUncaughtExceptionHandler(NSException *exception)
     if (name.length == 0) name = @"(no name)";
     NSString *reason = [exception.reason isKindOfClass:[NSString class]] ? exception.reason : nil;
     if (reason.length == 0) reason = @"(no reason)";
+
+    // v261125-7 (bug4 fix): 先把最关键的 name/reason 用 C writer 同步落盘，
+    // 再做 callStackSymbols 符号化。原代码把两者拼成一个字符串一次性写——
+    // 若崩溃源于堆损坏，callStackSymbols 的 dyld 符号化会 malloc/加锁而挂起，
+    // 导致整条日志（连 name/reason）都写不出去，进程卡在 handler 里被看门狗
+    // 杀死 → 用户看到"黑屏一段时间后闪退，日志里啥都没有"。
+    // 先写核心信息保证 bug4「崩溃报错能记录」，再尽力补堆栈。
+    NSString *head = [NSString stringWithFormat:
+        @"\n=== UNCAUGHT EXCEPTION ===\nname: %@\nreason: %@", name, reason];
+    const char *headUtf8 = [head UTF8String];
+    if (headUtf8) iOS6LoggerWriteRaw(headUtf8, strlen(headUtf8));
+
     NSString *stack = @"";
     NSArray *symbols = [exception callStackSymbols];
     if ([symbols isKindOfClass:[NSArray class]]) {
         stack = [symbols componentsJoinedByString:@"\n"];
     }
-    NSString *msg = [NSString stringWithFormat:
-        @"\n=== UNCAUGHT EXCEPTION ===\nname: %@\nreason: %@\ncallStack:\n%@\n==========================",
-        name, reason, stack];
-    const char *utf8 = [msg UTF8String];
-    if (utf8) iOS6LoggerWriteRaw(utf8, strlen(utf8));
+    NSString *tail = [NSString stringWithFormat:@"\ncallStack:\n%@\n==========================", stack];
+    const char *tailUtf8 = [tail UTF8String];
+    if (tailUtf8) iOS6LoggerWriteRaw(tailUtf8, strlen(tailUtf8));
 
     // Leave the flag set — the runtime will call abort() right after
     // this handler returns; the SIGABRT handler will see the flag and
