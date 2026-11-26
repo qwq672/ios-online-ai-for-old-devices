@@ -154,6 +154,12 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
 // v261025-3: set once the current stream already attempted the https→http
 // transit fallback (guards against a fallback relaunch loop).
 @property (nonatomic, assign) BOOL httpFallbackTried;
+// v261126-3: 流式节流 —— 每个 SSE event 都把 _accumulated / _thinkingAccumulated
+// 做全文 O(n) 拷贝再回调delegate，长回答时是 O(n²) 主线程开销，而下游本身
+// 已有 300ms 刷新节流，大部分回调被丢弃。这里按时间节流拷贝+回调，
+// didFinish 一定发送最终全文，保证最终一致性。
+@property (nonatomic, assign) NSTimeInterval lastChunkEmitTs;
+@property (nonatomic, assign) NSTimeInterval lastThinkEmitTs;
 // v261025-13: segmented thinking — when YES, _launchStreamWithMessages
 // preserves _accumulated (pre-tool-call text + markers) instead of
 // clearing it. Set by _runPendingToolCalls before the re-launch.
@@ -189,6 +195,7 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
             tavilyKey=_tavilyKey, tavilyMaxResults=_tavilyMaxResults,
             toolCallTurn=_toolCallTurn, maxToolTurns=_maxToolTurns,
             streamStartTs=_streamStartTs, httpFallbackTried=_httpFallbackTried,
+            lastChunkEmitTs=_lastChunkEmitTs, lastThinkEmitTs=_lastThinkEmitTs,
             toolCallRelaunch=_toolCallRelaunch,
             autonomousWebSearch=_autonomousWebSearch,
             autonomousURLRead=_autonomousURLRead,
@@ -447,6 +454,9 @@ static CFHTTPMessageSetHeaderFieldFunc _getCFHTTPMessageSetHeaderField(void) {
     [self _cleanupCFStream];
 
     self.streamStartTs = [NSDate timeIntervalSinceReferenceDate];
+    // v261126-3: 新请求重置流式回调节流时间戳。
+    self.lastChunkEmitTs = 0;
+    self.lastThinkEmitTs = 0;
     [[Logger sharedLogger] info:[NSString stringWithFormat:
         @"NET → POST %@ | provider=%@ model=%@ stream=%d format=%@ msgs=%lu bytes=%lu",
         url.absoluteString ?: @"?",
@@ -2383,11 +2393,17 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
         if (_requestThinkingAllowed &&
             [reasoning isKindOfClass:[NSString class]] && reasoning.length > 0) {
             [_thinkingAccumulated appendString:reasoning];
-            if ([_delegate respondsToSelector:@selector(networkService:didReceiveThinkingForConversationID:thinkingText:)]) {
-                NSString *thinkCopy = [NSString stringWithString:_thinkingAccumulated];
-                [_delegate networkService:self
-     didReceiveThinkingForConversationID:_conversationID
-                               thinkingText:thinkCopy];
+            // v261126-3: 节流 thinking 全文拷贝+回调（120ms）。完整思考
+            // 由 didFinish 从 accumulatedThinking 读取并附上，最终一致。
+            NSTimeInterval thinkNow = [NSDate timeIntervalSinceReferenceDate];
+            if (thinkNow - self.lastThinkEmitTs >= 0.12) {
+                self.lastThinkEmitTs = thinkNow;
+                if ([_delegate respondsToSelector:@selector(networkService:didReceiveThinkingForConversationID:thinkingText:)]) {
+                    NSString *thinkCopy = [NSString stringWithString:_thinkingAccumulated];
+                    [_delegate networkService:self
+         didReceiveThinkingForConversationID:_conversationID
+                                   thinkingText:thinkCopy];
+                }
             }
         }
 
@@ -2445,12 +2461,19 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
             }
         }
 
-        // Push incremental content update to delegate.
-        if ([_delegate respondsToSelector:@selector(networkService:didReceiveChunkForConversationID:fullText:)]) {
-            NSString *copy = [NSString stringWithString:_accumulated];
-            [_delegate networkService:self
-   didReceiveChunkForConversationID:_conversationID
-                            fullText:copy];
+        // Push incremental content update to delegate (v261126-3: 节流 120ms)。
+        // 每个 SSE event 都全量拷贝 _accumulated 是 O(n²) 主线程开销；下游
+        // 已有 300ms 刷新节流，中间的全文拷贝大部分被浪费。didFinish 会
+        // 用 _accumulated 发送最终全文，故节流不影响最终内容。
+        NSTimeInterval chunkNow = [NSDate timeIntervalSinceReferenceDate];
+        if (chunkNow - self.lastChunkEmitTs >= 0.12) {
+            self.lastChunkEmitTs = chunkNow;
+            if ([_delegate respondsToSelector:@selector(networkService:didReceiveChunkForConversationID:fullText:)]) {
+                NSString *copy = [NSString stringWithString:_accumulated];
+                [_delegate networkService:self
+       didReceiveChunkForConversationID:_conversationID
+                                fullText:copy];
+            }
         }
     }
 }
@@ -2509,11 +2532,16 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
             NSString *text = [delta objectForKey:@"text"];
             if ([text isKindOfClass:[NSString class]] && text.length > 0) {
                 [_accumulated appendString:text];
-                if ([_delegate respondsToSelector:@selector(networkService:didReceiveChunkForConversationID:fullText:)]) {
-                    NSString *copy = [NSString stringWithString:_accumulated];
-                    [_delegate networkService:self
-       didReceiveChunkForConversationID:_conversationID
-                                 fullText:copy];
+                // v261126-3: 节流（同 OpenAI 路径）——避免每 delta 全文 O(n) 拷贝。
+                NSTimeInterval chunkNow = [NSDate timeIntervalSinceReferenceDate];
+                if (chunkNow - self.lastChunkEmitTs >= 0.12) {
+                    self.lastChunkEmitTs = chunkNow;
+                    if ([_delegate respondsToSelector:@selector(networkService:didReceiveChunkForConversationID:fullText:)]) {
+                        NSString *copy = [NSString stringWithString:_accumulated];
+                        [_delegate networkService:self
+           didReceiveChunkForConversationID:_conversationID
+                                    fullText:copy];
+                    }
                 }
             }
         } else if ([deltaType isEqualToString:@"thinking_delta"]) {
@@ -2522,11 +2550,16 @@ static void _cfReadStreamCallback(CFReadStreamRef stream, CFStreamEventType even
             NSString *think = [delta objectForKey:@"thinking"];
             if ([think isKindOfClass:[NSString class]] && think.length > 0) {
                 [_thinkingAccumulated appendString:think];
-                if ([_delegate respondsToSelector:@selector(networkService:didReceiveThinkingForConversationID:thinkingText:)]) {
-                    NSString *thinkCopy = [NSString stringWithString:_thinkingAccumulated];
-                    [_delegate networkService:self
-        didReceiveThinkingForConversationID:_conversationID
-                                 thinkingText:thinkCopy];
+                // v261126-3: 节流 thinking 全文拷贝（finish 保证最终一致）。
+                NSTimeInterval thinkNow = [NSDate timeIntervalSinceReferenceDate];
+                if (thinkNow - self.lastThinkEmitTs >= 0.12) {
+                    self.lastThinkEmitTs = thinkNow;
+                    if ([_delegate respondsToSelector:@selector(networkService:didReceiveThinkingForConversationID:thinkingText:)]) {
+                        NSString *thinkCopy = [NSString stringWithString:_thinkingAccumulated];
+                        [_delegate networkService:self
+            didReceiveThinkingForConversationID:_conversationID
+                                     thinkingText:thinkCopy];
+                    }
                 }
             }
         }

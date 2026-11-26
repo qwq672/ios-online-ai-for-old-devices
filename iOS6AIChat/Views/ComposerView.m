@@ -350,8 +350,15 @@ static NSString * const kUDKeyImageGen    = @"composer.imageGen";   // v261025-8
     if (tvH < btnH) tvH = btnH;
     CGFloat tvY = (h - tvH) / 2.0f;
     _textView.frame = CGRectMake(tvX, tvY, tvW, tvH);
-    // v261103-54: 胶囊形态（iOS 6 iMessage 原生风格，两端半圆）
-    _textView.layer.cornerRadius = tvH / 2.0f;
+    // v261126-2: 单行保持胶囊（两端半圆，经典 iMessage 风格）；
+    // 多行时改为固定圆角的圆角矩形 —— 若继续用 tvH/2，输入框长高后
+    // 两端会被拉成大半圆"长胶囊"，视觉突兀。固定圆角让高度增长时
+    // 四角曲度恒定，成为一个规整的圆角矩形。
+    CGFloat fieldRadius = tvH / 2.0f;
+    if (tvH > 44.0f) {
+        fieldRadius = 11.0f;
+    }
+    _textView.layer.cornerRadius = fieldRadius;
     
     // v261025-32: the composer background fills the entire view bounds —
     // no gap below the text view. The background color is set in init

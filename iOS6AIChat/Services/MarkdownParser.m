@@ -524,6 +524,14 @@ static void AppendAttrString(NSMutableAttributedString *out,
     if (inTable) {
         [self _appendTable:tableBuffer to:out baseFont:baseFont];
     }
+    // v261126-5: flush 未闭合的 :::tool / :::thinking 块。流式输出被
+    // stopGenerating / 流中断 / agent 多轮切换打断时，结尾的 ::: 可能
+    // 还没到达，inToolBlock 仍为 YES，toolLines 里的内容此前会被丢弃
+    // → agent 形态下思考卡片"回退成纯文字"甚至整段消失。这里按已收集
+    // 的内容补渲染（thinking 生成 THINK 标记→卡片，tool 生成灰色旁白）。
+    if (inToolBlock) {
+        [self _appendToolStatus:toolLines to:out baseFont:baseFont];
+    }
 
     [lines release];
     // v261025-30: apply AppleColorEmoji font to emoji character ranges.

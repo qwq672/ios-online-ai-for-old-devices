@@ -1582,7 +1582,14 @@ didFinishForConversationID:(NSString *)conversationID
     if ([_conversation.messages count] > 0) {
         Message *last = [_conversation.messages objectAtIndex:[_conversation.messages count] - 1];
         if ([last isAssistant]) {
-            last.thinking = [svc accumulatedThinking];
+            // v261126-6: 只在 accumulatedThinking 非空时覆盖。用户点"停止"
+            // 时 NetworkService 已清空 _thinkingAccumulated 并同步送达
+            // capturedThinking（last.thinking 已被设置）；此处若无条件覆盖
+            // 会用空串抹掉思考内容 → 停止后思考卡片变空。
+            NSString *finalThinking = [svc accumulatedThinking];
+            if (finalThinking.length > 0) {
+                last.thinking = finalThinking;
+            }
         }
     }
     [[ConversationStore sharedStore] saveConversation:_conversation];
@@ -1720,6 +1727,21 @@ didFailForConversationID:(NSString *)conversationID
         if (ms < 160) ms = 160;
         if (ms > 1000) ms = 1000;
         throttleInterval = (NSTimeInterval)ms / 1000.0;
+    }
+    // v261126-7 (卡死保险): 自适应节流 —— 每次真正刷新都要对末行全文跑
+    // 一次 MarkdownParser + boundingRect，回答越长单次解析越贵。在 A4 上
+    // 若单次解析超过刷新间隔，回调会在主线程堆积 → 长回答卡死。这里按
+    // 末行 content 长度动态抬高间隔，只抬高不降低（尊重用户设置下限），
+    // 让长回答降低刷新频率、给主线程喘息。完成时 force=YES 跳过节流，
+    // 保证最终内容完整显示。
+    if (!force && [_conversation.messages count] > 0) {
+        Message *lastMsg = [_conversation.messages objectAtIndex:[_conversation.messages count] - 1];
+        NSUInteger clen = lastMsg.content.length;
+        NSTimeInterval adaptive = 0;
+        if (clen > 6000)      adaptive = 1.0;
+        else if (clen > 3000) adaptive = 0.7;
+        else if (clen > 1500) adaptive = 0.5;
+        if (adaptive > throttleInterval) throttleInterval = adaptive;
     }
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
     if (!force && now - self.lastRowReloadTime < throttleInterval) return;
