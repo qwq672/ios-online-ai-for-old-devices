@@ -643,7 +643,10 @@ static NSInteger const kPESheetQuickPick = 481;
     if ([iOS6Theme isDarkMode] && [f respondsToSelector:@selector(setKeyboardAppearance:)]) {
         [f setKeyboardAppearance:UIKeyboardAppearanceAlert];
     }
-    if (seed.length > 0) f.text = seed;
+    // v261126-1: iOS6 上新建 UITextField 的 text 默认为 nil。若 seed 为空
+    // （如用户从未配置过的 autonomousSearchKey），保持 nil 会在
+    // textFieldDidEndEditing: 里触发 setObject:nil 崩溃。统一置为 @""。
+    f.text = (seed.length > 0) ? seed : @"";
     *slot = f;
     return f;
 }
@@ -946,10 +949,14 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
 
 - (void)textFieldDidEndEditing:(UITextField *)textField
 {
+    // v261126-1: 统一在入口兜底。textField.text 若为 nil，
+    // stringByTrimmingCharactersInSet: 返回 nil，setObject:nil 会抛
+    // NSInvalidArgumentException（日志中 autonomousSearchKey 崩溃根因）。
+    // 空串语义等同"留空/沿用"，下游已有 length==0 判断，安全。
+    NSString *v = [textField.text stringByTrimmingCharactersInSet:
+                   [NSCharacterSet whitespaceAndNewlineCharacterSet]] ?: @"";
     // Commit BaseURL / API Key edits to the entry.
     if (textField.tag == 100) {
-        NSString *v = [textField.text stringByTrimmingCharactersInSet:
-                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
         [_entry setObject:v forKey:@"baseURL"];
         // Re-derive template from the typed URL if it matches a known one.
         NSString *inferredTpl = [SettingsViewController templateForBaseURL:v];
@@ -962,26 +969,16 @@ clickedButtonAtIndex:(NSInteger)buttonIndex
                        forKey:@"format"];
         }
     } else if (textField.tag == 101) {
-        NSString *v = [textField.text stringByTrimmingCharactersInSet:
-                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
         [_entry setObject:v forKey:@"apiKey"];
     }
     // v261102-1: autonomous search/fetch URL+key fields.
     else if (textField.tag == 710) {
-        NSString *v = [textField.text stringByTrimmingCharactersInSet:
-                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
         [_entry setObject:v forKey:@"autonomousSearchURL"];
     } else if (textField.tag == 711) {
-        NSString *v = [textField.text stringByTrimmingCharactersInSet:
-                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
         [_entry setObject:v forKey:@"autonomousSearchKey"];
     } else if (textField.tag == 720) {
-        NSString *v = [textField.text stringByTrimmingCharactersInSet:
-                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
         [_entry setObject:v forKey:@"autonomousFetchURL"];
     } else if (textField.tag == 721) {
-        NSString *v = [textField.text stringByTrimmingCharactersInSet:
-                       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
         [_entry setObject:v forKey:@"autonomousFetchKey"];
     }
     [self _persist];
